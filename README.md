@@ -12,10 +12,10 @@ Digital Verification Engineer by job, Open Source and AI Enthusiast by life.
 
 ## Journey
 
-- 🎓 2017-2021: B.Eng. EE (Fuxin 🚄 Harbin)
-- 🎓 2021-2024: M.Sc. EE @ TUM (China ✈️ Munich)
-- 🧪 Internship: NeuSoft🇨🇳 & Infineon🇩🇪
-- 💼 2024-now: DV Engineer @ PlanV🇩🇪
+- 🎓 2017-2021: 🇨🇳 B.Eng. EE (Fuxin 🚄 Harbin)
+- 🎓 2021-2024: 🇩🇪 M.Sc. EE @ TUM (China ✈️ Munich)
+- 🧪 Internship: NeuSoft & Infineon
+- 💼 2024-now: DV Engineer @ PlanV
 
 ---
 
@@ -24,9 +24,6 @@ Digital Verification Engineer by job, Open Source and AI Enthusiast by life.
 ### 🎠 [badai_cardsmith-oss](https://github.com/YilouWang/badai_cardsmith-oss)
 中文创作者轮播图引擎。  
 把选题文案变成可渲染配置，并跑质量评分闭环。  
-Result: scored carousel outputs for Xiaohongshu workflows.
-
-![badai_cardsmith-oss demo placeholder](https://dummyimage.com/720x340/f6f8fa/57606a&text=badai_cardsmith-oss+demo)
 
 ### 🧰 [Toy4Joy_DV](https://github.com/YilouWang/Toy4Joy_DV)
 DV playground for SV/UVM/Verilator/cocotb.  
@@ -36,26 +33,35 @@ Practical examples for onboarding and quick experiments.
 
 ## Contributions & Forks
 
-- 🔧 [uvm-verilator](https://github.com/YilouWang/uvm-verilator): work fork for UVM + Verilator integration.
+- 🚀 [verilator](https://github.com/YilouWang/verilator): contribution-aligned work fork.
 - 🧪 [PlanV_Verilator_Feature_Tests](https://github.com/YilouWang/PlanV_Verilator_Feature_Tests): feature validation flow at work.
 - 📘 [MS_Thesis_cocotb-BSHL](https://github.com/YilouWang/MS_Thesis_cocotb-BSHL): thesis implementation repo.
-- 🚀 [verilator](https://github.com/YilouWang/verilator): contribution-aligned work fork.
 
 ---
 
 ## Publications
 
-- 📄 Master's Thesis (TUM, 2024):  
-  *Bridging cocotb/pyUVM to SystemVerilog Verification IP*  
-  [MS_Thesis_cocotb-BSHL](https://github.com/YilouWang/MS_Thesis_cocotb-BSHL)
+- 📄 **Advancing Open-Source Verification: Enabling Full Randomization in Verilator**  
+  DVcon Europe 2025 · Oct 15, 2025
+- 📄 **Enable Reuse of SystemVerilog Verification IPs in cocotb/pyuvm**  
+  DVcon Europe 2024 · Oct 16, 2024
 
 ---
 
 ## Technical Writing / Blog
 
-- 📝 Verification Notes (GitHub): [Toy4Joy_DV](https://github.com/YilouWang/Toy4Joy_DV)
-- 📝 AI Workflow Notes (GitHub): [badai_cardsmith-oss](https://github.com/YilouWang/badai_cardsmith-oss)
-- 🧭 Personal blog (coming soon): add your blog URL here
+- 📝 UVM in Verilator: Constraint random if/else  
+  https://planv.tech/2024/08/02/enabling-uvm-support-in-verilator-series-part-1-constraint-random-ifelse-constraint-support/
+- 📝 UVM in Verilator: CI system and test models  
+  https://planv.tech/2024/10/08/enabling-uvm-support-in-verilator-series-our-ci-system-and-test-models/
+- 📝 UVM in Verilator: Aggregate data type basic randomization  
+  https://planv.tech/2024/11/07/enabling-uvm-support-in-verilator-series-basic-randomization-support-for-aggregate-data-types/
+- 📝 UVM in Verilator: Array constrained randomization support  
+  https://planv.tech/2025/02/07/enabling-uvm-support-in-verilator-series-constrained-randomization-support-for-all-types-of-arrays/
+- 📝 UVM in Verilator: Struct constrained randomization support  
+  https://planv.tech/2025/07/04/enabling-uvm-support-in-verilator-series-constrained-randomization-support-for-structs/
+- 🤖 Verilator Gap Checker with AI  
+  https://planv.tech/2026/02/24/verilator-gap-checker-automatically-detecting-feature-gaps-in-verilator-with-ai/
 
 ---
 
@@ -71,13 +77,9 @@ Practical examples for onboarding and quick experiments.
 ## Contact
 
 <p>
-  <a href="mailto:wangyilou123@gmail.com">
-    <img src="https://img.shields.io/badge/Email-wangyilou123%40gmail.com-0969da?style=flat-square&logo=gmail&logoColor=white" alt="email" />
-  </a>
   <a href="https://www.linkedin.com/in/yilou-wang-a0569b215/">
     <img src="https://img.shields.io/badge/LinkedIn-Yilou%20Wang-0a66c2?style=flat-square&logo=linkedin&logoColor=white" alt="linkedin" />
   </a>
 </p>
 
 - Email: [wangyilou123@gmail.com](mailto:wangyilou123@gmail.com)
-- LinkedIn: [linkedin.com/in/yilou-wang-a0569b215](https://www.linkedin.com/in/yilou-wang-a0569b215/)
