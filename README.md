@@ -9,7 +9,7 @@
     <img src="https://img.shields.io/github/followers/YilouWang?style=flat-square&logo=github&label=Followers" alt="followers" />
   </a>
   <a href="https://github.com/YilouWang?tab=repositories">
-    <img src="https://img.shields.io/badge/Public%20Repos-11-2ea44f?style=flat-square&logo=github" alt="public repos" />
+    <img src="https://img.shields.io/badge/Open%20Source-Projects-2ea44f?style=flat-square&logo=github" alt="open source projects" />
   </a>
   <img src="https://img.shields.io/badge/Focus-AI%20x%20DV-0969da?style=flat-square" alt="focus" />
 </p>
