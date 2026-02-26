@@ -1,51 +1,83 @@
-# Hi, I'm Yilou Wang
+# 王译楼 · Yilou Wang
+
+Digital Verification Engineer by job, Open Source and AI Enthusiast by life.
 
 <p>
-  AI Systems Builder focused on <strong>Chinese creator tools</strong> and <strong>Digital Verification workflows</strong>.
-</p>
-
-<p>
-  <a href="https://github.com/YilouWang?tab=followers">
-    <img src="https://img.shields.io/github/followers/YilouWang?style=flat-square&logo=github&label=Followers" alt="followers" />
-  </a>
-  <a href="https://github.com/YilouWang?tab=repositories">
-    <img src="https://img.shields.io/badge/Open%20Source-Projects-2ea44f?style=flat-square&logo=github" alt="open source projects" />
-  </a>
-  <img src="https://img.shields.io/badge/Focus-AI%20x%20DV-0969da?style=flat-square" alt="focus" />
-</p>
-
-## What I Build
-
-- 中文内容创作工具：从灵感到成片的 AI 工作流（生成、评估、迭代、人审）。
-- 数字验证工程工具：SystemVerilog/UVM/Verilator 相关实践和自动化。
-- AI agent orchestration for real-world production loops.
-
-## Featured Projects
-
-| Project | Description |
-| --- | --- |
-| [badai_cardsmith-oss](https://github.com/YilouWang/badai_cardsmith-oss) | badai_cardsmith 开源版：精简模板与系列配置，支持生成、渲染与质量评估。 |
-| [Toy4Joy_DV](https://github.com/YilouWang/Toy4Joy_DV) | Hands-on digital verification playground covering SystemVerilog, UVM, Verilator, and pyUVM with practical examples. |
-| [uvm-verilator](https://github.com/YilouWang/uvm-verilator) | Fork used for practical UVM + Verilator workflow development. |
-| [PlanV_Verilator_Feature_Tests](https://github.com/YilouWang/PlanV_Verilator_Feature_Tests) | Company-facing feature test workflow for Verilator capabilities. |
-| [MS_Thesis_cocotb-BSHL](https://github.com/YilouWang/MS_Thesis_cocotb-BSHL) | Thesis-related integration work between cocotb/pyuvm and SystemVerilog VIP. |
-
-## In Private Development
-
-- `badai_cardsmith`: 面向中文内容创作者的 AI 轮播图引擎。
-- `ai-memoir`: 面向中文用户的 AI 回忆录系统。
-- `story_engine`: 面向中文叙事场景的 AI 故事引擎。
-- `interview_helper`: AI interview preparation toolkit for digital verification roles.
-
-## GitHub Snapshot
-
-<p>
-  <img height="165" src="https://github-readme-stats.vercel.app/api?username=YilouWang&show_icons=true&rank_icon=github&hide_border=true" alt="stats" />
-  <img height="165" src="https://github-readme-stats.vercel.app/api/top-langs/?username=YilouWang&layout=compact&hide_border=true" alt="top langs" />
+  <img src="https://img.shields.io/badge/Now-DV%20Engineer%20%40%20PlanV-0969da?style=flat-square" alt="planv" />
+  <img src="https://img.shields.io/badge/Focus-Verilator%20%7C%20UVM%20%7C%20AI-2da44e?style=flat-square" alt="focus" />
+  <img src="https://img.shields.io/badge/Languages-中文%20%2F%20English-6f42c1?style=flat-square" alt="lang" />
 </p>
 
 ---
 
+## Journey
+
+- 🎓 2017-2021: B.Eng. EE (Fuxin 🚄 Harbin)
+- 🎓 2021-2024: M.Sc. EE @ TUM (China ✈️ Munich)
+- 🧪 Internship: NeuSoft🇨🇳 & Infineon🇩🇪
+- 💼 2024-now: DV Engineer @ PlanV🇩🇪
+
+---
+
+## Original Projects
+
+### 🎠 [badai_cardsmith-oss](https://github.com/YilouWang/badai_cardsmith-oss)
+中文创作者轮播图引擎。  
+把选题文案变成可渲染配置，并跑质量评分闭环。  
+Result: scored carousel outputs for Xiaohongshu workflows.
+
+![badai_cardsmith-oss demo placeholder](https://dummyimage.com/720x340/f6f8fa/57606a&text=badai_cardsmith-oss+demo)
+
+### 🧰 [Toy4Joy_DV](https://github.com/YilouWang/Toy4Joy_DV)
+DV playground for SV/UVM/Verilator/cocotb.  
+Practical examples for onboarding and quick experiments.
+
+---
+
+## Contributions & Forks
+
+- 🔧 [uvm-verilator](https://github.com/YilouWang/uvm-verilator): work fork for UVM + Verilator integration.
+- 🧪 [PlanV_Verilator_Feature_Tests](https://github.com/YilouWang/PlanV_Verilator_Feature_Tests): feature validation flow at work.
+- 📘 [MS_Thesis_cocotb-BSHL](https://github.com/YilouWang/MS_Thesis_cocotb-BSHL): thesis implementation repo.
+- 🚀 [verilator](https://github.com/YilouWang/verilator): contribution-aligned work fork.
+
+---
+
+## Publications
+
+- 📄 Master's Thesis (TUM, 2024):  
+  *Bridging cocotb/pyUVM to SystemVerilog Verification IP*  
+  [MS_Thesis_cocotb-BSHL](https://github.com/YilouWang/MS_Thesis_cocotb-BSHL)
+
+---
+
+## Technical Writing / Blog
+
+- 📝 Verification Notes (GitHub): [Toy4Joy_DV](https://github.com/YilouWang/Toy4Joy_DV)
+- 📝 AI Workflow Notes (GitHub): [badai_cardsmith-oss](https://github.com/YilouWang/badai_cardsmith-oss)
+- 🧭 Personal blog (coming soon): add your blog URL here
+
+---
+
+## Currently Building (Private)
+
+- 🧠 `badai_cardsmith`: 中文创作生产版（更多模板/系列）。
+- 📚 `ai-memoir`: AI 回忆录系统（采访到交付）。
+- 📝 `story_engine`: 中文故事引擎（主题到剧情）。
+- 🎯 `interview_helper`: DV interview prep workflow.
+
+---
+
+## Contact
+
 <p>
-  Open to collaboration on AI product engineering and DV automation.
+  <a href="mailto:wangyilou123@gmail.com">
+    <img src="https://img.shields.io/badge/Email-wangyilou123%40gmail.com-0969da?style=flat-square&logo=gmail&logoColor=white" alt="email" />
+  </a>
+  <a href="https://www.linkedin.com/in/yilou-wang-a0569b215/">
+    <img src="https://img.shields.io/badge/LinkedIn-Yilou%20Wang-0a66c2?style=flat-square&logo=linkedin&logoColor=white" alt="linkedin" />
+  </a>
 </p>
+
+- Email: [wangyilou123@gmail.com](mailto:wangyilou123@gmail.com)
+- LinkedIn: [linkedin.com/in/yilou-wang-a0569b215](https://www.linkedin.com/in/yilou-wang-a0569b215/)
