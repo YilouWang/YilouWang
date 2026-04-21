@@ -1,0 +1,66 @@
+<svg width="840" height="300" viewBox="0 0 840 300" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    @keyframes sweep { 0% { transform: translateX(0); } 100% { transform: translateX(680px); } }
+    @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+    .label { font-family: 'Fira Code', 'Courier New', monospace; fill: #64748b; font-size: 11px; }
+    .grid { stroke: #1e293b; stroke-width: 0.5; }
+    .sig-uvm { stroke: #10b981; stroke-width: 2; fill: none; }
+    .sig-ai { stroke: #a78bfa; stroke-width: 2; fill: none; }
+    .sig-vld { stroke: #38bdf8; stroke-width: 1.5; fill: none; }
+    .phase-line { stroke: #f59e0b; stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.6; }
+    .phase-tag { font-family: 'Fira Code', monospace; fill: #f59e0b; font-size: 9px; opacity: 0.8; }
+    .tag { font-family: 'Fira Code', monospace; font-size: 10px; fill: #94a3b8; text-anchor: middle; }
+    .tag-ai { font-family: 'Fira Code', monospace; font-size: 10px; fill: #a78bfa; text-anchor: middle; }
+    .bg { fill: #020617; }
+    .cursor-g { animation: sweep 10s infinite linear; }
+    .status { font-family: 'Fira Code', monospace; font-size: 10px; fill: #64748b; animation: pulse 2s infinite; }
+  </style>
+
+  <rect width="840" height="300" rx="8" class="bg"/>
+
+  <!-- 左侧信号名栏 -->
+  <rect width="150" height="300" fill="#0f172a" opacity="0.8"/>
+  <text x="12" y="40" class="label" font-weight="bold">TIME [2024-2026]</text>
+  <text x="12" y="105" class="label" fill="#10b981">uvm_core_eng</text>
+  <text x="12" y="155" class="label" fill="#a78bfa">ai_gap_checker</text>
+  <text x="12" y="205" class="label" fill="#38bdf8">blog_publish_vld</text>
+  <text x="12" y="260" class="label">topic[127:0]</text>
+
+  <!-- 波形区域 -->
+  <g transform="translate(150, 0)">
+    <path class="grid" d="M100 0 V300 M200 0 V300 M300 0 V300 M400 0 V300 M500 0 V300 M600 0 V300" />
+
+    <!-- uvm_core_eng: high during 2024.08 - 2025.07, drops at phase shift -->
+    <path class="sig-uvm" d="M0 130 V95 H540 V130 H680" />
+
+    <!-- ai_gap_checker: low until 2026.02, then rises high -->
+    <path class="sig-ai" d="M0 170 H570 V135 H680" />
+
+    <!-- blog_publish_vld: 6 pulses centered at label x positions (50, 150, 220, 350, 475, 595) -->
+    <path class="sig-vld" d="M0 220 H40 V195 H60 V220 H140 V195 H160 V220 H210 V195 H230 V220 H340 V195 H360 V220 H465 V195 H485 V220 H585 V195 H605 V220 H680" />
+
+    <!-- Phase shift marker at 2025.07 -> 2026.02 -->
+    <line x1="555" y1="60" x2="555" y2="280" class="phase-line"/>
+    <text x="560" y="72" class="phase-tag">// phase shift: UVM -&gt; AI</text>
+
+    <!-- 文章标签（居中对齐脉冲） -->
+    <g>
+      <text x="50"  y="255" class="tag">#1 Cstr_If</text>
+      <text x="150" y="255" class="tag">#2 CI_Sys</text>
+      <text x="220" y="255" class="tag">#3 Aggr_Rand</text>
+      <text x="350" y="255" class="tag">#4 Array_Rand</text>
+      <text x="475" y="255" class="tag">#5 Struct_Rand</text>
+      <text x="595" y="255" class="tag-ai">#6 AI_Gap</text>
+    </g>
+
+    <!-- 扫描线（line + marker 一起动） -->
+    <g class="cursor-g">
+      <line x1="0" y1="0" x2="0" y2="280" stroke="#f43f5e" stroke-width="1" stroke-dasharray="2 2"/>
+      <polygon points="-5,0 5,0 0,8" fill="#f43f5e"/>
+    </g>
+  </g>
+
+  <!-- 底部状态条 -->
+  <rect x="0" y="280" width="840" height="20" fill="#1e293b" opacity="0.5"/>
+  <text x="15" y="294" class="status">STATUS: DUMPING_CAREER_LOG_TO_VCD...</text>
+</svg>
