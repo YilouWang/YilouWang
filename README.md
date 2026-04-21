@@ -84,23 +84,6 @@ DV playground for SV / UVM / Verilator / cocotb. Practical examples for onboardi
   <img src="./blog_waveform.svg" width="100%" alt="Verification Blog Waveform" />
 </div>
 
-```systemverilog
-// class Yilou_Blog_Sequence extends uvm_sequence;
-// Evolution: Deep Verilator implementation -> AI-driven verification
-task body();
-  // -- Phase 1: Enabling UVM in Verilator Series (The Infrastructure) --
-  `uvm_do_with(req, { topic == "Constraint random if/else"; date == "2024.08"; })
-  `uvm_do_with(req, { topic == "CI system & test models";   date == "2024.10"; })
-  `uvm_do_with(req, { topic == "Aggregate data type rand";  date == "2024.11"; })
-  `uvm_do_with(req, { topic == "Array constrained rand";    date == "2025.02"; })
-  `uvm_do_with(req, { topic == "Struct constrained rand";   date == "2025.07"; })
-
-  // -- Phase 2: AI for Hardware (The Future) --
-  #100ns;  // strategy shift: AI-assisted feature gap detection
-  `uvm_do_with(req, { topic == "Verilator Gap Checker w/ AI"; date == "2026.02"; })
-endtask
-```
-
 - **#1** · 2024.08 · [UVM in Verilator: Constraint random if/else](https://planv.tech/2024/08/02/enabling-uvm-support-in-verilator-series-part-1-constraint-random-ifelse-constraint-support/)
 - **#2** · 2024.10 · [UVM in Verilator: CI system and test models](https://planv.tech/2024/10/08/enabling-uvm-support-in-verilator-series-our-ci-system-and-test-models/)
 - **#3** · 2024.11 · [UVM in Verilator: Aggregate data type randomization](https://planv.tech/2024/11/07/enabling-uvm-support-in-verilator-series-basic-randomization-support-for-aggregate-data-types/)
