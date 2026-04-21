@@ -19,20 +19,20 @@ module Yilou_Wang_Career (
   output logic [31:0] career_impact
 );
 
-  // IF: Harbin Institute of Technology — B.Sc. EE
-  localparam string IF_STAGE = "HIT · Logic design foundation";
+  // IF: Harbin Institute of Technology
+  localparam string IF_STAGE = "HIT · B.Sc. EE / Comm. Eng.";
 
-  // ID: Technical University of Munich — M.Sc. EE
-  localparam string ID_STAGE = "TUM · Advanced digital systems";
+  // ID: Technical University of Munich
+  localparam string ID_STAGE = "TUM · M.Sc. EE / Comm. Eng.";
 
   // EX: Infineon Technologies — Internship
   localparam string EX_STAGE = "Infineon · SV / UVM / cocotb / pyuvm";
 
   // MEM: PlanV — current role (active stage)
-  localparam string MEM_STAGE = "PlanV · Verilator / RISC-V / Open-Source DV";
+  localparam string MEM_STAGE = "PlanV · Verification Engineer · Verilator / RISC-V / Open-Source Verification";
 
-  // WB: Life & community
-  localparam string WB_STAGE = "AI for Hardware · OSS · Verilator contributor";
+  // WB: Life — AI & OSS enthusiast
+  localparam string WB_STAGE = "AI for Verification · Open Source EDA";
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) career_impact <= 32'h0;
@@ -90,15 +90,6 @@ DV playground for SV / UVM / Verilator / cocotb. Practical examples for onboardi
 - **#4** · 2025.02 · [UVM in Verilator: Array constrained randomization](https://planv.tech/2025/02/07/enabling-uvm-support-in-verilator-series-constrained-randomization-support-for-all-types-of-arrays/)
 - **#5** · 2025.07 · [UVM in Verilator: Struct constrained randomization](https://planv.tech/2025/07/04/enabling-uvm-support-in-verilator-series-constrained-randomization-support-for-structs/)
 - **#6** · 2026.02 · 🤖 [Verilator Gap Checker with AI](https://planv.tech/2026/02/24/verilator-gap-checker-automatically-detecting-feature-gaps-in-verilator-with-ai/)
-
----
-
-## Currently Building (Private)
-
-- 🧠 `badai_cardsmith` — 中文创作生产版（更多模板/系列）
-- 📚 `ai-memoir` — AI 回忆录系统（采访到交付）
-- 📝 `story_engine` — 中文故事引擎（主题到剧情）
-- 🎯 `interview_helper` — DV interview prep workflow
 
 ---
 
