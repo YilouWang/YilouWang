@@ -78,7 +78,7 @@ DV playground for SV / UVM / Verilator / cocotb. Practical examples for onboardi
 
 ---
 
-## 📝 Simulation Logs (Latest Posts)
+## 📝 Technical Writing
 
 <div align="center">
   <img src="./blog_waveform.svg" width="100%" alt="Verification Blog Waveform" />
