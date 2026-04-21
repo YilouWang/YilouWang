@@ -25,8 +25,7 @@
     <text x="10" y="20" class="label">IF: FETCH</text>
     <text x="10" y="45" class="title">HIT 🇨🇳</text>
     <text x="10" y="65" class="tech-alt">Fuxin / Harbin</text>
-    <text x="10" y="90" class="tech">B.Sc. EE</text>
-    <text x="10" y="105" class="tech">Logic Found.</text>
+    <text x="10" y="90" class="tech">B.Sc. Comm. Eng.</text>
   </g>
 
   <!-- Stage 2: TUM -->
@@ -35,8 +34,7 @@
     <text x="10" y="20" class="label">ID: DECODE</text>
     <text x="10" y="45" class="title">TUM 🇩🇪</text>
     <text x="10" y="65" class="tech-alt">Munich</text>
-    <text x="10" y="90" class="tech">M.Sc. EE</text>
-    <text x="10" y="105" class="tech">Digital System</text>
+    <text x="10" y="90" class="tech">M.Sc. Comm. Eng.</text>
   </g>
 
   <!-- Stage 3: Infineon -->
@@ -56,17 +54,17 @@
     <text x="10" y="45" class="title">PlanV</text>
     <text x="10" y="65" class="tech-alt" fill="#f8fafc">DV Eng.</text>
     <text x="10" y="85" class="tech" fill="#34d399">Verilator / RISC-V</text>
-    <text x="10" y="100" class="tech" fill="#34d399">Open-Source DV</text>
+    <text x="10" y="100" class="tech" fill="#34d399">Open-Source Verification</text>
   </g>
 
   <!-- Stage 5: Life -->
   <g transform="translate(680, 65)">
     <rect width="140" height="120" rx="4" class="stage" stroke="#8b5cf6"/>
     <text x="10" y="20" class="label" fill="#a78bfa">WB: WRITEBACK</text>
-    <text x="10" y="45" class="title">Life &amp; AI</text>
-    <text x="10" y="65" class="tech-alt">OSS Enthusiast</text>
-    <text x="10" y="90" class="tech" fill="#a78bfa">AI for Hardware</text>
-    <text x="10" y="105" class="tech" fill="#a78bfa">Open Source</text>
+    <text x="10" y="45" class="title">Life</text>
+    <text x="10" y="65" class="tech-alt">AI &amp; OSS Enthusiast</text>
+    <text x="10" y="90" class="tech" fill="#a78bfa">AI for Verification</text>
+    <text x="10" y="105" class="tech" fill="#a78bfa">Open Source EDA</text>
   </g>
 
   <!-- 连接器 & 数据流 -->
