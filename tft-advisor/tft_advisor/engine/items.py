@@ -180,6 +180,7 @@ class _Ctx:
     carry_unit: Optional[Unit] = None
     carry_profile: Optional[str] = None
     comp_item_apis: set[str] = field(default_factory=set)
+    comp_apis: set[str] = field(default_factory=set)
     trait_counts: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -213,6 +214,10 @@ def _build_ctx(state: GameState, set_data: SetData, comp: Optional[CompSuggestio
             seen_traits.setdefault(t, set()).add(u.api_name)
     ctx.trait_counts = {t: len(v) for t, v in seen_traits.items()}
     if comp is not None:
+        for name in [*comp.core_units, *comp.have_units]:
+            champ = set_data.resolve_champion(name)
+            if champ is not None:
+                ctx.comp_apis.add(champ.api_name)
         for name in comp.carry_items:
             item = set_data.resolve_item(name)
             if item is not None:
@@ -327,9 +332,13 @@ def _pick_holder(role: str, item: Item, ctx: _Ctx) -> Optional[Unit]:
     carry = ctx.carry_unit if ctx.carry_unit is not None and ctx.free(ctx.carry_unit) else None
 
     def best(cands: list[Unit]) -> Optional[Unit]:
+        # Fielded units first (items on a bench unit do nothing), then comp units, then power.
         if not cands:
             return None
-        return max(cands, key=lambda u: (_power(u), ctx.on_board(u), u.row or 0, len(u.items), u.name))
+        return max(
+            cands,
+            key=lambda u: (ctx.on_board(u), u.api_name in ctx.comp_apis, _power(u), u.row or 0, len(u.items), u.name),
+        )
 
     if item.api_name in ctx.comp_item_apis and carry is not None:
         return carry
@@ -368,7 +377,7 @@ def _reason(a: str, b: str, item: Item, role: str, holder: Optional[Unit], comp_
         parts.append(f"给{holder.name}")
     if comp_item:
         parts.append("阵容主C核心装备")
-    parts.append("现在就合，早合早赢血" if slam else "先留散件，关键回合再合")
+    parts.append("现在就合，早成型少掉血" if slam else "先留散件，关键回合再合")
     return "，".join(parts)
 
 
@@ -404,7 +413,13 @@ def plan_items(
         holder = _pick_holder(role, item, ctx)
         if holder is not None:
             ctx.load[id(holder)] = ctx.load.get(id(holder), 0) + 1
-        text = f"{item.name} 已经合成好了还放在备战席" + (f"，装给{holder.name}" if holder else "，先上场一个英雄再装备")
+        if holder is not None:
+            where = f"，装给{holder.name}"
+        elif ctx.units:
+            where = "，英雄的装备格都满了，换下一件差的再装"
+        else:
+            where = "，先上场一个英雄再装备"
+        text = f"{item.name} 已经合成好了还放在备战席{where}"
         out.append(
             (1, _item_value(item, ctx), ItemSuggestion(item=item.name, components=[], holder=holder.name if holder else None, priority=1, reason=text))
         )

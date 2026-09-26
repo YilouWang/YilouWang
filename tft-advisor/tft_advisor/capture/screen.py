@@ -166,6 +166,18 @@ def _process_name(hwnd: int) -> Optional[str]:
         w["kernel32"].CloseHandle(handle)
 
 
+def _on_windows() -> bool:
+    return sys.platform == "win32"
+
+
+def _is_minimized(hwnd: Optional[int]) -> bool:
+    """True when ``hwnd`` is an existing window that is minimized (iconic)."""
+    if not hwnd:
+        return False
+    user32 = _win32()["user32"]
+    return bool(user32.IsWindow(hwnd) and user32.IsIconic(hwnd))
+
+
 def _client_rect(hwnd: int) -> Optional[Rect]:
     """Screen-space client area (no title bar / borders) of a visible, non minimized window."""
     w = _win32()
@@ -184,13 +196,22 @@ def _client_rect(hwnd: int) -> Optional[Rect]:
     return (int(origin.x), int(origin.y), int(width), int(height))
 
 
-def _find_game_hwnd(title: Optional[str], process_names: Sequence[str] = KNOWN_PROCESS_NAMES) -> Optional[int]:
+def _find_game_hwnd(
+    title: Optional[str],
+    process_names: Sequence[str] = KNOWN_PROCESS_NAMES,
+    *,
+    include_minimized: bool = False,
+) -> Optional[int]:
+    """Handle of the game window. With ``include_minimized`` a minimized game
+    window is returned too (ranked below any restored one), so callers can
+    tell "game minimized" from "game not running"."""
     w = _win32()
     user32 = w["user32"]
     if title:
         hwnd = user32.FindWindowW(None, title)
-        if hwnd and user32.IsWindowVisible(hwnd) and _client_rect(hwnd):
-            return int(hwnd)
+        if hwnd and user32.IsWindowVisible(hwnd):
+            if _client_rect(hwnd) or (include_minimized and _is_minimized(hwnd)):
+                return int(hwnd)
 
     wanted_titles = {t.casefold() for t in ([title] if title else []) + list(KNOWN_WINDOW_TITLES)}
     wanted_procs = {p.casefold() for p in process_names}
@@ -208,6 +229,8 @@ def _find_game_hwnd(title: Optional[str], process_names: Sequence[str] = KNOWN_P
                 rect = _client_rect(hwnd)
                 if rect:
                     candidates.append((rect[2] * rect[3], int(hwnd)))
+                elif include_minimized and _is_minimized(hwnd):
+                    candidates.append((0, int(hwnd)))
         except Exception:
             pass
         return True  # keep enumerating
@@ -273,7 +296,7 @@ class ScreenCapturer:
         self.cfg = cfg or CaptureConfig()
         self._log = log
         self._local = threading.local()
-        self._instances: list[Any] = []
+        self._instances: list[tuple[threading.Thread, Any]] = []  # (owner thread, mss instance)
         self._lock = threading.Lock()
         self._hwnd: Optional[int] = None
         self._next_search = 0.0
@@ -292,12 +315,26 @@ class ScreenCapturer:
         return self.last_source == "window"
 
     def grab(self) -> Optional[Image.Image]:
-        """One RGB frame, or None on any failure (never raises)."""
+        """One RGB frame, or None on any failure (never raises).
+
+        Also None while the game window is minimized: falling back to the
+        monitor would feed the desktop (or the dashboard) to the vision
+        pipeline and fire bogus round changes.
+        """
         if self._closed:
             return None
         try:
+            window, minimized = self._window_region()
+            if minimized:
+                self.last_source = "minimized"
+                self.last_rect = None
+                self._fail("游戏窗口已最小化，恢复游戏窗口后会继续截图")
+                return None
             sct = self._sct()
-            region, source = self._target(sct)
+            if window is not None:
+                region, source = window, "window"
+            else:
+                region, source = self._monitor_region(sct), "monitor"
             try:
                 shot = sct.grab(region)
             except Exception:
@@ -308,14 +345,17 @@ class ScreenCapturer:
                 region, source = self._monitor_region(sct), "monitor"
                 shot = sct.grab(region)
             img = Image.frombytes("RGB", (int(shot.size[0]), int(shot.size[1])), shot.bgra, "raw", "BGRX")
+            black = _is_black(img)
         except Exception as exc:  # noqa: BLE001 - the capture loop must never die
             self._drop_sct()
+            if self._closed:  # close() raced with this grab: not an error worth reporting
+                return None
             self._fail(self._explain(exc))
             return None
 
         self.last_source = source
         self.last_rect = (int(region["left"]), int(region["top"]), int(region["width"]), int(region["height"]))
-        if _is_black(img):
+        if black:
             self._black_run += 1
             if self._black_run >= self.BLACK_FRAMES_HINT:
                 self._fail("截图一直是全黑的：游戏可能处于独占全屏模式，请在游戏设置里改成无边框窗口")
@@ -331,7 +371,7 @@ class ScreenCapturer:
         self._closed = True
         with self._lock:
             instances, self._instances = self._instances, []
-        for inst in instances:
+        for _owner, inst in instances:
             try:
                 inst.close()
             except Exception:
@@ -348,9 +388,26 @@ class ScreenCapturer:
         inst = getattr(self._local, "sct", None)
         if inst is None:
             inst = _new_mss()
-            self._local.sct = inst
             with self._lock:
-                self._instances.append(inst)
+                closed = self._closed
+                # Instances of threads that have exited can never be used again:
+                # release them instead of keeping them (and their GDI handles) forever.
+                dead = [pair for pair in self._instances if not pair[0].is_alive()]
+                self._instances = [pair for pair in self._instances if pair[0].is_alive()]
+                if not closed:
+                    self._instances.append((threading.current_thread(), inst))
+            for _owner, old in dead:
+                try:
+                    old.close()
+                except Exception:
+                    pass
+            if closed:  # close() ran while this instance was being created
+                try:
+                    inst.close()
+                except Exception:
+                    pass
+                raise RuntimeError("capturer closed")
+            self._local.sct = inst
         return inst
 
     def _drop_sct(self) -> None:
@@ -359,8 +416,7 @@ class ScreenCapturer:
         if inst is None:
             return
         with self._lock:
-            if inst in self._instances:
-                self._instances.remove(inst)
+            self._instances = [pair for pair in self._instances if pair[1] is not inst]
         try:
             inst.close()
         except Exception:
@@ -374,31 +430,30 @@ class ScreenCapturer:
         mon = monitors[idx]
         return {"left": int(mon["left"]), "top": int(mon["top"]), "width": int(mon["width"]), "height": int(mon["height"])}
 
-    def _window_region(self) -> Optional[dict[str, int]]:
-        if not self.cfg.use_window or sys.platform != "win32":
-            return None
+    def _window_region(self) -> tuple[Optional[dict[str, int]], bool]:
+        """(client area of the game window or None, game window minimized)."""
+        if not self.cfg.use_window or not _on_windows():
+            return None, False
         try:
+            if self._hwnd and _is_minimized(self._hwnd):
+                return None, True
             rect = _client_rect(self._hwnd) if self._hwnd else None
             if rect is None:
                 now = time.monotonic()
                 if now < self._next_search:
-                    return None
-                self._hwnd = _find_game_hwnd(self.cfg.window_title)
+                    return None, False
+                self._hwnd = _find_game_hwnd(self.cfg.window_title, include_minimized=True)
                 self._next_search = now + (0.0 if self._hwnd else self.SEARCH_INTERVAL_S)
+                if self._hwnd and _is_minimized(self._hwnd):
+                    return None, True
                 rect = _client_rect(self._hwnd) if self._hwnd else None
         except Exception:
             self._hwnd = None
-            return None
+            return None, False
         if rect is None:
-            return None
+            return None, False
         left, top, width, height = rect
-        return {"left": left, "top": top, "width": width, "height": height}
-
-    def _target(self, sct: Any) -> tuple[dict[str, int], str]:
-        region = self._window_region()
-        if region is not None:
-            return region, "window"
-        return self._monitor_region(sct), "monitor"
+        return {"left": left, "top": top, "width": width, "height": height}, False
 
     @staticmethod
     def _explain(exc: Exception) -> str:
@@ -424,7 +479,8 @@ def _expand_paths(paths: Iterable[PathLike]) -> tuple[list[Path], list[str]]:
     missing: list[str] = []
     for raw in paths:
         text = os.path.expanduser(str(raw))
-        if any(ch in text for ch in "*?["):
+        # A literal path wins over glob syntax ("D:/录像[旧]/a.png" is a real file, not a pattern).
+        if any(ch in text for ch in "*?[") and not os.path.exists(text):
             matches = sorted(Path(p) for p in glob.glob(text))
             files.extend(p for p in matches if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS)
             if not matches:
@@ -503,18 +559,34 @@ _TAG_RE = re.compile(r"[^\w\-]+", re.UNICODE)
 def save_frame(img: Image.Image, directory: PathLike, tag: str = "frame") -> Path:
     """Save ``img`` as ``<directory>/<YYYYmmdd-HHMMSS-mmm>_<tag>.png``; returns the path.
 
-    Creates the directory, expands ``~``, never overwrites an existing file.
+    Creates the directory, expands ``~``, never overwrites an existing file
+    (the name is reserved with an exclusive create, so concurrent saves from
+    several threads cannot clobber each other). ``tag`` is sanitized, it can
+    never leave ``directory``.
     """
+    if not isinstance(img, Image.Image):
+        raise TypeError(f"save_frame needs a PIL image, got {type(img).__name__}")
     folder = Path(os.path.expanduser(str(directory)))
     folder.mkdir(parents=True, exist_ok=True)
     now = time.time()
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{int(now * 1000) % 1000:03d}"
     safe = _TAG_RE.sub("_", str(tag or "")).strip("_")[:48] or "frame"
-    path = folder / f"{stamp}_{safe}.png"
-    n = 1
-    while path.exists():
-        path = folder / f"{stamp}_{safe}-{n}.png"
-        n += 1
     out = img if img.mode in ("RGB", "RGBA", "L") else img.convert("RGB")
-    out.save(path, format="PNG", compress_level=3)
-    return path
+    n = 0
+    while True:
+        path = folder / (f"{stamp}_{safe}.png" if n == 0 else f"{stamp}_{safe}-{n}.png")
+        n += 1
+        try:
+            fh = open(path, "xb")
+        except FileExistsError:
+            continue
+        try:
+            with fh:
+                out.save(fh, format="PNG", compress_level=3)
+        except BaseException:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            raise
+        return path

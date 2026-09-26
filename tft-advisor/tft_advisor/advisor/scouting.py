@@ -22,6 +22,7 @@ from typing import Callable, Optional
 from ..data.mechanics import Mechanics
 from ..data.setdata import normalize_name
 from ..models import Analysis, GameState, OpponentSnapshot, ScoutRequest, ScreenType, StageRound, Unit
+from .rules import find_carry
 
 STAGE1_ROUNDS = 4
 ROUNDS_PER_STAGE = 7
@@ -122,7 +123,12 @@ class ScoutPlanner:
         by_norm = {_norm(name): snap for name, snap in state.opponents.items()}
         if key in by_norm:
             return by_norm[key]
-        match = difflib.get_close_matches(key, list(by_norm), n=1, cutoff=0.85)
+        # Fuzzy match absorbs OCR noise, but a snapshot whose name exactly
+        # matches another listed player belongs to that player ("Player1" must
+        # never pick up "Player2"'s board).
+        others = {_norm(p.name) for p in state.players} - {key}
+        pool = [n for n in by_norm if n not in others]
+        match = difflib.get_close_matches(key, pool, n=1, cutoff=0.85)
         return by_norm[match[0]] if match else None
 
     def _snapshot_index(self, snap: OpponentSnapshot) -> Optional[int]:
@@ -184,9 +190,13 @@ class ScoutPlanner:
                     expired = idx >= created_index
                 else:
                     expired = (snap.captured_at or 0.0) >= req.created_at
-            if not expired and known and not _name_in(who, alive):
-                # Player died or left the list (fuzzy: OCR noise must not close requests).
-                expired = True
+            if not expired and known:
+                if who in known:
+                    # Listed under the exact name: dead when not alive.
+                    expired = who not in alive
+                elif not _name_in(who, alive):
+                    # Player left the list (fuzzy: OCR noise must not close requests).
+                    expired = True
             if expired:
                 self._open.pop(rid, None)
                 self._open_meta.pop(rid, None)
@@ -212,8 +222,8 @@ class ScoutPlanner:
                 carry_keys.add(_norm(comp.carry))
             contested |= {_norm(p) for p in comp.contested_by}
         if not carry_keys and state.board:
-            best = max(state.board, key=lambda u: (len(u.items), u.cost or 0, u.star))
-            if len(best.items) >= 2:
+            best = find_carry(state, Analysis())  # most damage items; itemized tanks do not count
+            if best is not None:
                 carry_keys |= _unit_keys(best)
         comp_keys |= carry_keys
         comp_keys.discard("")

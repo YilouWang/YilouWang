@@ -525,6 +525,16 @@ def bundled_sample() -> dict[str, Any]:
     return data
 
 
+def set_notes(set_number: int) -> str:
+    """Hand-written notes on the set's special mechanics (for LLM prompts)."""
+    try:
+        return (
+            resources.files("tft_advisor.data").joinpath("bundled", f"set_notes_{set_number}.md").read_text(encoding="utf-8").strip()
+        )
+    except (FileNotFoundError, OSError):
+        return ""
+
+
 def bundled_snapshot(locale: str) -> Optional[dict[str, Any]]:
     """Trimmed real CommunityDragon export of the latest set known at release time."""
     return _bundled_json(f"snapshot_{locale}.json")

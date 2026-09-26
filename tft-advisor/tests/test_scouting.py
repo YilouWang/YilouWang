@@ -233,3 +233,44 @@ def test_ocr_name_noise_does_not_expire_request():
     planner.plan(state_at("3-1", players(("Alexander", 90), ("Bob", 80))), Analysis())
     noisy = players(("A1exander", 90), ("Bob", 80))
     assert targets(planner.plan(state_at("3-1", noisy), Analysis())) == ["Alexander", "Bob"]
+
+
+# ---------------------------------------------------------------------------
+# Regression tests (adversarial review)
+# ---------------------------------------------------------------------------
+
+
+def test_similar_names_do_not_share_snapshots():
+    plist = players(("Player1", 90), ("Player2", 80))
+    # Only Player2 was scouted (this stage); Player1's board is still unknown.
+    opponents = {"Player2": snap("Player2", "3-1", "Garen")}
+    reqs = ScoutPlanner(clock=Clock()).plan(state_at("3-2", plist, opponents), Analysis())
+    assert targets(reqs) == ["Player1"]
+    assert "还没记录" in reqs[0].reason
+
+
+def test_request_not_closed_by_similar_players_snapshot():
+    planner = ScoutPlanner(clock=Clock())
+    plist = players(("Player1", 90), ("Player2", 80))
+    assert targets(planner.plan(state_at("3-1", plist), Analysis())) == ["Player1", "Player2"]
+    scouted = {"Player2": snap("Player2", "3-1", "Garen")}
+    assert targets(planner.plan(state_at("3-1", plist, scouted), Analysis())) == ["Player1"]
+
+
+def test_dead_player_with_similar_name_expires():
+    planner = ScoutPlanner(clock=Clock())
+    planner.plan(state_at("3-1", players(("Player1", 90), ("Player2", 80))), Analysis())
+    dead = players(("Player1", 0), ("Player2", 80))
+    assert targets(planner.plan(state_at("3-1", dead), Analysis())) == ["Player2"]
+
+
+def test_itemized_tank_does_not_trigger_contest():
+    tank = Unit(api_name="TFT99_Braum", name="Braum", cost=2, star=2, items=["Warmog's Armor", "Bramble Vest"], row=0, col=3)
+    plist = players(("Weak", 30), ("Strong", 95))
+    opponents = {"Weak": snap("Weak", "2-5", "Braum"), "Strong": snap("Strong", "2-5", "Garen")}
+    reqs = ScoutPlanner(max_per_stage=1, clock=Clock()).plan(state_at("3-5", plist, opponents, board=[tank]), Analysis())
+    assert targets(reqs) == ["Strong"]
+    # A real carry (damage items) does count as a contest.
+    carry = Unit(api_name="TFT99_Braum", name="Braum", cost=2, star=2, items=["Deathblade", "Giant Slayer"], row=3, col=0)
+    reqs = ScoutPlanner(max_per_stage=1, clock=Clock()).plan(state_at("3-5", plist, opponents, board=[carry]), Analysis())
+    assert targets(reqs) == ["Weak"]

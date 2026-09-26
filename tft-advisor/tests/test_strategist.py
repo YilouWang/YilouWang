@@ -321,3 +321,32 @@ def test_state_message_is_trimmed_to_budget(monkeypatch):
     assert len(data.get("odds", [])) <= 5
     assert all("p_goal_by_gold" not in o for o in data.get("odds", []))
     assert all("bench" not in o for o in data.get("opponents", {}).values())
+
+
+# ---------------------------------------------------------------------------
+# Regression tests (adversarial review)
+# ---------------------------------------------------------------------------
+
+
+def test_priority_zero_is_most_urgent_and_scout_request_falls_back(set_data, mech):
+    from tft_advisor.models import ScoutRequest
+
+    state = make_state()
+    analysis = make_analysis(state, mech)
+    analysis.scout_requests = [ScoutRequest(id="s", text="请点开右侧玩家列表里「Alice」的棋盘，然后按 F7 记录", target_player="Alice")]
+    rules = RulesAdvisor(mech=mech).advise(state, analysis)
+    assert rules.scout_request
+    reply = dict(
+        REPLY,
+        actions=[
+            {"type": "roll", "text": "搜牌", "priority": 2},
+            {"type": "level", "text": "马上升 8", "priority": 0},
+        ],
+        scout_request=None,
+    )
+    with FakeAnthropic() as fake:
+        fake.queue_json(reply)
+        strat, _, _ = make_strategist(fake, set_data)
+        adv = strat.advise(state, analysis, rules)
+    assert [(a.type, a.priority) for a in adv.actions] == [(ActionType.LEVEL, 1), (ActionType.ROLL, 2)]
+    assert adv.scout_request == rules.scout_request

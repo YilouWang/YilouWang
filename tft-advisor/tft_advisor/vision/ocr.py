@@ -13,19 +13,27 @@ import re
 import threading
 import time
 import unicodedata
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional
 
 from ..models import Observation, ScreenObservation, ScreenType, ShopSlot, StageRound
-from .base import PerceptionError, PerceptionHint, crop_region
+from .base import FALLBACK_REGIONS, PerceptionError, PerceptionHint, _fallback_box, crop_region
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from PIL import Image
 
     from ..data.setdata import Champion, SetData
 
-# A text line recognized by the OCR engine: (text, confidence 0..1, box height px).
-TextLine = tuple[str, float, float]
 OcrEngine = Callable[[Any], Any]
+
+
+class OcrLine(NamedTuple):
+    """One text box recognized by the OCR engine (pixel values in the engine's input image)."""
+
+    text: str
+    score: float  # confidence 0..1
+    height: float  # box height
+    cy: float  # box center y
+    cx: float  # box center x
 
 MIN_CONFIDENCE = 0.5
 
@@ -44,7 +52,7 @@ def ocr_available() -> bool:
 # ---------------------------------------------------------------------------
 
 # Characters OCR commonly returns instead of the hyphen in "3-2" (incl. the CJK "一").
-_DASHES = "-‐‑‒–—―−－一~～_:："
+_DASHES = "-\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uff0d\u4e00~\uff5e_:\uff1a"
 _STAGE_RE = re.compile(r"(?<!\d)([1-9])\s*[" + re.escape(_DASHES) + r"]\s*([1-9])(?!\d)")
 # Letter / digit confusions that are safe inside a purely numeric field.
 _DIGIT_FIX = str.maketrans({"O": "0", "o": "0", "D": "0", "Q": "0", "l": "1", "I": "1", "|": "1", "i": "1", "S": "5", "s": "5", "B": "8", "Z": "2", "z": "2"})
@@ -141,26 +149,104 @@ def _box_height(box: Any) -> float:
         return 0.0
 
 
-def _box_center_y(box: Any) -> float:
+def _box_center(box: Any) -> tuple[float, float]:
     try:
+        xs = [float(pt[0]) for pt in box]
         ys = [float(pt[1]) for pt in box]
-        return (max(ys) + min(ys)) / 2
+        return (max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2
     except Exception:
-        return 0.0
+        return 0.0, 0.0
 
 
-def normalize_engine_output(raw: Any) -> list[tuple[str, float, float, float]]:
-    """RapidOCR ``(result, elapse)`` -> [(text, score, box_height, center_y)] sorted top to bottom."""
+def normalize_engine_output(raw: Any) -> list[OcrLine]:
+    """RapidOCR ``(result, elapse)`` -> ``OcrLine`` list sorted top to bottom, then left to right."""
     result = raw[0] if isinstance(raw, tuple) else raw
-    lines: list[tuple[str, float, float, float]] = []
+    lines: list[OcrLine] = []
     for entry in result or []:
         try:
             box, text, score = entry[0], entry[1], entry[2]
-            lines.append((str(text), float(score), _box_height(box), _box_center_y(box)))
+            cx, cy = _box_center(box)
+            lines.append(OcrLine(str(text), float(score), _box_height(box), cy, cx))
         except Exception:
             continue
-    lines.sort(key=lambda x: x[3])
+    lines.sort(key=lambda ln: (ln.cy, ln.cx))
     return lines
+
+
+def _row_joins(lines: list[OcrLine]) -> list[str]:
+    """Texts of boxes on the same row joined left to right ("Miss" + "Fortune"), bottom row first."""
+    rows: list[list[OcrLine]] = []
+    for ln in sorted(lines, key=lambda l: l.cy):
+        if rows and abs(ln.cy - rows[-1][-1].cy) <= max(ln.height, rows[-1][-1].height, 1.0) * 0.5:
+            rows[-1].append(ln)
+        else:
+            rows.append([ln])
+    out: list[str] = []
+    for row in reversed(rows):
+        if len(row) > 1:
+            words = [l.text.strip() for l in sorted(row, key=lambda l: l.cx)]
+            out.append(" ".join(words))
+            if len(words) > 2:  # name + cost digit on the same row: drop the rightmost box
+                out.append(" ".join(words[:-1]))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# shop card geometry
+# ---------------------------------------------------------------------------
+
+# The 5-card strip in a 16:9 frame (fractions). The "shop" HUD region is padded
+# and also contains the Buy XP / Reroll buttons, so splitting it in 5 would
+# misalign the cards. Two placements are known (see capture/regions.py notes):
+# the standard HUD (Set 18) and the "Trials" HUD shifted left (also close to the
+# legacy client).
+SHOP_CARD_STRIPS: dict[str, tuple[float, float, float, float]] = {
+    "standard": (0.290, 0.855, 0.808, 0.998),
+    "trials": (0.249, 0.855, 0.777, 0.998),
+}
+CARD_LEFT_PAD = 0.10  # names can start slightly left of the card art (fraction of a card width)
+
+
+def _shop_reference(size: tuple[int, int]) -> tuple[tuple[int, int, int, int], tuple[float, float, float, float]]:
+    """Pixel box of the "shop" region and the fractions it was made from (same source)."""
+    try:
+        from ..capture import regions as _regions  # lazy: written by the capture module
+
+        frac = tuple(float(v) for v in _regions.REGIONS["shop"])
+        box = tuple(int(v) for v in _regions.region_box(size, "shop"))
+        if len(frac) == 4 and len(box) == 4 and frac[2] > frac[0] and frac[3] > frac[1]:
+            return box, frac  # type: ignore[return-value]
+    except Exception:
+        pass
+    return _fallback_box(size, "shop"), FALLBACK_REGIONS["shop"]
+
+
+def shop_card_boxes(size: tuple[int, int], placement: str = "standard") -> list[tuple[int, int, int, int]]:
+    """Pixel boxes of the 5 shop cards (left to right) for a frame size and HUD placement.
+
+    Expressed relative to the "shop" region so the capture module's viewport /
+    layout handling (ultrawide, 16:10) carries over.
+    """
+    (bx0, by0, bx1, by1), (fx0, fy0, fx1, fy1) = _shop_reference(size)
+    cx0, cy0, cx1, cy1 = SHOP_CARD_STRIPS[placement]
+    sx = (bx1 - bx0) / (fx1 - fx0)
+    sy = (by1 - by0) / (fy1 - fy0)
+    left, right = bx0 + (cx0 - fx0) * sx, bx0 + (cx1 - fx0) * sx
+    top, bottom = by0 + (cy0 - fy0) * sy, by0 + (cy1 - fy0) * sy
+    pitch = (right - left) / 5
+    w, h = int(size[0]), int(size[1])
+    boxes = []
+    for i in range(5):
+        x0 = left + i * pitch - CARD_LEFT_PAD * pitch
+        x1 = left + (i + 1) * pitch
+        box = (max(0, int(x0)), max(0, int(top)), min(w, int(round(x1))), min(h, int(round(bottom))))
+        boxes.append((box[0], box[1], max(box[2], box[0] + 1), max(box[3], box[1] + 1)))
+    return boxes
+
+
+def _is_meaningful(text: str) -> bool:
+    """At least 2 letters (Latin or CJK): cost digits / stray marks do not count as card text."""
+    return sum(1 for ch in _nfkc(text) if ch.isalpha()) >= 2
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +268,8 @@ class OcrPerceiver:
         self.min_confidence = min_confidence
         self._engine = engine
         self._lock = threading.Lock()
+        # Placement that worked last is tried first (the HUD does not move within a game).
+        self._placements: list[str] = list(SHOP_CARD_STRIPS)
 
     # ---- engine -------------------------------------------------------------
     def _get_engine(self) -> OcrEngine:
@@ -196,7 +284,7 @@ class OcrPerceiver:
                 raise PerceptionError(f"OCR 不可用: {exc}") from exc
         return self._engine
 
-    def read_lines(self, img: "Image.Image") -> list[tuple[str, float, float, float]]:
+    def read_lines(self, img: "Image.Image") -> list[OcrLine]:
         """OCR one (already cropped) image; returns confident lines top to bottom."""
         import numpy as np
 
@@ -204,41 +292,46 @@ class OcrPerceiver:
         arr = np.asarray(preprocess_for_ocr(img))
         with self._lock:  # onnxruntime sessions are not guaranteed thread-safe
             raw = engine(arr)
-        return [ln for ln in normalize_engine_output(raw) if ln[1] >= self.min_confidence and ln[0].strip()]
+        return [ln for ln in normalize_engine_output(raw) if ln.score >= self.min_confidence and ln.text.strip()]
 
     # ---- fields -------------------------------------------------------------
     def read_stage(self, frame: "Image.Image") -> Optional[str]:
-        for text, _score, _h, _y in self.read_lines(crop_region(frame, "stage")):
-            stage = parse_stage_text(text)
+        for ln in self.read_lines(crop_region(frame, "stage")):
+            stage = parse_stage_text(ln.text)
             if stage:
                 return stage
         return None
 
     def read_gold(self, frame: "Image.Image") -> Optional[int]:
         # The streak counter sits next to the gold in a smaller font: prefer the tallest number.
-        lines = sorted(self.read_lines(crop_region(frame, "gold")), key=lambda ln: -ln[2])
-        for text, _score, _h, _y in lines:
-            gold = parse_gold_text(text)
+        lines = sorted(self.read_lines(crop_region(frame, "gold")), key=lambda ln: -ln.height)
+        for ln in lines:
+            gold = parse_gold_text(ln.text)
             if gold is not None:
                 return gold
         return None
 
     def read_level(self, frame: "Image.Image") -> tuple[Optional[int], Optional[tuple[int, int]]]:
-        lines = self.read_lines(crop_region(frame, "level"))
+        # The "xp" region covers the "Lvl. 6" label and the "20/36" XP text ("level" only the label).
+        lines = self.read_lines(crop_region(frame, "xp"))
         level: Optional[int] = None
         xp: Optional[tuple[int, int]] = None
-        for text, _score, _h, _y in lines:
+        for ln in lines:
             if level is None:
-                level = parse_level_text(text)
+                level = parse_level_text(ln.text)
             if xp is None:
-                xp = parse_xp_text(text)
-        if level is None and len(lines) > 1:
-            level = parse_level_text(" ".join(ln[0] for ln in lines))
+                xp = parse_xp_text(ln.text)
+        if level is None:  # "Lv." and "7" detected as separate boxes on one row
+            for joined in _row_joins(lines):
+                level = parse_level_text(joined)
+                if level is not None:
+                    break
         return level, xp
 
-    def _match_card(self, lines: list[tuple[str, float, float, float]]) -> Optional["Champion"]:
-        # The champion name is at the bottom of the card (trait names are above it): bottom lines first.
-        candidates = [ln[0] for ln in reversed(lines)]
+    def _match_card(self, lines: list[OcrLine]) -> Optional["Champion"]:
+        # The champion name is at the bottom of the card (trait names are above it): bottom lines
+        # first, then boxes of one row joined together for multi-word names split by the detector.
+        candidates = [ln.text for ln in sorted(lines, key=lambda l: -l.cy)] + _row_joins(lines)
         for text in candidates:
             champ = self.set_data.resolve_champion(text)
             if champ is not None:
@@ -251,26 +344,36 @@ class OcrPerceiver:
                     return champ
         return None
 
-    def read_shop(self, frame: "Image.Image", notes: list[str]) -> Optional[list[ShopSlot]]:
-        shop_img = crop_region(frame, "shop")
-        w, h = shop_img.size
-        if w < 5 or h < 2:
-            return None
+    def _read_cards(self, frame: "Image.Image", placement: str) -> tuple[Optional[list[ShopSlot]], Optional[str]]:
+        """Read 5 cards for one HUD placement: (slots or None, problem note or None)."""
         slots: list[ShopSlot] = []
         resolved = 0
-        for i in range(5):
-            card = shop_img.crop((round(i * w / 5), 0, round((i + 1) * w / 5), h))
-            lines = self.read_lines(card)
+        for i, box in enumerate(shop_card_boxes(frame.size, placement)):
+            lines = [ln for ln in self.read_lines(frame.crop(box)) if _is_meaningful(ln.text)]
             if not lines:
                 slots.append(ShopSlot())  # nothing written on the card: bought / empty slot
                 continue
             champ = self._match_card(lines)
             if champ is None:
-                notes.append(f"商店第 {i + 1} 格无法识别 ({_nfkc(lines[-1][0])[:12]})")
-                return None  # one unreadable card makes the whole shop untrustworthy
+                # One unreadable card makes the whole shop untrustworthy (stop early, save time).
+                return None, f"商店第 {i + 1} 格无法识别 ({_nfkc(lines[-1].text)[:12]})"
             slots.append(ShopSlot(name=champ.name, cost=champ.cost))
             resolved += 1
-        return slots if resolved else None
+        return (slots, None) if resolved else (None, None)
+
+    def read_shop(self, frame: "Image.Image", notes: list[str]) -> Optional[list[ShopSlot]]:
+        problem: Optional[str] = None
+        for placement in list(self._placements):
+            slots, note = self._read_cards(frame, placement)
+            if slots is not None:
+                if self._placements[0] != placement:
+                    self._placements.remove(placement)
+                    self._placements.insert(0, placement)
+                return slots
+            problem = problem or note
+        if problem:
+            notes.append(problem)
+        return None
 
     # ---- main ---------------------------------------------------------------
     def read_screen(self, image: "Image.Image", purpose: str = "auto") -> ScreenObservation:
@@ -302,6 +405,11 @@ class OcrPerceiver:
             raise
         except Exception as exc:
             raise PerceptionError(f"OCR 识别失败: {exc}") from exc
+        # Raise instead of returning an empty result so callers can fall back to Claude.
+        if purpose == "shop" and screen.shop is None:
+            raise PerceptionError("OCR 没有读到商店" + (f": {screen.notes[0]}" if screen.notes else ""))
+        if all(getattr(screen, f) is None for f in ("stage", "gold", "level", "shop")):
+            raise PerceptionError("OCR 没有读到任何内容")
         return Observation(
             screen=screen,
             captured_at=captured_at,
@@ -312,6 +420,7 @@ class OcrPerceiver:
 
 
 __all__ = [
+    "OcrLine",
     "OcrPerceiver",
     "normalize_engine_output",
     "ocr_available",
@@ -320,4 +429,5 @@ __all__ = [
     "parse_stage_text",
     "parse_xp_text",
     "preprocess_for_ocr",
+    "shop_card_boxes",
 ]

@@ -31,7 +31,7 @@ tft-advisor = "tft_advisor.cli:main"
 include = ["tft_advisor*"]
 
 [tool.setuptools.package-data]
-tft_advisor = ["data/bundled/*.json", "data/bundled/*.toml", "ui/static/*"]
+tft_advisor = ["data/bundled/*.json", "data/bundled/*.toml", "data/bundled/*.md", "data/bundled/demo_s18/*.json", "ui/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

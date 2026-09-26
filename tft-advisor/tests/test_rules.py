@@ -350,3 +350,182 @@ def test_zero_roll_budget_is_not_advertised(advisor):
     )
     check_contract(broke)
     assert ActionType.ROLL not in types(broke) and ActionType.OTHER in types(broke)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests (adversarial review)
+# ---------------------------------------------------------------------------
+
+
+def test_itemized_tank_is_not_taken_for_the_carry(advisor, set_data):
+    from tft_advisor.advisor.rules import is_tank_item
+
+    tank = unit("Braum", 2, 2, ["Warmog's Armor", "Bramble Vest", "Dragon's Claw"], row=0, col=3)
+    carry = unit("Ashe", 3, 2, ["Giant Slayer", "Red Buff"], row=3, col=6)
+    state = GameState(stage=StageRound.parse("3-3"), gold=30, level=6, hp=70, board=[tank, carry])
+    assert find_carry(state, Analysis()).name == "Ashe"
+    adv = advisor.advise(state, Analysis())
+    assert ActionType.POSITION not in types(adv)  # never "move the tank to the back corner"
+    assert "Ashe" in adv.positioning
+    # Only tank items: no carry at all.
+    assert find_carry(GameState(board=[tank]), Analysis()) is None
+    # Name list (en / zh) and set-data recipes (built only from vest / cloak / belt).
+    assert is_tank_item("狂徒铠甲") and is_tank_item("Chain Vest") and not is_tank_item("Giant Slayer")
+    assert is_tank_item("TFT_Item_GargoyleStoneplate", set_data)
+    assert not is_tank_item("TFT_Item_TitansResolve", set_data)
+
+
+def test_no_position_action_from_combat_frame_or_on_carousel(advisor):
+    carry = unit("Draven", 4, 2, ["Deathblade", "Giant Slayer"], row=1, col=3)
+    combat = GameState(stage=StageRound.parse("3-3"), screen_type=ScreenType.COMBAT, gold=20, level=6, hp=70, board=[carry])
+    assert ActionType.POSITION not in types(advisor.advise(combat, Analysis()))
+    planning = combat.model_copy(update={"screen_type": ScreenType.PLANNING})
+    pos = action(advisor.advise(planning, Analysis()), ActionType.POSITION)
+    assert "Draven" in pos.text and "近战" in pos.text
+    carousel = combat.model_copy(update={"stage": StageRound.parse("3-4"), "screen_type": ScreenType.CAROUSEL})
+    assert ActionType.POSITION not in types(advisor.advise(carousel, Analysis()))
+
+
+def test_carousel_does_not_advise_buying_or_selling(advisor):
+    bench = [unit("Garen", 1)] * 9
+    state = GameState(
+        stage=StageRound.parse("3-4"), gold=30, level=6, hp=70, bench=bench, shop_units=[unit("Ashe", 3)]
+    )
+    adv = advisor.advise(state, Analysis(shop_picks=["Ashe"], sell_candidates=["Garen"]))
+    check_contract(adv)
+    assert ActionType.BUY not in types(adv) and ActionType.SELL not in types(adv)
+    assert ActionType.CAROUSEL in types(adv)
+
+
+def test_upgrade_flag_counts_only_one_star_copies(advisor):
+    shop = [unit("Ashe", 3), unit("Ashe", 3), None, None, None]
+    base = dict(stage=StageRound.parse("3-3"), gold=30, level=6, hp=70)
+    # A two-star Ashe plus one more copy is not an upgrade.
+    two_star = GameState(board=[unit("Ashe", 3, 2)], shop_units=shop, **base)
+    buy = action(advisor.advise(two_star, Analysis(shop_picks=["Ashe"])), ActionType.BUY)
+    assert "升星" not in buy.text and buy.priority == 2
+    # Two-star plus two one-stars plus one bought copy is.
+    pair = GameState(board=[unit("Ashe", 3, 2), unit("Ashe", 3)], bench=[unit("Ashe", 3)], shop_units=shop, **base)
+    assert "升星" in action(advisor.advise(pair, Analysis(shop_picks=["Ashe"])), ActionType.BUY).text
+    # One copy owned plus both shop copies.
+    single = GameState(bench=[unit("Ashe", 3)], shop_units=shop, **base)
+    buy = action(advisor.advise(single, Analysis(shop_picks=["Ashe", "Ashe"])), ActionType.BUY)
+    assert "第1格" in buy.text and "第2格" in buy.text and "升星" in buy.text
+
+
+def test_roll_recommended_without_budget_says_save(advisor, mech):
+    # economy.py can return ROLL with roll_budget 0 (medium HP, under 20 gold at a roll-down round).
+    state = GameState(stage=StageRound.parse("4-1"), gold=12, level=7, xp_current=10, hp=50)
+    econ = plan_economy(state, mech)
+    adv = advisor.advise(state, Analysis(econ=econ))
+    check_contract(adv)
+    assert adv.headline == "金币不够搜牌，先存钱"
+    assert "搜牌稳住" not in adv.headline
+    assert ActionType.ROLL not in types(adv) and ActionType.SAVE in types(adv)
+    slow = advisor.advise(state, Analysis(econ=EconPlan(recommendation=EconAction.SLOW_ROLL, roll_budget=1, reason="慢搜")))
+    assert ActionType.ROLL not in types(slow) and slow.headline == "金币不够搜牌，先存钱"
+    # All-in with no gold: do not promise a roll-down.
+    broke = advisor.advise(
+        GameState(stage=StageRound.parse("5-1"), gold=0, level=8, hp=10),
+        Analysis(econ=EconPlan(recommendation=EconAction.ALL_IN, roll_budget=0)),
+    )
+    assert "搜牌" not in broke.headline and "血量危险" in broke.headline
+    # Level and roll with a budget below one reroll: just level.
+    lr = advisor.advise(
+        GameState(stage=StageRound.parse("4-1"), gold=33, level=6, xp_current=0, hp=50),
+        Analysis(econ=EconPlan(recommendation=EconAction.LEVEL_AND_ROLL, roll_budget=1, target_level=7)),
+    )
+    assert lr.headline == "升到7级" and ActionType.ROLL not in types(lr)
+
+
+def test_reroll_plan_does_not_follow_the_standard_curve(advisor, mech):
+    state = GameState(stage=StageRound.parse("4-1"), gold=62, level=6, xp_current=10, hp=70)
+    econ = plan_economy(state, mech, "reroll2")
+    assert econ.recommendation == EconAction.SLOW_ROLL
+    adv = advisor.advise(state, Analysis(econ=econ))
+    check_contract(adv)
+    assert "停在 6 级慢搜" in adv.plan
+    assert "4-5 升 8" not in adv.plan and "补到 7" not in adv.plan
+    early = GameState(stage=StageRound.parse("3-5"), gold=30, level=6, xp_current=10, hp=70)
+    adv = advisor.advise(early, Analysis(econ=plan_economy(early, mech, "reroll2")))
+    assert "4-1 升 7" not in adv.plan and "慢搜" in adv.plan
+
+
+def test_roll_target_skips_exhausted_pool(advisor):
+    def odds(name, remaining):
+        return HitOdds(
+            unit=name, api_name=f"TFT99_{name}", cost=4, owned_copies=3, goal_copies=9, goal_star=3,
+            seen_elsewhere=0, remaining_in_pool=remaining, level=8, p_per_slot=0.0, p_in_shop=0.0,
+            p_goal_by_gold={20: 0.0},
+        )
+
+    state = GameState(stage=StageRound.parse("4-2"), gold=60, level=8, hp=40)
+    econ = EconPlan(recommendation=EconAction.ROLL, roll_budget=40)
+    adv = advisor.advise(state, Analysis(econ=econ, odds=[odds("Draven", 2), odds("Akali", 8)]))
+    roll = action(adv, ActionType.ROLL)
+    assert "Draven" not in roll.text and "Akali" in roll.text
+    adv = advisor.advise(state, Analysis(econ=econ, odds=[odds("Draven", 0)]))
+    assert action(adv, ActionType.ROLL).text == "最多花 40 金币搜牌"
+
+
+def test_long_roll_target_keeps_text_whole(advisor):
+    name = "VeryVeryLongChampionName"
+    o = HitOdds(
+        unit=name, api_name="TFT99_X", cost=4, owned_copies=1, goal_copies=3, goal_star=2, seen_elsewhere=0,
+        remaining_in_pool=9, level=8, p_per_slot=0.01, p_in_shop=0.05, p_goal_by_gold={20: 0.4},
+    )
+    state = GameState(stage=StageRound.parse("4-2"), gold=60, level=8, hp=40)
+    roll = action(advisor.advise(state, Analysis(econ=EconPlan(recommendation=EconAction.ROLL, roll_budget=20), odds=[o])), ActionType.ROLL)
+    assert roll.text == f"最多花 20 金币搜牌，找 {name}"  # odds clause dropped instead of cut mid-way
+
+
+def test_stale_augment_choices_are_ignored(advisor):
+    base = dict(stage=StageRound.parse("2-1"), gold=10, level=4, hp=90, screen_type=ScreenType.PLANNING)
+    open_choice = GameState(augment_choices=["Rich Get Richer", "Tiny Titans"], **base)
+    assert ActionType.AUGMENT in types(advisor.advise(open_choice, Analysis()))
+    picked = GameState(augment_choices=["Rich Get Richer", "Tiny Titans"], augments=["Tiny Titans"], **base)
+    adv = advisor.advise(picked, Analysis())
+    assert ActionType.AUGMENT not in types(adv) and adv.augment is None and "增强" not in adv.headline
+    old = GameState(
+        augment_choices=["Rich Get Richer"], field_age={"augment_choices": 100.0}, last_update=400.0, **base
+    )
+    assert ActionType.AUGMENT not in types(advisor.advise(old, Analysis()))
+    # The augment screen itself always counts.
+    shown = old.model_copy(update={"screen_type": ScreenType.AUGMENT_SELECT})
+    assert ActionType.AUGMENT in types(advisor.advise(shown, Analysis()))
+
+
+def test_headline_is_not_repeated_as_an_action(advisor, mech):
+    state = GameState(stage=StageRound.parse("1-3"), gold=3, level=3, hp=100)
+    adv = advisor.advise(state, Analysis(econ=plan_economy(state, mech)))
+    assert all(a.text != adv.headline for a in adv.actions)
+
+
+def test_dash_only_texts_never_leave_an_empty_headline(advisor):
+    state = GameState(stage=StageRound.parse("3-3"), gold=20, level=6, hp=70)
+    adv = advisor.advise(state, Analysis(econ=EconPlan(recommendation=EconAction.HOLD, reason="\u2014\u2014")))
+    check_contract(adv)
+    carry = unit("Dr\u2014aven", 4, 2, ["Deathblade", "Giant Slayer"], row=3, col=0)
+    adv = advisor.advise(GameState(stage=StageRound.parse("3-3"), board=[carry]), Analysis())
+    check_contract(adv)
+
+
+def test_long_texts_are_cut_at_clause_boundaries(advisor):
+    assert clip("备战席有散件（Recurve Bow）暂时合不成装备，选秀和野怪优先拿能配对的散件", 40) == "备战席有散件（Recurve Bow）暂时合不成装备"
+    # Never an unclosed parenthesis.
+    assert clip("买 LongChampionNameAAA（第1格）", 22) == "买 LongChampionNameAAA"
+    # The upgrade note survives when three long names do not fit.
+    shop = [unit("Morgana", 3), unit("Volibear", 3), unit("Katarina", 3), None, None]
+    state = GameState(
+        stage=StageRound.parse("3-3"), gold=30, level=6, hp=70, bench=[unit("Morgana", 3), unit("Morgana", 3)], shop_units=shop
+    )
+    buy = action(advisor.advise(state, Analysis(shop_picks=["Morgana", "Volibear", "Katarina"])), ActionType.BUY)
+    assert buy.text.endswith("能升星") and "Morgana（第1格）" in buy.text and len(buy.text) <= 40
+
+
+def test_carousel_item_slam_waits_until_after(advisor):
+    state = GameState(stage=StageRound.parse("3-4"), gold=30, level=6, hp=70, item_bench=["B.F. Sword", "B.F. Sword"])
+    analysis = Analysis(items=[ItemSuggestion(item="Deathblade", components=["B.F. Sword", "B.F. Sword"], holder="Draven", priority=1)])
+    adv = advisor.advise(state, analysis)
+    assert action(adv, ActionType.ITEM).priority == 2
+    assert adv.actions[0].type == ActionType.CAROUSEL

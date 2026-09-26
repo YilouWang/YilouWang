@@ -85,23 +85,27 @@ def cmd_run(args: argparse.Namespace) -> int:
 def _demo_fixture_dir() -> Path:
     from importlib import resources
 
-    return Path(str(resources.files("tft_advisor.data").joinpath("bundled", "demo")))
+    return Path(str(resources.files("tft_advisor.data").joinpath("bundled", "demo_s18")))
 
 
 def cmd_demo(args: argparse.Namespace) -> int:
     """Replay a scripted sample game through the whole pipeline (no game, no API key)."""
     from .app import AdvisorApp, Job
-    from .data.setdata import SetData, bundled_sample
+    from .data.setdata import SetData, bundled_sample, bundled_snapshot
     from .vision.mock import MockPerceiver
 
     cfg = _load(args)
     cfg.advisor.auto = False
     fixtures = Path(args.fixtures) if args.fixtures else _demo_fixture_dir()
     perceiver = MockPerceiver(fixtures, loop=True)
-    set_data = SetData.from_cdragon(bundled_sample(), source="bundled-sample")
+    if args.fixtures:
+        set_data = SetData.from_cdragon(bundled_sample(), source="bundled-sample")
+    else:
+        # The scripted demo game uses real Set 18 names (bundled snapshot).
+        set_data = SetData.from_cdragon(bundled_snapshot("zh_cn"), bundled_snapshot("en_us"), source="bundled-snapshot")
     app = AdvisorApp(cfg, set_data=set_data, perceiver=perceiver, fast_perceiver=None, use_llm=args.llm, offline_data=True)
     url = app.start(dashboard=not args.no_dashboard, hotkeys=False, capture=False)
-    print("演示模式：用内置样例对局驱动整个流程（不是真实赛季数据）")
+    print("演示模式：用一局预先写好的 S18 对局驱动整个流程（不需要游戏）")
     if url:
         print(f"看板: {url}")
     _open(url, cfg)

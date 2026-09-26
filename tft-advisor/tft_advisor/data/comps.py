@@ -143,7 +143,8 @@ def _build_comp(entry: dict[str, Any], set_data: SetData, log: LogFn) -> Optiona
         if champ.api_name not in seen:
             seen.add(champ.api_name)
             units.append(champ.name)
-    if not units or len(units) * 2 < len(raw_units):
+    # "Mostly unresolved" counts distinct names: a unit listed twice is not two misses.
+    if not units or len(set(unresolved)) > len(units):
         log(f"阵容 {name} 的英雄大多不在当前赛季数据里，已忽略（无法识别：{', '.join(unresolved)}）")
         return None
     if unresolved:
@@ -205,14 +206,18 @@ def load_comps(path: Optional[str], set_data: SetData, log: Optional[LogFn] = No
 
     try:
         raw = _read_file(p)
-    except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
+    except Exception as exc:  # OSError, bad JSON / TOML, absurd nesting: never kill startup
         emit(f"阵容文件读取失败（{p.name}）：{exc}")
         return []
 
     comps: list[CompDef] = []
     names: set[str] = set()
     for entry in _entries(raw):
-        comp = _build_comp(entry, set_data, emit)
+        try:
+            comp = _build_comp(entry, set_data, emit)
+        except Exception as exc:  # one malformed entry must not drop the whole file
+            emit(f"阵容配置有误，已忽略一条：{exc}")
+            continue
         if comp is None:
             continue
         if comp.name in names:

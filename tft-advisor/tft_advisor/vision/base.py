@@ -13,6 +13,7 @@ implements the same tiny protocol so the orchestrator can swap or combine them.
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional, Protocol, runtime_checkable
 
@@ -28,6 +29,36 @@ def normalize_purpose(purpose: Optional[str]) -> str:
     """Map any purpose string to one of :data:`PURPOSES` (unknown -> ``auto``)."""
     p = (purpose or "auto").strip().lower()
     return p if p in PURPOSES else "auto"
+
+
+_EM_DASH = "\u2014"
+# Two-em / three-em dashes look exactly like the forbidden double em dash; the
+# horizontal bar is a common stand-in for a single em dash.
+_LONG_DASHES = ("\u2e3a", "\u2e3b")
+_HORIZONTAL_BAR = "\u2015"
+
+
+def clean_text(text: str) -> str:
+    """Player-facing text must never contain the em dash: double becomes a comma, single a hyphen."""
+    out = (text or "").replace(_EM_DASH * 2, "，")
+    for dash in _LONG_DASHES:
+        out = out.replace(dash, "，")
+    return out.replace(_EM_DASH, "-").replace(_HORIZONTAL_BAR, "-")
+
+
+def clean_name(text: Optional[str], max_len: int = 48) -> Optional[str]:
+    """A short single-line name for prompts / observations (e.g. a player name typed on a phone).
+
+    Control and separator characters (line breaks, tabs, zero-width marks)
+    become spaces, whitespace is collapsed and the length capped; ``None`` when
+    nothing is left. Keeps LAN input from bloating the prompt or smuggling
+    extra instruction lines into it.
+    """
+    if text is None:
+        return None
+    chars = [" " if unicodedata.category(ch)[0] in ("C", "Z") else ch for ch in str(text)]
+    out = " ".join("".join(chars).split())[:max_len].strip()
+    return clean_text(out) or None
 
 
 @dataclass
@@ -75,20 +106,22 @@ class Perceiver(Protocol):
 # approximate fractions of a 16:9 frame (x0, y0, x1, y1) are only a fallback so
 # the vision package keeps working (and testing) without the capture package.
 FALLBACK_REGIONS: dict[str, tuple[float, float, float, float]] = {
-    "stage": (0.35, 0.0, 0.65, 0.06),
-    "top_banner": (0.30, 0.03, 0.70, 0.14),
-    "gold": (0.44, 0.805, 0.56, 0.865),
-    "streak": (0.53, 0.805, 0.62, 0.865),
-    "level": (0.12, 0.805, 0.25, 0.865),
-    "xp": (0.12, 0.805, 0.25, 0.865),
-    "shop": (0.245, 0.865, 0.775, 0.995),
-    "hud_bottom": (0.10, 0.78, 0.90, 1.0),
-    "bench": (0.17, 0.64, 0.80, 0.80),
-    "board": (0.20, 0.28, 0.80, 0.68),
-    "players": (0.83, 0.15, 1.0, 0.80),
-    "traits": (0.0, 0.17, 0.15, 0.75),
-    "items": (0.08, 0.42, 0.25, 0.80),
-    "augments": (0.18, 0.18, 0.82, 0.78),
+    # Same numbers as capture/regions.py (Set 18 Unreal HUD, padded to also cover
+    # the "Trials" and legacy placements), copied so both tables agree.
+    "stage": (0.385, 0.000, 0.475, 0.038),
+    "gold": (0.450, 0.800, 0.565, 0.860),
+    "level": (0.110, 0.800, 0.235, 0.860),
+    "xp": (0.110, 0.800, 0.285, 0.865),
+    "streak": (0.505, 0.800, 0.625, 0.860),
+    "shop": (0.170, 0.845, 0.830, 1.000),  # 5 cards plus the Buy XP / Reroll buttons
+    "bench": (0.150, 0.600, 0.800, 0.800),
+    "board": (0.200, 0.260, 0.800, 0.700),
+    "players": (0.850, 0.100, 1.000, 0.790),
+    "traits": (0.028, 0.210, 0.155, 0.860),
+    "items": (0.000, 0.210, 0.042, 0.820),
+    "augments": (0.150, 0.150, 0.850, 0.880),
+    "hud_bottom": (0.100, 0.790, 0.900, 1.000),
+    "top_banner": (0.200, 0.000, 0.800, 0.200),
 }
 
 
@@ -141,6 +174,8 @@ __all__ = [
     "PerceptionError",
     "PerceptionHint",
     "Perceiver",
+    "clean_name",
+    "clean_text",
     "crop_region",
     "normalize_purpose",
     "region_box",

@@ -1,0 +1,102 @@
+{
+ "screen_type": "planning",
+ "viewing_own_board": true,
+ "stage": "1-3",
+ "gold": 4,
+ "level": 3,
+ "xp_current": 2,
+ "xp_needed": 6,
+ "hp": 100,
+ "streak": 0,
+ "shop": [
+  {
+   "name": "卡尔玛",
+   "cost": 1
+  },
+  {
+   "name": "约里克",
+   "cost": 1
+  },
+  {
+   "name": "霞",
+   "cost": 1
+  },
+  {
+   "name": "韦鲁斯",
+   "cost": 1
+  },
+  {
+   "name": "卡尔玛",
+   "cost": 1
+  }
+ ],
+ "board": [
+  {
+   "name": "卡尔玛",
+   "star": 1,
+   "items": [],
+   "row": 3,
+   "col": 1
+  },
+  {
+   "name": "约里克",
+   "star": 1,
+   "items": [],
+   "row": 0,
+   "col": 3
+  }
+ ],
+ "bench": [
+  {
+   "name": "洛",
+   "star": 1,
+   "items": []
+  }
+ ],
+ "item_bench": [
+  "Tear of the Goddess"
+ ],
+ "players": [
+  {
+   "name": "我",
+   "hp": 100,
+   "is_self": true
+  },
+  {
+   "name": "星星点灯",
+   "hp": 100,
+   "is_self": false
+  },
+  {
+   "name": "晚安玛卡巴卡",
+   "hp": 100,
+   "is_self": false
+  },
+  {
+   "name": "北极熊",
+   "hp": 100,
+   "is_self": false
+  },
+  {
+   "name": "小火龙",
+   "hp": 100,
+   "is_self": false
+  },
+  {
+   "name": "Kaiser",
+   "hp": 100,
+   "is_self": false
+  },
+  {
+   "name": "Nina",
+   "hp": 100,
+   "is_self": false
+  },
+  {
+   "name": "Leo",
+   "hp": 100,
+   "is_self": false
+  }
+ ],
+ "notes": []
+}

@@ -1,0 +1,163 @@
+{
+ "screen_type": "planning",
+ "viewing_own_board": true,
+ "stage": "4-5",
+ "gold": 22,
+ "level": 8,
+ "xp_current": 10,
+ "xp_needed": 68,
+ "hp": 39,
+ "streak": -1,
+ "shop": [
+  {
+   "name": "阿狸",
+   "cost": 4
+  },
+  {
+   "name": "索拉卡",
+   "cost": 4
+  },
+  {
+   "name": "阿狸",
+   "cost": 4
+  },
+  {
+   "name": "塔里克",
+   "cost": 5
+  },
+  {
+   "name": "Wisp: Freeroller",
+   "cost": 3
+  }
+ ],
+ "board": [
+  {
+   "name": "卡尔玛",
+   "star": 2,
+   "items": [
+    "大天使之杖"
+   ],
+   "row": 3,
+   "col": 0
+  },
+  {
+   "name": "约里克",
+   "star": 2,
+   "items": [],
+   "row": 0,
+   "col": 3
+  },
+  {
+   "name": "蔚",
+   "star": 2,
+   "items": [
+    "狂徒铠甲",
+    "棘刺背心"
+   ],
+   "row": 0,
+   "col": 4
+  },
+  {
+   "name": "芸阿娜",
+   "star": 2,
+   "items": [
+    "无尽之刃"
+   ],
+   "row": 3,
+   "col": 6
+  },
+  {
+   "name": "阿狸",
+   "star": 1,
+   "items": [
+    "珠光护手",
+    "朔极之矛"
+   ],
+   "row": 3,
+   "col": 5
+  },
+  {
+   "name": "瑟提",
+   "star": 2,
+   "items": [],
+   "row": 0,
+   "col": 2
+  },
+  {
+   "name": "易",
+   "star": 1,
+   "items": [],
+   "row": 1,
+   "col": 4
+  },
+  {
+   "name": "婕拉",
+   "star": 1,
+   "items": [],
+   "row": 3,
+   "col": 1
+  }
+ ],
+ "bench": [
+  {
+   "name": "阿狸",
+   "star": 1,
+   "items": []
+  },
+  {
+   "name": "莫甘娜",
+   "star": 1,
+   "items": []
+  }
+ ],
+ "item_bench": [
+  "Chain Vest"
+ ],
+ "players": [
+  {
+   "name": "我",
+   "hp": 39,
+   "is_self": true
+  },
+  {
+   "name": "星星点灯",
+   "hp": 86,
+   "is_self": false
+  },
+  {
+   "name": "晚安玛卡巴卡",
+   "hp": 80,
+   "is_self": false
+  },
+  {
+   "name": "北极熊",
+   "hp": 64,
+   "is_self": false
+  },
+  {
+   "name": "小火龙",
+   "hp": 57,
+   "is_self": false
+  },
+  {
+   "name": "Kaiser",
+   "hp": 45,
+   "is_self": false
+  },
+  {
+   "name": "Nina",
+   "hp": 84,
+   "is_self": false
+  },
+  {
+   "name": "Leo",
+   "hp": 0,
+   "is_self": false
+  }
+ ],
+ "augments": [
+  "Latent Forge",
+  "Epic Rolldown"
+ ],
+ "notes": []
+}

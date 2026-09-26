@@ -1,0 +1,201 @@
+from __future__ import annotations
+
+import json
+from importlib import resources
+
+import pytest
+
+from tft_advisor.engine.items import champion_profile, item_role, item_roles, plan_items
+from tft_advisor.models import CompSuggestion
+
+from .conftest import make_state, make_unit
+
+CORE_ITEMS = [
+    "Deathblade", "Infinity Edge", "Giant Slayer", "Hextech Gunblade", "Spear of Shojin", "Edge of Night",
+    "Bloodthirster", "Sterak's Gage", "Red Buff", "Guinsoo's Rageblade", "Void Staff", "Titan's Resolve",
+    "Kraken's Fury", "Runaan's Hurricane", "Nashor's Tooth", "Last Whisper", "Rabadon's Deathcap",
+    "Archangel's Staff", "Crownguard", "Ionic Spark", "Morellonomicon", "Jeweled Gauntlet", "Blue Buff",
+    "Protector's Vow", "Adaptive Helm", "Spirit Visage", "Hand of Justice", "Bramble Vest",
+    "Gargoyle Stoneplate", "Sunfire Cape", "Steadfast Heart", "Dragon's Claw", "Evenshroud", "Quicksilver",
+    "Warmog's Armor", "Guardbreaker", "Thief's Gloves", "Tactician's Crown", "Statikk Shiv", "Redemption",
+    "Zeke's Herald", "Chalice of Power", "Locket of the Iron Solari", "Rapid Firecannon",
+    "Shroud of Stillness", "Zephyr", "Frozen Heart", "Tactician's Cape", "Tactician's Shield",
+]
+
+
+def test_role_table_covers_core_items():
+    table = item_roles()
+    raw = json.loads(resources.files("tft_advisor.data").joinpath("bundled", "item_roles.json").read_text("utf-8"))
+    for name in CORE_ITEMS:
+        assert name in raw, name
+    for name, spec in raw.items():
+        if name.startswith("_"):
+            continue
+        assert spec["role"] in ("ad", "ap", "tank", "utility", "flex"), name
+        assert spec["tier"] in (1, 2, 3), name
+    assert len(table) == len([k for k in raw if not k.startswith("_")])
+
+
+def test_item_role_lookup(set_data):
+    assert item_role(set_data.resolve_item("Infinity Edge")) == ("ad", 3)
+    assert item_role(set_data.resolve_item("Sunfire Cape")) == ("tank", 2)  # api TFT_Item_RedBuff
+    assert item_role(set_data.resolve_item("Red Buff")) == ("ad", 2)
+    assert item_role(None, "Radiant Warmog's Armor") == ("tank", 3)
+    assert item_role(None, "Totally New Item") == ("flex", 2)
+    assert item_role(set_data.resolve_item("Knight Emblem")) == ("emblem", 2)
+
+
+def test_champion_profile(set_data):
+    prof = {n: champion_profile(set_data.resolve_champion(n)) for n in ("Graves", "Ahri", "Garen", "Braum", "Draven")}
+    assert prof == {"Graves": "ad", "Ahri": "ap", "Garen": "tank", "Braum": "tank", "Draven": "ad"}
+    # Items held tip an unknown unit.
+    u = make_unit("Qqq", items=["Rabadon's Deathcap", "Blue Buff"])
+    assert champion_profile(None, u, set_data) == "ap"
+
+
+def test_empty_bench_no_suggestions(set_data):
+    assert plan_items(make_state("3-2"), set_data) == []
+    assert plan_items(make_state(), set_data) == []
+
+
+def test_single_component_nothing_to_build(set_data):
+    st = make_state("3-2", board=["Graves"], item_bench=["B.F. Sword"])
+    assert plan_items(st, set_data) == []
+
+
+def test_pairing_and_holders(set_data):
+    st = make_state(
+        "3-2",
+        board=[("Graves", 2, (), 3, 1), ("Ahri", 1, (), 3, 5), ("Braum", 2, (), 0, 3), ("Garen", 1, (), 1, 2)],
+        item_bench=["B.F. Sword", "Sparring Gloves", "Needlessly Large Rod", "Needlessly Large Rod", "Chain Vest", "Chain Vest"],
+    )
+    sugs = plan_items(st, set_data)
+    by_item = {s.item: s for s in sugs}
+    assert set(by_item) == {"Infinity Edge", "Rabadon's Deathcap", "Bramble Vest"}
+    assert by_item["Infinity Edge"].holder == "Graves"
+    assert sorted(by_item["Infinity Edge"].components) == ["B.F. Sword", "Sparring Gloves"]
+    assert by_item["Rabadon's Deathcap"].holder == "Ahri"
+    assert by_item["Bramble Vest"].holder == "Braum"  # front row tank
+    assert all(s.priority == 1 for s in sugs)  # 3-2 with 2+ components: slam
+    assert all("—" not in s.reason for s in sugs)
+
+
+def test_priority_two_early_unless_low_hp(set_data):
+    st = make_state("2-2", board=["Graves"], item_bench=["B.F. Sword", "Sparring Gloves"])
+    assert [s.priority for s in plan_items(st, set_data)] == [2]
+    assert [s.priority for s in plan_items(st, set_data, hp_bucket="low")] == [1]
+    st25 = make_state("2-5", board=["Graves"], item_bench=["B.F. Sword", "Sparring Gloves"])
+    assert [s.priority for s in plan_items(st25, set_data)] == [1]
+
+
+def test_comp_carry_items_preferred(set_data):
+    # BF + Bow + Gloves: Giant Slayer (BF+Bow) or Infinity Edge (BF+Gloves) or Last Whisper (Bow+Gloves).
+    st = make_state("3-2", board=[("Graves", 2, (), 3, 0), ("Lucian", 1, (), 3, 1)], item_bench=["B.F. Sword", "Recurve Bow", "Sparring Gloves"])
+    comp = CompSuggestion(name="X", score=0.5, carry="Lucian", carry_items=["Last Whisper"])
+    sugs = plan_items(st, set_data, comp=comp)
+    assert sugs[0].item == "Last Whisper" and sugs[0].holder == "Lucian"
+    assert "主C" in sugs[0].reason
+
+
+def test_ad_item_avoids_ap_team(set_data):
+    # AP carry: AD items lose value, AP items gain; Rabadon goes to the sorcerer carry first.
+    st = make_state("3-5", board=[("Ahri", 2, (), 3, 3), ("Morgana", 1, (), 3, 4), ("Braum", 1, (), 0, 3)], item_bench=["Needlessly Large Rod", "Needlessly Large Rod"])
+    sugs = plan_items(st, set_data, comp=CompSuggestion(name="AP", score=0.5, carry="Ahri"))
+    assert sugs[0].item == "Rabadon's Deathcap" and sugs[0].holder == "Ahri"
+    # Tear + BF: Spear of Shojin (flex) is fine; BF + Bow Giant Slayer on an AP team is still
+    # built (tier 3) but ranks below the AP item.
+    st2 = make_state("3-5", board=[("Ahri", 2, (), 3, 3), ("Braum", 1, (), 0, 3)], item_bench=["Needlessly Large Rod"] * 2 + ["B.F. Sword", "Recurve Bow"])
+    sugs2 = plan_items(st2, set_data, comp=CompSuggestion(name="AP", score=0.5, carry="Ahri"))
+    assert [s.item for s in sugs2][:2] == ["Rabadon's Deathcap", "Giant Slayer"]
+
+
+def test_duplicate_items_are_discounted(set_data):
+    st = make_state("3-2", board=[("Graves", 2, (), 3, 0), ("Braum", 2, (), 0, 3)], item_bench=["B.F. Sword"] * 2 + ["Sparring Gloves"] * 2)
+    items = sorted(s.item for s in plan_items(st, set_data))
+    # 2x Infinity Edge = 3.5 + 3.5 * 0.5 = 5.25 < Deathblade 3.5 + Thief's Gloves 2.0 = 5.5
+    assert items == ["Deathblade", "Thief's Gloves"]
+
+
+def test_holder_limited_to_three_items(set_data):
+    st = make_state(
+        "4-1",
+        board=[("Graves", 2, ("Deathblade", "Giant Slayer"), 3, 0), ("Lucian", 1, (), 3, 1), ("Braum", 1, (), 0, 3)],
+        item_bench=["B.F. Sword", "Sparring Gloves", "Recurve Bow", "Recurve Bow"],
+    )
+    sugs = plan_items(st, set_data)
+    holders = [s.holder for s in sugs if s.item in ("Infinity Edge", "Red Buff", "Last Whisper", "Giant Slayer")]
+    assert holders.count("Graves") <= 1
+    assert "Lucian" in holders
+
+
+def test_completed_item_on_bench_is_equipped(set_data):
+    st = make_state("3-3", board=[("Braum", 1, (), 0, 3), ("Graves", 1, (), 3, 0)], item_bench=["Warmog's Armor"])
+    sugs = plan_items(st, set_data)
+    assert len(sugs) == 1 and sugs[0].components == [] and sugs[0].holder == "Braum" and sugs[0].priority == 1
+
+
+def test_leftover_component_reports_missing_part(set_data):
+    st = make_state("3-2", board=["Graves"], item_bench=["B.F. Sword"])
+    comp = CompSuggestion(name="X", score=0.5, carry="Miss Fortune", carry_items=["Infinity Edge"])
+    sugs = plan_items(st, set_data, comp=comp)
+    assert len(sugs) == 1
+    s = sugs[0]
+    assert s.priority == 3 and s.item == "Infinity Edge" and "Sparring Gloves" in s.components
+    assert s.holder == "Miss Fortune"
+    assert "Sparring Gloves" in s.reason
+
+
+def test_many_components_bruteforce_is_fast(set_data):
+    import time
+
+    comps = ["B.F. Sword", "Recurve Bow", "Needlessly Large Rod", "Tear of the Goddess", "Chain Vest",
+             "Negatron Cloak", "Giant's Belt", "Sparring Gloves", "B.F. Sword", "Recurve Bow", "Chain Vest"]
+    st = make_state("4-2", board=[("Graves", 2, (), 3, 0), ("Ahri", 2, (), 3, 5), ("Braum", 2, (), 0, 3), ("Garen", 1, (), 0, 2)], item_bench=comps)
+    t0 = time.perf_counter()
+    sugs = plan_items(st, set_data)
+    assert time.perf_counter() - t0 < 2.0
+    crafted = [s for s in sugs if s.components and s.priority <= 2]
+    assert len(crafted) == 5  # 10 components considered, all paired
+    used = sorted(c for s in crafted for c in s.components)
+    assert len(used) == 10
+
+
+def test_emblem_valued_when_trait_near_breakpoint(set_data):
+    st = make_state("3-2", board=[("Garen", 1, (), 0, 0), ("Braum", 1, (), 0, 1), ("Graves", 1, (), 3, 0)], item_bench=["Spatula", "B.F. Sword"])
+    sugs = plan_items(st, set_data)
+    assert sugs and sugs[0].item == "Knight Emblem"
+    assert sugs[0].holder in ("Braum", "Graves")  # a unit that is not already a Knight
+
+
+@pytest.mark.parametrize("bucket", ["unknown", "healthy", "medium", "low", "critical"])
+def test_no_crash_with_unknown_names(set_data, bucket):
+    st = make_state("3-2", board=["Qqqq", "Graves"], item_bench=["???", "B.F. Sword", "B.F. Sword"])
+    sugs = plan_items(st, set_data, hp_bucket=bucket)
+    assert [s.item for s in sugs] == ["Deathblade"]
+    assert sugs[0].holder == "Graves"
+
+
+def test_chinese_locale_items(zh_set_data):
+    from .conftest import chinese_set_data
+
+    sd = chinese_set_data()
+    st = make_state("3-2", item_bench=["暴风大剑", "拳套"])
+    st.board = [
+        make_unit("格雷福斯", 2, row=3, col=0, set_data=sd),
+        make_unit("布隆", 1, row=0, col=3, set_data=sd),
+    ]
+    sugs = plan_items(st, sd)
+    assert [(s.item, s.holder) for s in sugs] == [("无尽之刃", "格雷福斯")]
+    assert sugs[0].components == ["暴风大剑", "拳套"]
+    assert "物理输出" in sugs[0].reason
+    assert champion_profile(sd.resolve_champion("阿狸")) == "ap"
+    assert champion_profile(sd.resolve_champion("布隆")) == "tank"
+
+
+def test_completed_item_when_every_unit_is_full(set_data):
+    full = ("Deathblade", "Giant Slayer", "Infinity Edge")
+    st = make_state("3-2", board=[("Graves", 2, full, 3, 0)], item_bench=["Warmog's Armor"])
+    sugs = plan_items(st, set_data)
+    assert sugs[0].holder is None and "满" in sugs[0].reason and "先上场" not in sugs[0].reason
+    empty = plan_items(make_state("3-2", item_bench=["Warmog's Armor"]), set_data)
+    assert "先上场" in empty[0].reason

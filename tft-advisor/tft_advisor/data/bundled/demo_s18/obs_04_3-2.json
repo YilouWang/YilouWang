@@ -1,0 +1,136 @@
+{
+ "screen_type": "planning",
+ "viewing_own_board": true,
+ "stage": "3-2",
+ "gold": 34,
+ "level": 5,
+ "xp_current": 12,
+ "xp_needed": 20,
+ "hp": 62,
+ "streak": -5,
+ "shop": [
+  {
+   "name": "阿狸",
+   "cost": 4
+  },
+  {
+   "name": "凯特琳",
+   "cost": 2
+  },
+  {
+   "name": "卡尔玛",
+   "cost": 1
+  },
+  {
+   "name": "瑟提",
+   "cost": 4
+  },
+  {}
+ ],
+ "board": [
+  {
+   "name": "卡尔玛",
+   "star": 2,
+   "items": [
+    "大天使之杖"
+   ],
+   "row": 3,
+   "col": 0
+  },
+  {
+   "name": "约里克",
+   "star": 1,
+   "items": [],
+   "row": 0,
+   "col": 3
+  },
+  {
+   "name": "蔚",
+   "star": 1,
+   "items": [],
+   "row": 0,
+   "col": 4
+  },
+  {
+   "name": "芸阿娜",
+   "star": 2,
+   "items": [],
+   "row": 3,
+   "col": 6
+  },
+  {
+   "name": "阿狸",
+   "star": 1,
+   "items": [],
+   "row": 3,
+   "col": 5
+  }
+ ],
+ "bench": [
+  {
+   "name": "卡尔玛",
+   "star": 1,
+   "items": []
+  },
+  {
+   "name": "凯特琳",
+   "star": 1,
+   "items": []
+  },
+  {
+   "name": "伊莉丝",
+   "star": 1,
+   "items": []
+  }
+ ],
+ "item_bench": [
+  "B.F. Sword",
+  "Sparring Gloves"
+ ],
+ "players": [
+  {
+   "name": "我",
+   "hp": 62,
+   "is_self": true
+  },
+  {
+   "name": "星星点灯",
+   "hp": 100,
+   "is_self": false
+  },
+  {
+   "name": "晚安玛卡巴卡",
+   "hp": 94,
+   "is_self": false
+  },
+  {
+   "name": "北极熊",
+   "hp": 86,
+   "is_self": false
+  },
+  {
+   "name": "小火龙",
+   "hp": 80,
+   "is_self": false
+  },
+  {
+   "name": "Kaiser",
+   "hp": 78,
+   "is_self": false
+  },
+  {
+   "name": "Nina",
+   "hp": 97,
+   "is_self": false
+  },
+  {
+   "name": "Leo",
+   "hp": 88,
+   "is_self": false
+  }
+ ],
+ "augments": [
+  "Latent Forge"
+ ],
+ "notes": []
+}

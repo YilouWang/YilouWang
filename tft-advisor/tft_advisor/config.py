@@ -31,7 +31,7 @@ class AnthropicConfig:
 @dataclass
 class CaptureConfig:
     monitor: int = 1  # mss monitor index (1 = primary)
-    window_title: str = "League of Legends (TM) Client"
+    window_title: str = "Teamfight Tactics"  # also matched by process name (TFT.exe / TFTClient-Win64-Shipping.exe)
     use_window: bool = True  # crop to the game window if it can be found (Windows)
     poll_interval_s: float = 1.0
     settle_delay_s: float = 1.2  # wait after a round change before analysing

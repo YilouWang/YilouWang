@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Iterable, Optional, Sequence
 
-from .base import PerceptionHint, normalize_purpose
+from .base import PerceptionHint, clean_name, normalize_purpose
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..data.setdata import SetData
@@ -126,17 +126,21 @@ _PURPOSE_TEXT = {
     ),
 }
 
-_MAX_HINT_NAMES = 40
+# A real "likely on screen" list is short (board + bench + shop, about 25 names).
+# A longer list (e.g. every name of the set) carries no information beyond the
+# NAME LISTS already in the cached system prompt, so it is left out of the
+# uncached user turn instead of being truncated into a misleading subset.
+_MAX_HINT_NAMES = 30
 
 
 def _join_names(names: Iterable[str]) -> str:
     seen: list[str] = []
-    for n in names:
-        n = (n or "").strip()
+    for raw in names:
+        n = clean_name(raw)
         if n and n not in seen:
             seen.append(n)
-        if len(seen) >= _MAX_HINT_NAMES:
-            break
+            if len(seen) > _MAX_HINT_NAMES:
+                return ""
     return ", ".join(seen)
 
 
@@ -150,19 +154,27 @@ def build_user_text(purpose: str, hint: Optional[PerceptionHint], image_labels: 
         lines.append("")
     lines.append(_PURPOSE_TEXT[mode])
     if hint is not None:
+        # Hint strings can come from the dashboard (typed on a phone) or from
+        # earlier model output: single line, short, no quotes that could end
+        # the quoted value early.
+        self_name = clean_name((hint.self_name or "").replace('"', "'"))
+        scouting = clean_name((hint.scouting_player or "").replace('"', "'"))
+        expect = clean_name(hint.expect, max_len=80)
         hint_lines: list[str] = []
-        if hint.self_name:
-            hint_lines.append(f"- The local player's name is \"{hint.self_name}\" (mark is_self on that row).")
-        if hint.scouting_player:
-            hint_lines.append(f"- The player says the board shown belongs to \"{hint.scouting_player}\".")
-        if hint.expect:
-            hint_lines.append(f"- Expected screen: {hint.expect}.")
-        if hint.champion_names:
-            hint_lines.append(f"- Champions likely on screen: {_join_names(hint.champion_names)}.")
-        if hint.item_names:
-            hint_lines.append(f"- Items likely on screen: {_join_names(hint.item_names)}.")
-        if hint.trait_names:
-            hint_lines.append(f"- Traits likely on screen: {_join_names(hint.trait_names)}.")
+        if self_name:
+            hint_lines.append(f"- The local player's name is \"{self_name}\" (mark is_self on that row).")
+        if scouting:
+            hint_lines.append(f"- The player says the board shown belongs to \"{scouting}\".")
+        if expect:
+            hint_lines.append(f"- Expected screen: {expect}.")
+        for label, names in (
+            ("Champions", hint.champion_names),
+            ("Items", hint.item_names),
+            ("Traits", hint.trait_names),
+        ):
+            joined = _join_names(names or [])
+            if joined:
+                hint_lines.append(f"- {label} likely on screen: {joined}.")
         if hint_lines:
             lines.append("")
             lines.append("HINTS from earlier frames (may be outdated; the image always wins):")

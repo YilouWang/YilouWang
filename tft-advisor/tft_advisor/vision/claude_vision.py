@@ -21,7 +21,7 @@ from pydantic import ValidationError
 from ..config import AnthropicConfig
 from ..llm import LLM, LLMError, image_block, text_block
 from ..models import Observation, ScreenObservation, StageRound, UnitObs
-from .base import PerceptionError, PerceptionHint, crop_region, normalize_purpose
+from .base import PerceptionError, PerceptionHint, clean_text, crop_region, normalize_purpose
 from .prompts import build_user_text, build_vision_system
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -216,7 +216,7 @@ def sanitize_screen(
             s.viewed_player_name = hint.scouting_player
             notes.append("对手名字来自玩家指定，画面中未读到")
 
-    s.notes = notes[:12]
+    s.notes = [clean_text(n) for n in notes if (n or "").strip()][:12]
     return s
 
 

@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 from typing import Optional
 
 from PIL import Image
@@ -173,11 +174,42 @@ def list_regions() -> list[str]:
     return list(REGIONS)
 
 
+_bad_env_reported: set[str] = set()
+
+
 def _resolve_layout(layout: Optional[str]) -> str:
-    name = (layout or os.environ.get("TFT_ADVISOR_HUD_LAYOUT") or DEFAULT_LAYOUT).strip().lower()
-    if name not in LAYOUTS:
-        raise ValueError(f"unknown HUD layout {name!r}; expected one of {LAYOUTS}")
-    return name
+    """Explicit ``layout`` (invalid -> ValueError), else the env variable, else the default.
+
+    An invalid or blank ``TFT_ADVISOR_HUD_LAYOUT`` falls back to the default
+    layout (reported once on stderr) instead of raising: every crop of the
+    vision pipeline goes through here, so a typo in an environment variable
+    must not break perception for the whole session.
+    """
+    if layout is not None and str(layout).strip():
+        name = str(layout).strip().lower()
+        if name not in LAYOUTS:
+            raise ValueError(f"unknown HUD layout {name!r}; expected one of {LAYOUTS}")
+        return name
+    env = (os.environ.get("TFT_ADVISOR_HUD_LAYOUT") or "").strip().lower()
+    if not env:
+        return DEFAULT_LAYOUT
+    if env not in LAYOUTS:
+        if env not in _bad_env_reported:
+            _bad_env_reported.add(env)
+            try:
+                print(
+                    f"TFT_ADVISOR_HUD_LAYOUT={env!r} 无效（可选 {', '.join(LAYOUTS)}），已使用 {DEFAULT_LAYOUT}",
+                    file=sys.stderr,
+                )
+            except Exception:  # noqa: BLE001 - no console (pythonw) must not break cropping
+                pass
+        return DEFAULT_LAYOUT
+    return env
+
+
+def current_layout(layout: Optional[str] = None) -> str:
+    """The HUD layout that ``region_box`` uses for this ``layout`` argument."""
+    return _resolve_layout(layout)
 
 
 def _check_size(size: tuple[int, int]) -> tuple[int, int]:
@@ -220,10 +252,15 @@ def region_box(
     """Pixel box ``(x0, y0, x1, y1)`` of region ``name`` in a frame of ``size`` (w, h).
 
     ``pad`` grows the box on every side by that fraction of the region's own
-    width / height (0.1 = 10 % more on each side). The result is clamped to
-    the frame and is never empty. Edges are rounded outward (floor / ceil).
+    width / height (0.1 = 10 % more on each side); negative values shrink it
+    (at most to its center line, -0.5). The result is clamped to the frame
+    and is never empty. Edges are rounded outward (floor / ceil).
     """
     w, h = _check_size(size)
+    pad = float(pad or 0.0)
+    if not math.isfinite(pad):
+        raise ValueError(f"invalid pad {pad!r}")
+    pad = max(pad, -0.5)
     fx0, fy0, fx1, fy1 = _fractions(name)
     ox, oy, vw, vh = viewport((w, h))
     if _resolve_layout(layout) == "anchored":

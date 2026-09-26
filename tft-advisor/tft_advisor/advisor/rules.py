@@ -40,6 +40,9 @@ MAX_ACTIONS = 6
 ROLLDOWN_POINTS = {(3, 2), (4, 1), (4, 2)}
 
 AUGMENT_GENERIC = "增强选择: 优先经济/战力符合当前阵容的"
+NO_ROLL_GOLD = "金币不够搜牌，先存钱"
+DEFAULT_HEADLINE = "按节奏运营，稳住血量"
+NO_ROLL_GOLD_ACTION = "金币不够搜牌，这回合先存钱吃利息"
 
 _DASHES = re.compile(r"\s*[\u2014\u2015\u2E3A\u2E3B]+\s*")
 _DUP_COMMA = re.compile(r"[，,]\s*[，,]+")
@@ -65,14 +68,42 @@ def sanitize(text: Optional[str], keep_newlines: bool = False) -> str:
     return t.strip("，").strip()
 
 
+_CLAUSE_ENDS = "，。；！？,;"
+_OPEN_PARENS = "（("
+_CLOSE_PARENS = "）)"
+
+
+def _cut(t: str, limit: int) -> str:
+    """Cut ``t`` to at most ``limit`` chars, preferably at a clause boundary
+    outside parentheses (never leaves a half word like "散" of "散件" when a
+    whole clause fits) and never with an unclosed parenthesis."""
+    head = t[:limit]
+    depth = 0
+    best = -1
+    for i, ch in enumerate(head):
+        if ch in _OPEN_PARENS:
+            depth += 1
+        elif ch in _CLOSE_PARENS:
+            depth = max(0, depth - 1)
+        elif ch in _CLAUSE_ENDS and depth == 0:
+            best = i
+    if best >= int(limit * 0.6):
+        return head[:best].rstrip("，、,： ")
+    opened = max(head.rfind(c) for c in _OPEN_PARENS)
+    closed = max(head.rfind(c) for c in _CLOSE_PARENS)
+    if opened > closed and opened >= int(limit * 0.5):
+        head = head[:opened]
+    return head.rstrip("，、,： ")
+
+
 def clip(text: Optional[str], limit: int, ellipsis: str = "") -> str:
     """Sanitize and cut to ``limit`` characters."""
     t = sanitize(text)
     if len(t) <= limit:
         return t
     if ellipsis:
-        return t[: max(0, limit - len(ellipsis))].rstrip("，、,： ") + ellipsis
-    return t[:limit].rstrip("，、,： ")
+        return _cut(t, max(0, limit - len(ellipsis))) + ellipsis
+    return _cut(t, limit)
 
 
 def _join(names: Iterable[str], sep: str = "、") -> str:
@@ -89,9 +120,47 @@ def _unit_keys(u: Unit) -> set[str]:
     return keys
 
 
-def find_carry(state: GameState, analysis: Analysis) -> Optional[Unit]:
+# Defensive components: an item built only from these is a tank item.
+_DEFENSIVE_COMPONENT_APIS = {"TFT_Item_ChainVest", "TFT_Item_NegatronCloak", "TFT_Item_GiantsBelt"}
+# Fallback when set data is not available (en + zh display names, normalized).
+_TANK_ITEM_NAMES = {
+    normalize_name(n)
+    for n in (
+        "Chain Vest", "Negatron Cloak", "Giant's Belt", "Warmog's Armor", "Bramble Vest", "Dragon's Claw",
+        "Gargoyle Stoneplate", "Sunfire Cape", "Evenshroud", "Redemption", "Spirit Visage", "Protector's Vow",
+        "Steadfast Heart",
+        "锁子甲", "负极斗篷", "巨人腰带", "狂徒铠甲", "棘刺背心", "巨龙之爪", "石像鬼石板甲", "日炎斗篷",
+        "薄暮法袍", "救赎", "圣盾使的誓约", "坚定之心",
+    )
+}
+
+
+def is_tank_item(name: str, set_data: Optional[SetData] = None) -> bool:
+    """True for defensive items (built only from vest / cloak / belt)."""
+    if _norm(name) in _TANK_ITEM_NAMES:
+        return True
+    if set_data is not None:
+        try:
+            item = set_data.resolve_item(name)
+        except Exception:
+            item = None
+        if item is not None:
+            if item.api_name in _DEFENSIVE_COMPONENT_APIS:
+                return True
+            comp = list(item.composition or [])
+            return bool(comp) and all(c in _DEFENSIVE_COMPONENT_APIS for c in comp)
+    return False
+
+
+def _carry_items(u: Unit, set_data: Optional[SetData]) -> int:
+    return sum(1 for i in u.items if i and not is_tank_item(i, set_data))
+
+
+def find_carry(state: GameState, analysis: Analysis, set_data: Optional[SetData] = None) -> Optional[Unit]:
     """The main carry on the board: the top comp's carry if fielded, else the
-    board unit holding the most items (ties: higher cost, then star)."""
+    board unit holding the most damage items (at least 2; tank items such as
+    Warmog's or Bramble Vest do not count, so an itemized tank is never taken
+    for the carry). Ties: higher cost, then star."""
     board = list(state.board)
     if not board:
         return None
@@ -101,10 +170,42 @@ def find_carry(state: GameState, analysis: Analysis) -> Optional[Unit]:
         for u in board:
             if key and key in _unit_keys(u):
                 return u
-    best = max(board, key=lambda u: (len(u.items), u.cost or 0, u.star))
-    if len(best.items) >= 2:
+    best = max(board, key=lambda u: (_carry_items(u, set_data), u.cost or 0, u.star))
+    if _carry_items(best, set_data) >= 2:
         return best
     return None
+
+
+AUGMENT_STALE_S = 90.0
+
+# Words the econ engine uses in its reason for reroll (slow roll) lines.
+_REROLL_REASON_WORDS = ("慢搜", "赌狗")
+
+
+def _is_reroll_plan(econ) -> bool:
+    return any(w in (econ.reason or "") for w in _REROLL_REASON_WORDS)
+
+
+def augment_pending(state: GameState) -> bool:
+    """True while an augment choice is (still) open.
+
+    The tracker keeps ``augment_choices`` until the round changes, so after the
+    pick they linger for the rest of the round. Treat them as done when one of
+    them already shows up in ``augments`` or when they were last confirmed long
+    before the latest update.
+    """
+    if state.screen_type == ScreenType.AUGMENT_SELECT:
+        return True
+    choices = [c for c in state.augment_choices if c and c.strip()]
+    if not choices:
+        return False
+    owned = {_norm(a) for a in state.augments}
+    if any(_norm(c) in owned for c in choices):
+        return False
+    seen = state.field_age.get("augment_choices")
+    if seen is not None and state.last_update and state.last_update - seen > AUGMENT_STALE_S:
+        return False
+    return True
 
 
 def _unit_label(u: Unit) -> str:
@@ -130,10 +231,13 @@ class RulesAdvisor:
     def advise(self, state: GameState, analysis: Analysis) -> Advice:
         sr = state.stage
         econ = analysis.econ
-        carry = find_carry(state, analysis)
+        carry = find_carry(state, analysis, self.set_data)
         comp = analysis.comps[0] if analysis.comps else None
         carousel = self._is_carousel(state)
-        augment = bool(state.augment_choices) or state.screen_type == ScreenType.AUGMENT_SELECT
+        augment = augment_pending(state)
+        # Positions read from a combat frame are mid-fight positions, not the
+        # player's setup; on the carousel the board / shop cannot be used.
+        can_position = not carousel and state.screen_type != ScreenType.COMBAT
         carousel_pick = self._carousel_pick(state, analysis, carry) if carousel else None
 
         actions: list[AdviceAction] = []
@@ -148,7 +252,7 @@ class RulesAdvisor:
         if carousel:
             add(ActionType.CAROUSEL, self._carousel_text(carousel_pick), 1)
 
-        buy_text, buy_priority = self._buy(state, analysis)
+        buy_text, buy_priority = ("", 2) if carousel else self._buy(state, analysis)
         if buy_text:
             add(ActionType.BUY, buy_text, buy_priority)
 
@@ -156,14 +260,17 @@ class RulesAdvisor:
             add(kind, text, prio)
 
         for text, prio in self._item_actions(analysis):
-            add(ActionType.ITEM, text, prio)
+            # Items cannot be moved while on the carousel: do it right after.
+            add(ActionType.ITEM, text, max(prio, 2) if carousel else prio)
 
-        sell = self._sell(state, analysis)
+        sell = "" if carousel else self._sell(state, analysis)
         if sell:
             add(ActionType.SELL, sell, 1 if analysis.shop_picks else 2)
 
-        if carry is not None and carry.row is not None and carry.row != 3:
-            add(ActionType.POSITION, f"把 {_unit_label(carry)} 移到后排角落", 2)
+        if can_position and carry is not None and carry.row is not None and carry.row != 3:
+            move = f"把 {_unit_label(carry)} 移到后排角落"
+            hedged = move + "（近战主C除外）"
+            add(ActionType.POSITION, hedged if len(hedged) <= ACTION_MAX else move, 2)
 
         for i, req in enumerate(analysis.scout_requests[:2]):
             who = req.target_player or "对手"
@@ -172,17 +279,20 @@ class RulesAdvisor:
         if analysis.warnings:
             add(ActionType.OTHER, analysis.warnings[0], 3)
 
+        headline = clip(self._headline(state, analysis, carousel, carousel_pick, augment), HEADLINE_MAX)
+        headline = headline or DEFAULT_HEADLINE  # e.g. an econ reason made only of dashes
+        # Do not repeat the headline as a generic action (e.g. the stage-1 econ reason).
+        actions = [a for a in actions if not (a.type == ActionType.OTHER and a.text == headline)]
         actions.sort(key=lambda a: a.priority)  # stable: keeps insertion order within a priority
         actions = actions[:MAX_ACTIONS]
 
-        headline = self._headline(state, analysis, carousel, carousel_pick, augment)
         return Advice(
-            headline=clip(headline, HEADLINE_MAX),
+            headline=headline,
             actions=actions,
             plan=clip(self._plan(state, analysis), PLAN_MAX),
             comp=self._comp_text(comp) or None,
             items=self._items_text(analysis, comp, carry) or None,
-            positioning=self._positioning_text(carry, state) or None,
+            positioning=clip(self._positioning_text(carry, state), FIELD_MAX) or None,
             augment=self._augment_text(state) if augment else None,
             scout_request=sanitize(analysis.scout_requests[0].text) if analysis.scout_requests else None,
             confidence=0.3 if sr is None else 0.55,
@@ -236,13 +346,15 @@ class RulesAdvisor:
             return "选秀：拿主C装备散件"
         if state.stage is None:
             return f"按 {self.hotkeys.analyze} 分析当前局面"
+        can_roll = econ.roll_budget >= self.mech.roll_cost
         if rec == EconAction.ALL_IN:
-            return "血量危险，all-in搜牌"
+            return "血量危险，all-in搜牌" if can_roll else "血量危险：没钱了，调站位卖闲置"
         if rec == EconAction.LEVEL_AND_ROLL:
             target = econ.target_level or ((state.level or 0) + 1)
+            if not can_roll:
+                return f"升到{target}级"
             left = self._gold_left_after(state, analysis, level_first=True)
             return f"升到{target}级，搜到{left}金币" if left > 0 else f"升到{target}级，搜光金币"
-        can_roll = econ.roll_budget >= self.mech.roll_cost
         if rec == EconAction.ROLL and can_roll:
             left = self._gold_left_after(state, analysis, level_first=False)
             low = state.hp is not None and state.hp < 45
@@ -263,9 +375,13 @@ class RulesAdvisor:
             return f"存钱到{cap}" if gold < cap else f"保持{cap}金币吃满利息"
         if pick:
             return f"买{pick}"
+        if rec in (EconAction.ROLL, EconAction.SLOW_ROLL) and not can_roll:
+            # The engine wants a roll but the budget cannot pay for one: its
+            # reason text would tell the player to roll, so do not echo it.
+            return NO_ROLL_GOLD
         if econ.reason:
             return econ.reason
-        return "按节奏运营，稳住血量"
+        return DEFAULT_HEADLINE
 
     # ---------------------------------------------------------------- actions
     def _slot_of(self, state: GameState, name: str, used: set[int]) -> Optional[int]:
@@ -298,24 +414,42 @@ class RulesAdvisor:
             if parts and len(candidate) > ACTION_MAX:
                 break
             parts.append(part)
-        owned = Counter()
+        owned: Counter[str] = Counter()
         for u in state.all_units():
             for k in _unit_keys(u):
                 owned[k] += u.copies
-        makes_upgrade = any(owned.get(_norm(p), 0) >= 2 for p in picks[: len(parts)])
         rolling = analysis.econ.recommendation in (
             EconAction.ROLL,
             EconAction.LEVEL_AND_ROLL,
             EconAction.ALL_IN,
         )
-        text = "买 " + _join(parts)
-        if makes_upgrade:
-            text += "，能升星"
+        while True:
+            bought = Counter(_norm(p) for p in picks[: len(parts)])
+            # Three copies of the same star level merge: only the leftover
+            # one-star copies (total copies mod 3) count toward the next upgrade.
+            makes_upgrade = any(k and owned.get(k, 0) % 3 + n >= 3 for k, n in bought.items())
+            text = "买 " + _join(parts) + ("，能升星" if makes_upgrade else "")
+            if len(text) <= ACTION_MAX or len(parts) <= 1:
+                break
+            parts.pop()  # keep the upgrade note rather than a low-priority third unit
         return text, 1 if (makes_upgrade or rolling) else 2
 
-    def _roll_targets(self, analysis: Analysis) -> str:
+    def _roll_text(self, analysis: Analysis) -> str:
+        base = f"最多花 {analysis.econ.roll_budget} 金币搜牌"
+        full = base + self._roll_targets(analysis, with_odds=True)
+        if len(full) <= ACTION_MAX:
+            return full
+        short = base + self._roll_targets(analysis, with_odds=False)
+        return short if len(short) <= ACTION_MAX else base
+
+    def _roll_targets(self, analysis: Analysis, with_odds: bool = True) -> str:
         econ = analysis.econ
-        wanted = [o for o in analysis.odds if o.owned_copies < o.goal_copies]
+        # Units whose remaining pool cannot complete the goal are not worth rolling for.
+        wanted = [
+            o
+            for o in analysis.odds
+            if o.owned_copies < o.goal_copies and o.remaining_in_pool >= o.goal_copies - o.owned_copies
+        ]
         if not wanted:
             return ""
         comp = analysis.comps[0] if analysis.comps else None
@@ -326,7 +460,7 @@ class RulesAdvisor:
         text = f"，找 {first.unit}"
         budget = econ.roll_budget
         options = sorted(g for g in first.p_goal_by_gold if g <= budget)
-        if options:
+        if options and with_odds:
             p = first.p_goal_by_gold[options[-1]]
             text += f"（{first.goal_star}星概率 {round(p * 100)}%）"
         return text
@@ -351,14 +485,19 @@ class RulesAdvisor:
             out.append((ActionType.LEVEL, f"买经验升到 {target} 级{cost}", 1))
         if rec in (EconAction.LEVEL_AND_ROLL, EconAction.ROLL):
             if can_roll:
-                out.append((ActionType.ROLL, f"最多花 {budget} 金币搜牌" + self._roll_targets(analysis), 1))
+                out.append((ActionType.ROLL, self._roll_text(analysis), 1))
+            elif rec == EconAction.ROLL:
+                out.append((ActionType.SAVE, NO_ROLL_GOLD_ACTION, 2))
         elif rec == EconAction.ALL_IN:
             if can_roll:
                 out.append((ActionType.ROLL, f"最多花 {budget} 金币搜牌，全力补强", 1))
             else:
                 out.append((ActionType.OTHER, "没钱搜牌了：调整站位，卖掉没用的牌", 1))
-        elif rec == EconAction.SLOW_ROLL and can_roll:
-            out.append((ActionType.ROLL, f"最多花 {budget} 金币搜牌，保持 {self._cap_gold()} 利息", 2))
+        elif rec == EconAction.SLOW_ROLL:
+            if can_roll:
+                out.append((ActionType.ROLL, f"最多花 {budget} 金币搜牌，保持 {self._cap_gold()} 利息", 2))
+            else:
+                out.append((ActionType.SAVE, NO_ROLL_GOLD_ACTION, 2))
         elif rec == EconAction.SAVE:
             out.append((ActionType.SAVE, econ.reason or "不搜牌，存钱吃利息", 2))
         elif rec == EconAction.HOLD and econ.reason:
@@ -436,6 +575,16 @@ class RulesAdvisor:
             parts.append("接下来每回合搜到没钱，优先稳血保名次")
         elif sr.stage == 1:
             parts.append("2-1 升 4 级，前期买对子凑羁绊，之后开始存钱")
+        elif _is_reroll_plan(econ):
+            # Reroll lines stay low and slow roll; the standard level curve
+            # (4-1 L7, 4-5 L8) would contradict the econ advice.
+            stay = level
+            if econ.recommendation == EconAction.LEVEL and econ.target_level:
+                parts.append(f"现在升 {econ.target_level}")
+                stay = max(level, econ.target_level)
+            cap = self._cap_gold()
+            parts.append(f"停在 {stay} 级慢搜三星，只花 {cap} 以上的钱" if stay else f"慢搜三星，只花 {cap} 以上的钱")
+            parts.append("主C三星后再升级补强")
         else:
             std = self.mech.standard_level_at(sr)
             if econ.recommendation in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL) and econ.target_level:
@@ -500,7 +649,7 @@ class RulesAdvisor:
         if not state.board:
             return ""
         if carry is not None:
-            return f"{_unit_label(carry)} 放后排角落，坦克放前排挡伤害，注意防刺客"
+            return f"{_unit_label(carry)} 放后排角落（近战主C除外），坦克放前排挡伤害，注意防刺客"
         return "主C放后排角落，坦克放前排挡伤害"
 
     def _augment_text(self, state: GameState) -> str:

@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Iterable, Optional
 
 from ..models import Observation, ScreenObservation, ScreenType
+from .base import clean_text
 
 DEFAULT_PREFER_SECONDARY: frozenset[str] = frozenset({"gold", "level", "stage"})
 
@@ -83,7 +84,7 @@ def merge_observations(
     for n in [*sec.notes, *override_notes]:
         if n and n not in notes:
             notes.append(n)
-    out.notes = notes
+    out.notes = [clean_text(n) for n in notes]
     return out
 
 

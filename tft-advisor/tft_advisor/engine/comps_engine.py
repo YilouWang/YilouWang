@@ -79,7 +79,8 @@ def _resolve_units(names: list[str], set_data: SetData) -> list[Champion]:
     return out
 
 
-def _item_fit(state: GameState, set_data: SetData, carry_items: list[str]) -> Optional[float]:
+def _item_fit(state: GameState, set_data: SetData, carry_items: list[str]) -> Optional[tuple[int, int]]:
+    """(carry items held or buildable, resolvable carry items); None if none resolve."""
     targets = [it for it in (set_data.resolve_item(n) for n in carry_items) if it is not None]
     if not targets:
         return None
@@ -108,7 +109,7 @@ def _item_fit(state: GameState, set_data: SetData, carry_items: list[str]) -> Op
         if need and all(components[c] >= k for c, k in need.items()):
             components.subtract(need)
             done += 1
-    return done / len(targets)
+    return done, len(targets)
 
 
 def _level_fit(state: GameState, style: str) -> float:
@@ -133,7 +134,7 @@ def _hint_tokens(hint: str) -> list[str]:
     return [t for t in re.split(r"[\s,，、/;；|]+", hint or "") if t.strip()]
 
 
-def _hint_boost(comp_name: str, champs: list[Champion], carry: Optional[Champion], hint: str, set_data: SetData) -> float:
+def hint_boost(comp_name: str, champs: list[Champion], carry: Optional[Champion], hint: str, set_data: SetData) -> float:
     h = normalize_name(hint)
     if not h:
         return 0.0
@@ -162,6 +163,11 @@ def _contested(core: set[str], carry_api: Optional[str], taken_by_player: dict[s
         if len(held) >= 2 or (carry_api is not None and counts.get(carry_api, 0) >= 2):
             out.append(player)
     return out
+
+
+def _item_display(name: str, set_data: SetData) -> str:
+    item = set_data.resolve_item(name)
+    return item.name if item else name
 
 
 def _clamp(x: float) -> float:
@@ -194,7 +200,7 @@ def score_comp(
     else:
         carry_score = overlap
     fit = _item_fit(state, set_data, comp.carry_items)
-    item_score = 0.5 if fit is None else fit
+    item_score = 0.5 if fit is None else fit[0] / fit[1]
     level_score = _level_fit(state, comp.style)
     tier_score = TIER_SCORE.get(comp.tier.upper()[:1] if comp.tier else "", 0.5)
 
@@ -205,7 +211,7 @@ def score_comp(
         core = {c.api_name for c in champs}
     contested = _contested(core, carry.api_name if carry else None, taken_by_player)
     penalty = min(CONTEST_CAP, CONTEST_PENALTY * len(contested))
-    boost = _hint_boost(comp.name, champs, carry, hint, set_data)
+    boost = hint_boost(comp.name, champs, carry, hint, set_data)
 
     score = _clamp(
         W_OVERLAP * overlap
@@ -226,8 +232,8 @@ def score_comp(
             parts.append(f"还缺主C {carry.name}")
         else:
             parts.append(f"主C {carry.name} 已到手" + ("（已两星）" if oc.star >= 2 else ""))
-    if fit is not None and comp.carry_items:
-        parts.append(f"核心装备可做 {round(fit * len(comp.carry_items))}/{len(comp.carry_items)} 件")
+    if fit is not None:
+        parts.append(f"核心装备可做 {fit[0]}/{fit[1]} 件")
     if contested:
         parts.append(f"{', '.join(contested)} 也在拿这些英雄，注意卡牌")
     if boost > 0:
@@ -242,7 +248,7 @@ def score_comp(
         have_units=have,
         missing_units=missing,
         carry=carry.name if carry else None,
-        carry_items=[(set_data.resolve_item(n).name if set_data.resolve_item(n) else n) for n in comp.carry_items],
+        carry_items=[_item_display(n, set_data) for n in comp.carry_items],
         contested_by=contested,
         reason="，".join(parts),
     )
@@ -262,6 +268,8 @@ def suggest_comps(
         return auto_comps(state, set_data, taken, top_n)
     owned = owned_units(state, set_data)
     scored = [s for s in (score_comp(c, state, set_data, taken, hint, owned) for c in comps) if s is not None]
+    if not scored:  # e.g. a comp file for another set: nothing resolves
+        return auto_comps(state, set_data, taken, top_n)
     scored.sort(key=lambda s: (-s.score, s.name))
     return scored[: max(0, top_n)]
 
@@ -295,7 +303,16 @@ def auto_comps(
     taken_by_player: Optional[dict[str, dict[str, int]]] = None,
     top_n: int = 3,
 ) -> list[CompSuggestion]:
-    """Trait breakpoint suggestions built from the current board + bench."""
+    """Trait breakpoint suggestions built from the current board + bench.
+
+    A suggestion is "keep the fielded board and add the missing units of this
+    trait": ``core_units`` / ``have_units`` include the fielded units (so the
+    analyzer does not suggest selling spare copies of them and the scout
+    planner watches the right opponents), ``missing_units`` are the trait
+    units to add. Traits only count on the board, so members sitting on the
+    bench weigh half, and the carry is the strongest owned damage dealer
+    (fielded first), not necessarily a member of the trait.
+    """
     taken = {p: c for p, c in (taken_by_player or {}).items() if p and p != state.self_name}
     owned = owned_units(state, set_data)
     if not owned:
@@ -310,6 +327,17 @@ def auto_comps(
         for t in _champ_traits(champ, lookup):
             members.setdefault(t.api_name, set()).add(api)
             owned_traits[t.api_name] += 1
+
+    board_apis = [a for a in dict.fromkeys(u.api_name for u in state.board) if a in set_data.champions]
+    fielded_set = set(board_apis)
+
+    def power(c: Champion) -> tuple[bool, int, int]:
+        o = owned.get(c.api_name)
+        return (c.api_name in fielded_set, c.cost * (o.star if o else 1), c.cost)
+
+    owned_champs = [set_data.champions[a] for a in owned if a in set_data.champions]
+    dps_owned = [c for c in owned_champs if champion_profile(c) in ("ad", "ap")]
+    board_carry = max(dps_owned, key=lambda c: (*power(c), c.name_en)) if dps_owned else None
 
     out: list[CompSuggestion] = []
     for trait_api, have_apis in members.items():
@@ -333,42 +361,47 @@ def auto_comps(
         if len(pool) < need:
             continue
 
-        def synergy(c: Champion) -> int:
-            return sum(owned_traits[t.api_name] for t in _champ_traits(c, lookup) if t.api_name != trait_api)
+        def synergy(c: Champion, skip: str = trait_api) -> int:
+            return sum(owned_traits[t.api_name] for t in _champ_traits(c, lookup) if t.api_name != skip)
 
         pool.sort(key=lambda c: (c.cost, -synergy(c), c.name_en))
         missing = pool[:need]
 
         have_champs = [set_data.champions[a] for a in sorted(have_apis)]
+        fielded = len(have_apis & fielded_set)
+        active_on_board = fielded >= bps[0]
         rank = bps.index(nxt) + 1
-        score = 0.2 + 0.5 * (count / nxt) + 0.2 * (rank / len(bps)) - 0.05 * max(0, need - 1)
-        if active:
+        progress = (fielded + 0.5 * (count - fielded)) / nxt
+        score = 0.2 + 0.5 * progress + 0.2 * (rank / len(bps)) - 0.05 * max(0, need - 1)
+        if active_on_board:
             score += 0.1
 
-        involved = {c.api_name for c in have_champs} | {c.api_name for c in missing}
+        # The direction keeps the fielded board: trait members first, then
+        # the other fielded units, then what is missing.
+        core_owned = [c.api_name for c in have_champs] + [a for a in board_apis if a not in have_apis]
+        involved = set(core_owned) | {c.api_name for c in missing}
         contested = _contested(involved, None, taken)
         score -= min(CONTEST_CAP, 0.05 * len(contested))
 
-        # Carry: strongest owned non-tank member, else the strongest member.
-        def power(c: Champion) -> tuple[int, int]:
-            o = owned.get(c.api_name)
-            return ((c.cost * (o.star if o else 1)), c.cost)
-
-        dps = [c for c in have_champs if champion_profile(c) in ("ad", "ap")]
-        carry = max(dps or have_champs, key=power) if have_champs else None
+        # Carry: the strongest owned damage dealer (fielded first); without
+        # one, the strongest member of the trait.
+        carry = board_carry or (max(have_champs, key=power) if have_champs else None)
 
         missing_names = [c.name for c in missing]
+        have_names = [set_data.champions[a].name for a in core_owned]
         reason = f"已有 {count} 个{trait.name}，再补 {need} 个（{', '.join(missing_names)}）就能到 {nxt} 档"
-        if active:
+        if active_on_board:
             reason += "，羁绊已激活，顺着升级"
+        elif active:
+            reason += f"，把备战席的{trait.name}英雄放上场就能激活"
         if contested:
             reason += f"，{', '.join(contested)} 也在玩这些英雄"
         out.append(
             CompSuggestion(
                 name=f"{trait.name} {nxt}",
                 score=round(_clamp(score), 3),
-                core_units=[c.name for c in have_champs] + missing_names,
-                have_units=[c.name for c in have_champs],
+                core_units=have_names + missing_names,
+                have_units=have_names,
                 missing_units=missing_names,
                 carry=carry.name if carry else None,
                 carry_items=[],

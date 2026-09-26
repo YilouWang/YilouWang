@@ -36,10 +36,12 @@ class ClaudeStrategist:
         cfg: AnthropicConfig,
         set_data: SetData,
         clock: Callable[[], float] = time.time,
+        extra_reference: str = "",
     ) -> None:
         self.llm: LLM = llm if _looks_like_llm(llm) else LLM(cfg, client=llm)
         self.cfg = cfg
         self.set_data = set_data
+        self.extra_reference = extra_reference
         self.clock = clock
         self.last_error: Optional[str] = None
         self.last_advice: Optional[Advice] = None
@@ -52,7 +54,10 @@ class ClaudeStrategist:
         """Built once per instance: identical bytes every call (prompt cache)."""
         with self._lock:
             if self._system is None:
-                self._system = build_strategist_system(self.set_data.summary_text())
+                reference = self.set_data.summary_text()
+                if self.extra_reference.strip():
+                    reference += "\n\n" + self.extra_reference.strip()
+                self._system = build_strategist_system(reference)
             return self._system
 
     # ------------------------------------------------------------------ advise
@@ -92,7 +97,12 @@ class ClaudeStrategist:
             if not text:
                 continue
             kind = a.type if isinstance(a.type, ActionType) else ActionType.OTHER
-            actions.append(AdviceAction(type=kind, text=text, priority=max(1, min(3, int(a.priority or 2)))))
+            try:
+                prio = int(a.priority)
+            except (TypeError, ValueError):
+                prio = 2
+            # 0 (or less) means "most urgent" to the model: clamp, never demote to 2.
+            actions.append(AdviceAction(type=kind, text=text, priority=max(1, min(3, prio))))
         actions.sort(key=lambda x: x.priority)
         actions = actions[:MAX_ACTIONS] or list(rules_advice.actions)
 
@@ -116,7 +126,8 @@ class ClaudeStrategist:
             items=opt(out.items, rules_advice.items),
             positioning=opt(out.positioning, rules_advice.positioning),
             augment=opt(out.augment, rules_advice.augment),
-            scout_request=opt(out.scout_request, None),
+            # Keep the planner's open request when the model does not ask for one.
+            scout_request=opt(out.scout_request, rules_advice.scout_request),
             confidence=confidence,
             source="llm",
             stage=stage,

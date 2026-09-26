@@ -1,0 +1,116 @@
+{
+ "screen_type": "augment_select",
+ "viewing_own_board": true,
+ "stage": "2-1",
+ "gold": 12,
+ "level": 4,
+ "xp_current": 0,
+ "xp_needed": 10,
+ "hp": 100,
+ "streak": 0,
+ "shop": [
+  {
+   "name": "卡尔玛",
+   "cost": 1
+  },
+  {
+   "name": "卡蜜尔",
+   "cost": 1
+  },
+  {
+   "name": "阿利斯塔",
+   "cost": 2
+  },
+  {
+   "name": "芸阿娜",
+   "cost": 2
+  },
+  {
+   "name": "蕾欧娜",
+   "cost": 1
+  }
+ ],
+ "board": [
+  {
+   "name": "卡尔玛",
+   "star": 2,
+   "items": [],
+   "row": 3,
+   "col": 1
+  },
+  {
+   "name": "约里克",
+   "star": 1,
+   "items": [],
+   "row": 0,
+   "col": 3
+  },
+  {
+   "name": "洛",
+   "star": 1,
+   "items": [],
+   "row": 0,
+   "col": 2
+  },
+  {
+   "name": "芸阿娜",
+   "star": 1,
+   "items": [],
+   "row": 3,
+   "col": 5
+  }
+ ],
+ "bench": [],
+ "item_bench": [
+  "Tear of the Goddess",
+  "Needlessly Large Rod"
+ ],
+ "players": [
+  {
+   "name": "我",
+   "hp": 100,
+   "is_self": true
+  },
+  {
+   "name": "星星点灯",
+   "hp": 100,
+   "is_self": false
+  },
+  {
+   "name": "晚安玛卡巴卡",
+   "hp": 100,
+   "is_self": false
+  },
+  {
+   "name": "北极熊",
+   "hp": 100,
+   "is_self": false
+  },
+  {
+   "name": "小火龙",
+   "hp": 100,
+   "is_self": false
+  },
+  {
+   "name": "Kaiser",
+   "hp": 100,
+   "is_self": false
+  },
+  {
+   "name": "Nina",
+   "hp": 100,
+   "is_self": false
+  },
+  {
+   "name": "Leo",
+   "hp": 100,
+   "is_self": false
+  }
+ ],
+ "augment_choices": [
+  "Latent Forge",
+  "Booster Pack",
+  "Spreading Roots"
+ ],
+ "notes": []
+}

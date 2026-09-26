@@ -1,0 +1,54 @@
+{
+ "screen_type": "carousel",
+ "viewing_own_board": true,
+ "stage": "3-4",
+ "gold": 24,
+ "level": 6,
+ "xp_current": 8,
+ "xp_needed": 36,
+ "hp": 58,
+ "streak": -5,
+ "players": [
+  {
+   "name": "我",
+   "hp": 58,
+   "is_self": true
+  },
+  {
+   "name": "星星点灯",
+   "hp": 100,
+   "is_self": false
+  },
+  {
+   "name": "晚安玛卡巴卡",
+   "hp": 92,
+   "is_self": false
+  },
+  {
+   "name": "北极熊",
+   "hp": 83,
+   "is_self": false
+  },
+  {
+   "name": "小火龙",
+   "hp": 77,
+   "is_self": false
+  },
+  {
+   "name": "Kaiser",
+   "hp": 74,
+   "is_self": false
+  },
+  {
+   "name": "Nina",
+   "hp": 95,
+   "is_self": false
+  },
+  {
+   "name": "Leo",
+   "hp": 85,
+   "is_self": false
+  }
+ ],
+ "notes": []
+}

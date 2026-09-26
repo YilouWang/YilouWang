@@ -19,7 +19,7 @@ max_image_edge = 1568
 
 [capture]
 monitor = 1                                   # 第几个显示器 (1 = 主显示器)
-window_title = "League of Legends (TM) Client" # 游戏窗口标题，找到就只截游戏窗口
+window_title = "Teamfight Tactics"            # 游戏窗口标题（也会按进程名 TFT.exe 查找），找到就只截游戏窗口
 use_window = true
 poll_interval_s = 1.0                         # 自动模式下多久看一次画面
 settle_delay_s = 1.2                          # 回合切换后等多久再分析（等动画结束）

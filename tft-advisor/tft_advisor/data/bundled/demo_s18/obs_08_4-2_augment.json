@@ -1,0 +1,156 @@
+{
+ "screen_type": "augment_select",
+ "viewing_own_board": true,
+ "stage": "4-2",
+ "gold": 38,
+ "level": 7,
+ "xp_current": 4,
+ "xp_needed": 56,
+ "hp": 48,
+ "streak": 2,
+ "shop": [
+  {
+   "name": "瑟提",
+   "cost": 4
+  },
+  {
+   "name": "婕拉",
+   "cost": 4
+  },
+  {
+   "name": "莫甘娜",
+   "cost": 4
+  },
+  {
+   "name": "赫卡里姆",
+   "cost": 3
+  },
+  {
+   "name": "莉莉娅",
+   "cost": 4
+  }
+ ],
+ "board": [
+  {
+   "name": "卡尔玛",
+   "star": 2,
+   "items": [
+    "大天使之杖"
+   ],
+   "row": 3,
+   "col": 0
+  },
+  {
+   "name": "约里克",
+   "star": 2,
+   "items": [],
+   "row": 0,
+   "col": 3
+  },
+  {
+   "name": "蔚",
+   "star": 2,
+   "items": [
+    "狂徒铠甲"
+   ],
+   "row": 0,
+   "col": 4
+  },
+  {
+   "name": "芸阿娜",
+   "star": 2,
+   "items": [
+    "无尽之刃"
+   ],
+   "row": 3,
+   "col": 6
+  },
+  {
+   "name": "阿狸",
+   "star": 1,
+   "items": [
+    "珠光护手"
+   ],
+   "row": 3,
+   "col": 5
+  },
+  {
+   "name": "瑟提",
+   "star": 1,
+   "items": [],
+   "row": 0,
+   "col": 2
+  },
+  {
+   "name": "易",
+   "star": 1,
+   "items": [],
+   "row": 1,
+   "col": 4
+  }
+ ],
+ "bench": [
+  {
+   "name": "瑟提",
+   "star": 1,
+   "items": []
+  },
+  {
+   "name": "婕拉",
+   "star": 1,
+   "items": []
+  }
+ ],
+ "item_bench": [],
+ "players": [
+  {
+   "name": "我",
+   "hp": 48,
+   "is_self": true
+  },
+  {
+   "name": "星星点灯",
+   "hp": 90,
+   "is_self": false
+  },
+  {
+   "name": "晚安玛卡巴卡",
+   "hp": 85,
+   "is_self": false
+  },
+  {
+   "name": "北极熊",
+   "hp": 70,
+   "is_self": false
+  },
+  {
+   "name": "小火龙",
+   "hp": 66,
+   "is_self": false
+  },
+  {
+   "name": "Kaiser",
+   "hp": 58,
+   "is_self": false
+  },
+  {
+   "name": "Nina",
+   "hp": 88,
+   "is_self": false
+  },
+  {
+   "name": "Leo",
+   "hp": 66,
+   "is_self": false
+  }
+ ],
+ "augment_choices": [
+  "Epic Rolldown",
+  "Frontline Foundation",
+  "Magic Roll"
+ ],
+ "augments": [
+  "Latent Forge"
+ ],
+ "notes": []
+}

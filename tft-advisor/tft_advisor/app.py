@@ -355,10 +355,11 @@ class AdvisorApp:
         try:
             if job.purpose != "reanalyze":
                 image = job.image if job.image is not None else self._grab()
-                if image is None and self.perceiver is not None and getattr(self.perceiver, "name", "") != "mock":
-                    self.warn("没有截到游戏画面（检查游戏是否在运行，或运行 tft-advisor calibrate）")
-                    return None
                 if image is None:
+                    if self.capturer is not None:
+                        self.warn("没有截到游戏画面（检查游戏是否在运行，或运行 tft-advisor calibrate）")
+                        return None
+                    # No capturer (demo / tests): perceivers that replay data ignore the frame.
                     image = Image.new("RGB", (1920, 1080))
                 if self.perceiver is None and self.fast_perceiver is None:
                     self.warn("没有可用的识别方式：请设置 ANTHROPIC_API_KEY 或安装 OCR (pip install rapidocr-onnxruntime)")
