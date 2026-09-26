@@ -98,9 +98,28 @@ def build_name_lists(set_data: "SetData") -> str:
     return "\n".join(lines)
 
 
+# HUD notes for the Unreal Engine client (Set 18 onward). Kept separate from
+# the generic prompt so an older client can still be read.
+UNREAL_HUD_NOTES = """\
+UNREAL CLIENT HUD (Set 18 and later), these override the generic layout above where they differ:
+- Bottom HUD row, left to right: "Lvl. N" with the XP text "x/y" next to it, then five shop odds percentages (for example "30% 40% 25% 5% 0%", do not confuse them with gold), then the gold number with a coin, then the streak icon (flame = win, ice = loss) with its number, then a badge with the team size.
+- Buy XP and Reroll buttons are on the far left of the shop; the 5 shop cards follow. The champion name is written on the dark banner at the bottom of each card, the cost number with a coin at the banner's right end.
+- WISPS: in every other shop the rightmost card is a Wisp (a glowing orb consumable with its own name and price) instead of a champion. Output that slot as {"name": "Wisp: <the name as written>", "cost": <its price>}. Never invent a champion for it.
+- Item bench: a vertical column of up to 10 square slots at the far LEFT edge of the screen, left of the trait panel. Stacked identical items show a small count number: repeat the name that many times in item_bench.
+- Trait panel: just right of the item column; each row is a trait icon, the unit count, the trait name and its breakpoints.
+- Player list: right edge; the local player's row is drawn larger with a bigger HP number.
+- When the camera shows another player's arena, that player's name and level appear on a plate above their arena.
+- Carousel: the ring of champions in the middle belongs to nobody: leave board, bench, traits and item_bench null.
+- Not champions, never list them as units: Elderwood plants (Stonebark Tree, Lifebloom, Deepwood Protector), summons (Azir soldiers, Zyra plants), the tactician (little legend), training dummies.
+- Lux has trait forms ("Lux (Coven)" etc.): output the plain champion name from the NAME LISTS and put the form in a note.
+- Units can reach 4 stars in this set (4 small stars): star = 4.
+"""
+
+
 def build_vision_system(set_data: "SetData") -> str:
     """Full system prompt for the vision perceiver. Deterministic for a given set (prompt cache)."""
-    return SYSTEM_PROMPT_VISION + "\n" + build_name_lists(set_data) + "\n"
+    hud = UNREAL_HUD_NOTES + "\n" if (set_data.set_number or 0) >= 18 else ""
+    return SYSTEM_PROMPT_VISION + "\n" + hud + build_name_lists(set_data) + "\n"
 
 
 _PURPOSE_TEXT = {

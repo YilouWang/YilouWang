@@ -144,17 +144,27 @@ tft-advisor replay 截图目录           # 对保存的截图跑一遍分析（
 tft-advisor data show --full        # 看当前赛季数据
 ```
 
-## 合规与风险
+## 合规与风险（请先读）
 
-- 这个工具是被动的：只截屏、读 Riot 本地公开的 Live Client Data 接口（如果可用），不自动操作、不注入、不读内存。
-- Riot 对第三方工具有政策（例如不允许自动化操作，限制某些实时信息整合）。助手不会预测「下一个对手是谁」。侦察信息来自你自己切屏看到的内容。
-- 即便如此，在排位赛中使用实时建议工具是否完全符合 Riot 的条款由你自己判断，**风险自负**。建议先在普通模式里用。
+这个工具只截屏、只读 Riot 本地公开的 Live Client Data 接口（S18 虚幻引擎客户端上大概率已经没有这个接口，工具会自动跳过），**不会向游戏发送任何键盘鼠标操作，不注入、不读内存，也不预测下一个对手是谁**。但你需要知道 Riot 的 TFT 第三方工具政策（开发者门户 2026 年 8 月的版本）明确写了这些「不允许的用例」：
+
+- "Scouting - tracking the champions opponents have on their boards."（侦察：记录对手棋盘上的英雄）
+- "Apps that provide dynamic, real-time information." / "Apps that dictate player decisions."（提供动态实时信息、替玩家做决定的应用）
+- "An app cannot make suggestions based on the player's current game state"（不能根据当前对局状态给建议）
+
+这些条款针对的是向 Riot 注册的第三方产品。这个工具是你自己电脑上的私人程序，被动截屏目前没有已知的检测方式，Vanguard 也没有公开说明会拦截截屏。但它在对局中给出实时建议、记录对手阵容，**本质上和政策意图相违背，在排位赛中使用有被判定违规的风险，后果由你自己承担**。建议：
+
+- 优先在普通模式、练习和自定义房间里用，把它当「陪练教练」，学会思路后自己打；
+- 用 `tft-advisor review --llm` 做赛后复盘，这部分完全符合政策（只看自己的对局）；
+- 不想在对局中看对手信息时，把配置里的 `scout_prompts = false`。
+
+隐私：截图（包含同局其他玩家的游戏名）会发给 Anthropic 的 API 做识别；对局日志只保存在你自己电脑的 `~/.tft_advisor/logs/`。
 
 ## 已知限制
 
 - S18 起 TFT 迁移到了虚幻引擎，界面布局和旧版本不同。识别主要靠 Claude 看整张截图，对界面变化比较鲁棒；截图裁剪区域是按经验估的，用 `tft-advisor calibrate` 检查，偏得厉害时可以反馈。
 - Riot 计划 2026-10-09 推出独立的 TFT 客户端，窗口标题可能会变：如果 `doctor` 找不到游戏窗口，在配置里改 `[capture] window_title`，或者直接用整块屏幕截图（找不到窗口时会自动退回整屏）。
-- 视觉识别偶尔会读错星级或装备；关键数字（金币、等级、回合）可以装 OCR（`pip install rapidocr-onnxruntime`）交叉校验。
+- 视觉识别偶尔会读错星级或装备；关键数字（金币、等级、回合）可以装 OCR（`pip install rapidocr-onnxruntime`），并在配置里开 `ocr_crosscheck = true` 交叉校验（每次分析会多花一点时间）。装了 OCR 后，读商店（F9）会优先用本地 OCR，又快又不花钱。
 - 奖励机制很多的赛季（S18 的精灵 Wisps、各种召唤物、Lux 变体）识别难度更高，建议以看板为参考而不是绝对指令。
 
 ## 开发

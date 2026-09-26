@@ -34,6 +34,7 @@ min_seconds_between_llm = 8.0
 scout_prompts = true         # 让助手提醒你去看别人的棋盘
 shop_watch = true            # 刷新商店时自动读商店、提示买什么
 max_scout_requests_per_stage = 2
+ocr_crosscheck = false       # 每次分析都再用 OCR 核对金币/回合（需要装 OCR，会慢几秒）
 comp_hint = ""               # 你想玩的阵容，比如 "法师" 或 "阿狸"，留空 = 自动
 
 [data]

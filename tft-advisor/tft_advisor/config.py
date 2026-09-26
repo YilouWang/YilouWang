@@ -48,6 +48,7 @@ class AdvisorConfig:
     scout_prompts: bool = True  # ask the human to show other boards
     shop_watch: bool = True  # re-read the shop when it changes (rolls)
     max_scout_requests_per_stage: int = 2
+    ocr_crosscheck: bool = False  # also run OCR on every frame to double-check gold / stage (slower)
     comp_hint: str = ""  # optional: the comp you want to play, free text
 
 

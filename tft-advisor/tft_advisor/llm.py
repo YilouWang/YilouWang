@@ -203,7 +203,13 @@ class LLM:
     ) -> T:
         kwargs = self._request_kwargs(model, effort, system, content, max_tokens)
         kwargs["output_format"] = schema
-        resp = self._call("parse", purpose, kwargs)
+        try:
+            resp = self._call("parse", purpose, kwargs)
+        except LLMError:
+            raise
+        except ValueError as exc:  # pydantic ValidationError on a malformed structured reply
+            self._fail("invalid structured output")
+            raise LLMError(f"Claude 返回的结构不符合要求: {str(exc)[:160]}") from exc
         out = getattr(resp, "parsed_output", None)
         if out is None:
             self._fail("no parsed output")

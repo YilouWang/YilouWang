@@ -140,7 +140,9 @@ def test_claude_auto_request_and_result(set_data):
         assert labels[1].startswith("IMAGE 2: bottom HUD crop")
         assert labels[2].startswith("IMAGE 3: player list crop")
         assert labels[3].startswith("IMAGE 4: stage")
-        assert all(img["source"]["media_type"] == "image/png" for img in images)
+        # Full frame as JPEG (layout, small upload), crops as lossless PNG (small text).
+        assert images[0]["source"]["media_type"] == "image/jpeg"
+        assert all(img["source"]["media_type"] == "image/png" for img in images[1:])
         for lab in labels:
             assert lab in instruction  # the instruction lists every image
         assert "automatic capture" in instruction
@@ -1048,9 +1050,9 @@ def test_liveclient_strips_riot_tag_from_summoner_name():
 def test_clean_text_removes_every_long_dash():
     from tft_advisor.vision.base import clean_name, clean_text
 
-    assert clean_text("a⸺b⸻c―d") == "a，b，c-d"
+    assert clean_text("a\u2e3ab\u2e3bc\u2015d") == "a，b，c-d"
     assert clean_name(None) is None and clean_name(" \n\t ") is None
-    assert clean_name("x—y") == "x-y"
+    assert clean_name("x\u2014y") == "x-y"
 
 
 def test_fixture_xp_matches_bundled_mechanics(mech):
@@ -1118,3 +1120,16 @@ def test_max_image_edge_is_clamped(set_data, edge, expected):
     p = ClaudeVisionPerceiver(LLM(cfg), cfg, set_data)
     full = p.build_images(Image.new("RGB", (9000, 5063)), "auto")[0][1]
     assert max(full.size) == min(expected, 9000)
+
+
+def test_unreal_hud_notes_only_for_set_18_plus():
+    from tft_advisor.data.setdata import SetData, bundled_sample, bundled_snapshot
+    from tft_advisor.vision.prompts import UNREAL_HUD_NOTES, build_vision_system
+
+    s18 = SetData.from_cdragon(bundled_snapshot("zh_cn"), bundled_snapshot("en_us"))
+    sample = SetData.from_cdragon(bundled_sample())
+    sample.set_number = 17  # a pre-Unreal (Hextech client) set
+    assert UNREAL_HUD_NOTES in build_vision_system(s18)
+    assert "Wisp: <the name as written>" in build_vision_system(s18)
+    assert UNREAL_HUD_NOTES not in build_vision_system(sample)
+    assert build_vision_system(s18) == build_vision_system(s18)  # deterministic for prompt caching

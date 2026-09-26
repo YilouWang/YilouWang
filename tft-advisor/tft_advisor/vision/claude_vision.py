@@ -102,9 +102,19 @@ def prepare_crop(img: "Image.Image", max_edge: int, small_edge: int = 500) -> "I
     return img
 
 
-def encode_image(img: "Image.Image", optimize: bool = True) -> tuple[bytes, str]:
-    """PNG (lossless, best for small HUD text); JPEG fallback if the PNG is too large for the API."""
+def encode_image(img: "Image.Image", optimize: bool = True, prefer_jpeg: bool = False) -> tuple[bytes, str]:
+    """PNG (lossless, best for small HUD text); JPEG fallback if the PNG is too large for the API.
+
+    ``prefer_jpeg`` is used for the downscaled full frame: it carries layout, not
+    small text (the crops do), and a noisy 3D scene is several MB as PNG but a
+    few hundred KB as JPEG, which matters for upload latency every round.
+    """
     img = _to_rgb(img)
+    if prefer_jpeg:
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        if len(buf.getvalue()) <= _MAX_IMAGE_BYTES:
+            return buf.getvalue(), "image/jpeg"
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=optimize)
     data = buf.getvalue()
@@ -326,7 +336,8 @@ class ClaudeVisionPerceiver:
         for idx, (label, img) in enumerate(pairs, start=1):
             full_label = f"IMAGE {idx}: {label}"
             labels.append(full_label)
-            data, media_type = encode_image(img, optimize=self.png_optimize)
+            is_full_frame = idx == 1 and normalize_purpose(purpose) != "shop"
+            data, media_type = encode_image(img, optimize=self.png_optimize, prefer_jpeg=is_full_frame)
             content.append(text_block(full_label))
             content.append(image_block(data, media_type=media_type))
         content.append(text_block(build_user_text(purpose, hint, labels)))

@@ -273,8 +273,14 @@ class AdvisorApp:
         self.tracker.reset()
         self.game_log.new_game()
         self._last_advice = None
+        for req in list(self.scout_planner.open_requests()):
+            self.scout_planner.dismiss(req.id)
         self.info("新对局：已重置")
         self._publish_state(self.tracker.state)
+        # Clear the last game's advice everywhere (dashboard, overlay, voice).
+        self.bus.publish("analysis", _dump(Analysis()))
+        self.bus.publish("advice", _dump(Advice(headline="新对局，等待第一次分析", source="rules")))
+        self._publish_requests()
         self.publish_status()
 
     # ---------------------------------------------------------------- pipeline
@@ -294,12 +300,19 @@ class AdvisorApp:
     def _perceive(self, image: Image.Image, purpose: str, extra: dict[str, Any]) -> Optional[Observation]:
         from .vision.base import PerceptionError, PerceptionHint
 
+        from .vision.base import clean_name
+
+        # "Likely on screen" hints: what the tracker saw last time (board, bench,
+        # shop, items, traits). The full name lists already live in the cached
+        # system prompt, so repeating them here would only add tokens.
+        last = self.tracker.state
+        player = clean_name(extra.get("player")) if extra.get("player") else None
         hint = PerceptionHint(
-            champion_names=self.set_data.champion_names(),
-            item_names=self.set_data.item_names(),
-            trait_names=sorted({t.name for t in self.set_data.traits.values()}),
-            self_name=self.tracker.state.self_name,
-            scouting_player=extra.get("player"),
+            champion_names=[u.name for u in (*last.board, *last.bench)] + [u.name for u in last.shop_units if u],
+            item_names=list(last.item_bench) + [i for u in last.board for i in u.items],
+            trait_names=[t.name for t in last.traits],
+            self_name=last.self_name,
+            scouting_player=player,
         )
         order = [self.fast_perceiver, self.perceiver] if purpose == "shop" else [self.perceiver]
         obs: Optional[Observation] = None
@@ -314,8 +327,14 @@ class AdvisorApp:
                 self.warn(f"识别失败 ({getattr(perceiver, 'name', '?')}): {exc}")
         if obs is None:
             return None
-        # Cheap exact sources refine numbers read by the model.
-        if self.fast_perceiver is not None and self.fast_perceiver is not self.perceiver and purpose != "shop":
+        # Optional OCR cross-check of the numbers read by the model (costs a
+        # second pass over the frame, so it is off unless configured).
+        if (
+            self.cfg.advisor.ocr_crosscheck
+            and self.fast_perceiver is not None
+            and self.fast_perceiver is not self.perceiver
+            and purpose != "shop"
+        ):
             try:
                 fast = self.fast_perceiver.perceive(image, purpose=purpose, hint=hint)
                 from .vision.merge import merge_observations
@@ -334,8 +353,8 @@ class AdvisorApp:
             from .vision.merge import merge_observations
 
             obs = obs.model_copy(update={"screen": merge_observations(obs.screen, live, prefer_secondary={"level"})})
-        if purpose == "scout" and extra.get("player") and not obs.screen.viewed_player_name:
-            obs.screen.viewed_player_name = str(extra["player"])
+        if purpose == "scout" and player and not obs.screen.viewed_player_name:
+            obs.screen.viewed_player_name = player
         if purpose == "scout":
             obs.purpose = "scout"
         return obs
@@ -452,7 +471,11 @@ class AdvisorApp:
                 self.bus.publish("answer", {"question": question, "answer": "上一个问题还在处理中，请稍等", "ts": self.clock()})
                 return
             try:
-                answer = self.ask(question)
+                try:
+                    answer = self.ask(question)
+                except Exception as exc:  # the page waits for an answer: always send one
+                    self.warn(f"提问失败: {exc}")
+                    answer = f"出错了，没能回答（{type(exc).__name__}）"
                 self.bus.publish("answer", {"question": question, "answer": answer, "ts": self.clock()})
             finally:
                 self._ask_lock.release()
@@ -522,12 +545,19 @@ class AdvisorApp:
         if hotkeys and self.cfg.hotkeys.enabled:
             from .capture.hotkeys import HotkeyManager
 
-            bindings = {
-                self.cfg.hotkeys.analyze: lambda: self.request_analysis("manual"),
-                self.cfg.hotkeys.scout: lambda: self.request_analysis("scout"),
-                self.cfg.hotkeys.toggle_auto: self.toggle_auto,
-                self.cfg.hotkeys.shop: lambda: self.request_analysis("shop"),
-            }
+            wanted = [
+                (self.cfg.hotkeys.analyze, lambda: self.request_analysis("manual")),
+                (self.cfg.hotkeys.scout, lambda: self.request_analysis("scout")),
+                (self.cfg.hotkeys.toggle_auto, self.toggle_auto),
+                (self.cfg.hotkeys.shop, lambda: self.request_analysis("shop")),
+            ]
+            bindings: dict[str, Callable[[], None]] = {}
+            for key, fn in wanted:
+                norm = key.strip().lower()
+                if norm in {k.strip().lower() for k in bindings}:
+                    self.warn(f"热键 {key} 在配置里重复了，只保留第一个用途")
+                    continue
+                bindings[key] = fn
             self._hotkeys = HotkeyManager(bindings, log=self.info)
             if not self._hotkeys.start():
                 self.info("全局热键不可用：请用网页上的按钮")
@@ -565,9 +595,8 @@ class AdvisorApp:
             if self.cfg.ui.overlay:
                 from .ui.overlay import Overlay
 
-                overlay = Overlay(self.bus, self.cfg.ui, log=self.info)
-                if overlay.run() is not False:
-                    return
+                overlay = Overlay(self.bus, self.cfg.ui, log=self.info, stop_event=self._stop)
+                overlay.run()  # returns when closed or unavailable; keep running either way
             while not self._stop.wait(0.5):
                 pass
         except KeyboardInterrupt:

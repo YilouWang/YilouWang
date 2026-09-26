@@ -22,7 +22,7 @@ import pytest
 from tft_advisor.bus import EventBus
 from tft_advisor.config import UIConfig
 from tft_advisor.models import ActionType, Advice, AdviceAction, ScoutRequest, ScreenType
-from tft_advisor.ui.overlay import Overlay, display_available, overlay_lines
+from tft_advisor.ui.overlay import Overlay, compact_line, display_available, overlay_lines
 from tft_advisor.ui.server import (
     ALLOWED_COMMANDS,
     MAX_BODY_BYTES,
@@ -715,7 +715,7 @@ def test_speaker_attach_speaks_advice_and_new_requests(fake_tts: FakeEngine, bus
     sp.attach(bus)
     try:
         bus.publish("advice", sample_advice().model_dump(mode="json"))
-        assert wait_for(lambda: fake_tts.said == ["稳住血量，准备 4-1 升 7。现在升到 7 级"])
+        assert wait_for(lambda: fake_tts.said == ["稳住血量，准备 四一 升 7。现在升到 7 级"])  # "4-1" read as 四一
         bus.publish("advice", sample_advice().model_dump(mode="json"))  # unchanged: silent
         req = ScoutRequest(id="r1", text="请点开 小明 的棋盘后按 F7", target_player="小明")
         bus.publish("requests", [req.model_dump(mode="json")])
@@ -742,3 +742,255 @@ def test_voice_helpers() -> None:
     assert clean_text("  追  三星\n卡特 \u2014 快 ") == "追 三星 卡特 ， 快"
     assert advice_speech({"headline": "现在升到 7 级", "actions": [{"text": "现在升到 7 级", "priority": 1}]}) == "现在升到 7 级"
     assert advice_speech({"headline": "", "actions": []}) == ""
+
+
+# ---------------------------------------------------------------------------
+# regression tests (adversarial review)
+# ---------------------------------------------------------------------------
+
+
+def test_reserved_extra_args_do_not_crash_the_command(server: DashboardServer, bus: EventBus) -> None:
+    # "self" used to reach EventBus.command(self, cmd, **kw) -> TypeError -> 500
+    got: list[Any] = []
+    bus.subscribe("command", lambda _t, p: got.append(p))
+    status, body = request("POST", base(server) + "/api/command", {"cmd": "analyze", "self": 1, "cmd2": "x"})
+    assert status == 200, body
+    assert got == [{"cmd": "analyze", "cmd2": "x"}]
+    assert validate_command({"cmd": "shop", "self": 1, "token": "t"}) == ("shop", {})
+
+
+def test_hostile_json_bodies_are_400_not_500(server: DashboardServer, bus: EventBus) -> None:
+    logs: list[str] = []
+    server.log = logs.append
+    got: list[Any] = []
+    bus.subscribe("command", lambda _t, p: got.append(p))
+    url = base(server) + "/api/command"
+    assert request("POST", url, raw=b"[" * 5000 + b"]" * 5000)[0] == 400  # RecursionError in json
+    assert request("POST", url, raw=b'{"cmd":"analyze","n":' + b"9" * 5000 + b"}")[0] == 400  # int digit limit
+    assert request("POST", url, {"cmd": "set_field", "field": "gold", "value": 10**30})[0] == 400
+    assert request("POST", url, {"cmd": "set_field", "field": "gold", "value": -(10**30)})[0] == 400
+    assert request("POST", url, raw=b'{"cmd":"set_field","field":"gold","value":1e999}')[0] == 400
+    assert got == [] and not any("出错" in line for line in logs)
+
+
+def test_jsonable_handles_numpy_values() -> None:
+    np = pytest.importorskip("numpy")
+    out = json.loads(dumps({"i": np.int64(7), "b": np.bool_(True), "f": np.float32(0.5), "a": np.array([[1, 2], [3, np.nan]])}))
+    assert out == {"i": 7, "b": True, "f": 0.5, "a": [[1.0, 2.0], [3.0, None]]}
+
+
+def test_sse_slow_client_is_resynced_with_a_snapshot(bus: EventBus, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A client that stalls long enough for the bus queue to overflow must not
+    silently miss the newest payloads: it gets a fresh snapshot instead."""
+    import tft_advisor.ui.server as server_mod
+
+    gate = threading.Event()
+    stalled = threading.Event()
+    original = server_mod._Handler._write
+    writes = {"n": 0}
+
+    def slow_write(self: Any, text: str) -> None:
+        writes["n"] += 1
+        if writes["n"] == 3:  # retry hint, snapshot, then the first event stalls
+            stalled.set()
+            gate.wait(5)
+        original(self, text)
+
+    monkeypatch.setattr(server_mod._Handler, "_write", slow_write)
+    srv = DashboardServer(bus, UIConfig(host="127.0.0.1", port=0), log=quiet, keepalive_s=5)
+    srv.start()
+    client = SSEClient(srv.port)
+    try:
+        assert client.next_event()[0] == "snapshot"
+        bus.publish("status", {"auto": True})
+        assert stalled.wait(3)
+        for i in range(400):  # far more than the 256-slot bus queue
+            bus.log(f"日志 {i}")
+        bus.publish("advice", sample_advice(headline="最新建议").model_dump(mode="json"))
+        gate.set()
+        snap = client.next_named("snapshot", limit=10)
+        assert snap["advice"]["headline"] == "最新建议"
+    finally:
+        gate.set()
+        client.close()
+        srv.stop()
+
+
+def test_sse_keepalive_sends_comment_and_ping_event(server: DashboardServer) -> None:
+    client = SSEClient(server.port)
+    try:
+        assert client.next_event()[0] == "snapshot"
+        ping = client.next_named("ping")  # keepalive_s=0.2 in the fixture
+        assert isinstance(ping["ts"], float)
+        assert client.comments >= 1
+    finally:
+        client.close()
+
+
+def test_unusable_host_fails_fast_with_clear_message(bus: EventBus) -> None:
+    srv = DashboardServer(bus, UIConfig(host="203.0.113.5", port=18765), log=quiet)  # TEST-NET, not ours
+    t0 = time.time()
+    with pytest.raises(OSError) as info:
+        srv.start()
+    assert time.time() - t0 < 2
+    assert "[ui] host" in str(info.value) or "[ui] port" in str(info.value)
+    srv.stop()  # harmless after a failed start
+
+
+def test_index_html_regressions() -> None:
+    html = INDEX.read_text(encoding="utf-8")
+    js = re.search(r"<script>(.*)</script>", html, re.S).group(1)
+    # request buttons carry their own player / id, not an index into a list that may change
+    assert 'data-player="' in js and 'data-id="' in js
+    assert "currentRequests()[" not in js and "reqs[Number(" not in js
+    # the DOM is only rewritten through the diffing helper (keeps scroll / taps on phones)
+    assert js.count(".innerHTML =") == 1 and "function setHTML" in js
+    # dead stream watchdog, poll never overwrites a live stream, answer spinner times out
+    assert 'addEventListener("ping"' in js and "STALE_STREAM_MS" in js
+    assert 'connMode === "live") return' in js
+    assert "ASK_TIMEOUT_S" in js
+
+
+def test_voice_reads_rounds_the_way_players_say_them() -> None:
+    assert clean_text("准备 4-1 升 8，3 - 2 D 牌") == "准备 四一 升 8，三二 D 牌"
+    assert clean_text("版本 14.1-2") == "版本 14.1-2" and clean_text("12-3") == "12-3"
+    assert clean_text("血量 -5") == "血量 -5"
+
+
+def test_compact_line() -> None:
+    assert compact_line(None, None) == ("等待分析", "dim")
+    text, style = compact_line(sample_advice(), [{"id": "r1", "text": "x"}])
+    assert style == "p1" and text.startswith("现在升到 7 级") and text.endswith("» 1 条请求")
+    text, style = compact_line({"headline": "一" * 40, "actions": []}, [])
+    assert style == "compact" and len(text) == 24 and text.endswith("…")
+    assert compact_line({"headline": "存钱"}, "not a list") == ("存钱", "compact")
+
+
+class _FakeWidget:
+    def __init__(self, parent: Any = None, **kw: Any) -> None:
+        self.kw = dict(kw)
+        self.children: list[_FakeWidget] = []
+        if parent is not None:
+            parent.children.append(self)
+        self.parent = parent
+
+    def pack(self, **_kw: Any) -> None:
+        pass
+
+    def bind(self, *_a: Any, **_kw: Any) -> None:
+        pass
+
+    def destroy(self) -> None:
+        if self.parent is not None:
+            self.parent.children.remove(self)
+
+    def winfo_children(self) -> list["_FakeWidget"]:
+        return list(self.children)
+
+    def configure(self, **kw: Any) -> None:
+        self.kw.update(kw)
+
+    def winfo_reqheight(self) -> int:
+        return 20 * len(self.children[0].children) if self.children else 20
+
+
+class _FakeRoot:
+    def __init__(self) -> None:
+        self.after_calls: list[Any] = []
+        self.geometries: list[str] = []
+        self.quit_called = False
+
+    def after(self, ms: int, fn: Any) -> None:
+        self.after_calls.append((ms, fn))
+
+    def quit(self) -> None:
+        self.quit_called = True
+
+    def update_idletasks(self) -> None:
+        pass
+
+    def geometry(self, spec: str) -> None:
+        self.geometries.append(spec)
+
+    def winfo_x(self) -> int:
+        return 100
+
+    def winfo_y(self) -> int:
+        return 50
+
+
+def _fake_overlay(bus: EventBus, logs: list[str]) -> Overlay:
+    ov = Overlay(bus, UIConfig(overlay=True), log=logs.append)
+    root = _FakeRoot()
+    frame = _FakeWidget()
+    body = _FakeWidget(frame)
+    ov._root, ov._frame, ov._body, ov._toggle = root, frame, body, _FakeWidget()
+    ov._tk = types.SimpleNamespace(Label=_FakeWidget)
+    ov._fonts = {k: ("f", 10) for k in ("info", "busy", "headline", "p1", "action", "request", "dim", "compact")}
+    ov._colors = {}
+    ov._scale = 1.5
+    ov._bounds = (0, 0, 1920, 1080)
+    return ov
+
+
+def test_overlay_poll_rearms_after_an_error_and_notices_close(bus: EventBus) -> None:
+    logs: list[str] = []
+    ov = _fake_overlay(bus, logs)
+
+    def boom() -> None:
+        raise RuntimeError("render broke")
+
+    ov._render = boom  # type: ignore[method-assign]
+    bus.subscribe("advice", ov._on_event)
+    bus.publish("advice", sample_advice())
+    ov._poll()
+    assert ov._root.after_calls, "polling must be re-armed even after an exception"
+    assert any("render broke" in line for line in logs)
+    ov.close()
+    ov._poll()
+    assert ov._root.quit_called
+
+
+def test_overlay_render_scales_fits_height_and_collapses(bus: EventBus) -> None:
+    ov = _fake_overlay(bus, [])
+    ov._data = {"advice": sample_advice(), "requests": [{"id": "r1", "text": "请点开 小明 的棋盘后按 F7"}], "state": {"gold": 30}}
+    ov._render()
+    labels = [w.kw["text"] for w in ov._body.children]
+    assert "稳住血量，准备 4-1 升 7" in labels and any("小明" in t for t in labels)
+    width = int(round(WIDTH_PX * 1.5))
+    assert all(w.kw["wraplength"] < width for w in ov._body.children)
+    # window follows the content height at 150 % scaling, keeping its position
+    assert ov._root.geometries[-1] == f"{width}x{max(int(round(30 * 1.5)), 20 * len(labels))}+100+50"
+    ov.toggle_collapsed()
+    assert ov._toggle.kw["text"] == "展开" and len(ov._body.children) == 1
+    assert ov._body.children[0].kw["text"].startswith("现在升到 7 级")
+    ov.toggle_collapsed()
+    assert ov._toggle.kw["text"] == "收起" and len(ov._body.children) == len(labels)
+    assert not ov.closed  # collapsing never closes the overlay (or the app)
+
+
+WIDTH_PX = 380
+
+
+def test_overlay_windows_helpers_never_raise_off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    import tft_advisor.ui.overlay as overlay_mod
+
+    class Root(_FakeRoot):
+        def winfo_screenwidth(self) -> int:
+            return 1600
+
+        def winfo_screenheight(self) -> int:
+            return 900
+
+        def winfo_id(self) -> int:
+            return 1
+
+        def winfo_fpixels(self, _spec: str) -> float:
+            return 144.0
+
+    root = Root()
+    assert overlay_mod._tk_scale(root) == 1.5
+    monkeypatch.setattr(overlay_mod.sys, "platform", "win32")
+    # ctypes.WinDLL does not exist here: both helpers must degrade, not crash run()
+    assert overlay_mod._make_non_activating(root) is False
+    assert overlay_mod._screen_bounds(root) == (0, 0, 1600, 900)
