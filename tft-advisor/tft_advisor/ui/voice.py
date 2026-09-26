@@ -32,6 +32,9 @@ _ZH_TOKEN = re.compile(r"(?<![a-z])(zh|cmn|yue)(?![a-z])")
 _STARS = re.compile(r"[★☆]+")
 _DASHES = re.compile(r"[‒-―⸺⸻]+")
 _SPACES = re.compile(r"\s+")
+# A round like "4-1": Chinese TTS reads the hyphen as "减" (minus); players say "四一".
+_STAGE = re.compile(r"(?<![\d.])([1-9])\s*[-－]\s*([1-9])(?![\d.])")
+_ZH_DIGITS = "零一二三四五六七八九"
 
 
 def _voice_blob(voice: Any) -> str:
@@ -66,11 +69,12 @@ def pick_voice(voices: Any) -> Optional[Any]:
 
 
 def clean_text(text: Any) -> str:
-    """Make advice text speakable: stars become '2星', no dashes, one line, bounded."""
+    """Make advice text speakable: stars become '2星', '4-1' becomes '四一', no dashes, one line, bounded."""
     if text is None:
         return ""
     s = str(text)
     s = _STARS.sub(lambda m: f"{len(m.group(0))}星", s)
+    s = _STAGE.sub(lambda m: _ZH_DIGITS[int(m.group(1))] + _ZH_DIGITS[int(m.group(2))], s)
     s = _DASHES.sub("，", s)
     s = _SPACES.sub(" ", s).strip()
     return s[:MAX_TEXT]
