@@ -1,0 +1,63 @@
+{
+  "screen_type": "carousel",
+  "viewing_own_board": null,
+  "viewed_player_name": null,
+  "stage": "3-4",
+  "gold": 52,
+  "level": 6,
+  "xp_current": 12,
+  "xp_needed": 36,
+  "hp": 77,
+  "streak": -3,
+  "shop": null,
+  "shop_locked": null,
+  "board": null,
+  "bench": null,
+  "item_bench": null,
+  "players": [
+    {
+      "name": "咕噜咕噜",
+      "hp": 100,
+      "is_self": false
+    },
+    {
+      "name": "SkyWalker",
+      "hp": 92,
+      "is_self": false
+    },
+    {
+      "name": "夜雨声烦",
+      "hp": 85,
+      "is_self": false
+    },
+    {
+      "name": "Meiko",
+      "hp": 78,
+      "is_self": false
+    },
+    {
+      "name": "Yilou",
+      "hp": 77,
+      "is_self": true
+    },
+    {
+      "name": "老王不摆烂",
+      "hp": 72,
+      "is_self": false
+    },
+    {
+      "name": "BardKing",
+      "hp": 64,
+      "is_self": false
+    },
+    {
+      "name": "小火龙",
+      "hp": 55,
+      "is_self": false
+    }
+  ],
+  "traits": null,
+  "augment_choices": null,
+  "augments": null,
+  "notes": []
+}

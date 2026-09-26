@@ -1,0 +1,60 @@
+# TFT 助手配置文件 (TOML)
+# 放在 ~/.tft_advisor/config.toml 或当前目录的 tft_advisor.toml
+# 只写你想改的项，其余用默认值。
+
+[anthropic]
+# 识别画面和出策略用的 Claude 模型。默认都是 claude-opus-5。
+# 想更快更便宜，可以把 vision_model 改成 "claude-sonnet-5"。
+vision_model = "claude-opus-5"
+strategy_model = "claude-opus-5"
+# 思考强度: low | medium | high | xhigh | max。识别画面用 low 就够，越高越慢。
+vision_effort = "low"
+strategy_effort = "medium"
+# Claude 拒答时服务端自动换模型重试
+use_fallbacks = true
+# 每分钟最多调用几次（控制花费）
+max_calls_per_minute = 12
+timeout_s = 60.0
+max_image_edge = 1568
+
+[capture]
+monitor = 1                                   # 第几个显示器 (1 = 主显示器)
+window_title = "League of Legends (TM) Client" # 游戏窗口标题，找到就只截游戏窗口
+use_window = true
+poll_interval_s = 1.0                         # 自动模式下多久看一次画面
+settle_delay_s = 1.2                          # 回合切换后等多久再分析（等动画结束）
+change_threshold = 0.08
+save_screenshots = false                      # 保存每次分析用的截图（调试/复盘）
+screenshot_dir = "~/.tft_advisor/captures"
+
+[advisor]
+auto = true                  # 回合变化时自动分析
+llm_strategy = true          # 用 Claude 给策略（关掉就只用规则引擎）
+min_seconds_between_llm = 8.0
+scout_prompts = true         # 让助手提醒你去看别人的棋盘
+shop_watch = true            # 刷新商店时自动读商店、提示买什么
+max_scout_requests_per_stage = 2
+comp_hint = ""               # 你想玩的阵容，比如 "法师" 或 "阿狸"，留空 = 自动
+
+[data]
+locale = "zh_cn"             # 显示语言: zh_cn / en_us（另一种也会加载用于匹配）
+cache_dir = "~/.tft_advisor"
+set_number = 0               # 0 = 自动用最新赛季
+comps_file = ""              # 自定义阵容表 (JSON/TOML)，见 README
+mechanics_file = ""          # 覆盖商店概率/卡池/经验表（版本更新时用）
+refresh_hours = 24.0
+
+[ui]
+host = "127.0.0.1"           # 改成 "0.0.0.0" 可以用手机打开看板（会生成访问口令）
+port = 8765
+open_browser = true
+overlay = false              # 游戏上方的置顶小窗（游戏需用无边框模式）
+voice = false                # 语音播报（pip install pyttsx3）
+voice_rate = 190
+
+[hotkeys]
+enabled = true
+analyze = "F6"               # 立即完整分析
+scout = "F7"                 # 我正在看别人的棋盘，记录下来
+toggle_auto = "F8"           # 自动分析开关
+shop = "F9"                  # 读商店，告诉我买什么

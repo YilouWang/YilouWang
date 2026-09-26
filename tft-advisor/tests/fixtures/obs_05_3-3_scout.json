@@ -1,0 +1,210 @@
+{
+  "screen_type": "planning",
+  "viewing_own_board": false,
+  "viewed_player_name": "咕噜咕噜",
+  "stage": "3-3",
+  "gold": 45,
+  "level": 6,
+  "xp_current": 10,
+  "xp_needed": 36,
+  "hp": 100,
+  "streak": -2,
+  "shop": [
+    {
+      "name": "Morgana",
+      "cost": 3
+    },
+    {
+      "name": "Ashe",
+      "cost": 3
+    },
+    {
+      "name": "Pyke",
+      "cost": 2
+    },
+    {
+      "name": "Ahri",
+      "cost": 2
+    },
+    {
+      "name": "Warwick",
+      "cost": 1
+    }
+  ],
+  "shop_locked": false,
+  "board": [
+    {
+      "name": "Warwick",
+      "star": 2,
+      "items": [],
+      "row": 0,
+      "col": 2
+    },
+    {
+      "name": "Gnar",
+      "star": 1,
+      "items": [
+        "Warmog's Armor"
+      ],
+      "row": 0,
+      "col": 3
+    },
+    {
+      "name": "Volibear",
+      "star": 1,
+      "items": [],
+      "row": 0,
+      "col": 4
+    },
+    {
+      "name": "Braum",
+      "star": 2,
+      "items": [],
+      "row": 0,
+      "col": 5
+    },
+    {
+      "name": "Aatrox",
+      "star": 1,
+      "items": [],
+      "row": 1,
+      "col": 1
+    },
+    {
+      "name": "Ahri",
+      "star": 2,
+      "items": [
+        "Blue Buff",
+        "Archangel's Staff"
+      ],
+      "row": 3,
+      "col": 3
+    },
+    {
+      "name": "Morgana",
+      "star": 2,
+      "items": [
+        "Rabadon's Deathcap"
+      ],
+      "row": 3,
+      "col": 4
+    }
+  ],
+  "bench": [
+    {
+      "name": "Ahri",
+      "star": 1,
+      "items": [],
+      "row": null,
+      "col": 0
+    },
+    {
+      "name": "Morgana",
+      "star": 1,
+      "items": [],
+      "row": null,
+      "col": 1
+    },
+    {
+      "name": "Volibear",
+      "star": 1,
+      "items": [],
+      "row": null,
+      "col": 2
+    }
+  ],
+  "item_bench": [
+    "Tear of the Goddess"
+  ],
+  "players": [
+    {
+      "name": "咕噜咕噜",
+      "hp": 100,
+      "is_self": false
+    },
+    {
+      "name": "SkyWalker",
+      "hp": 95,
+      "is_self": false
+    },
+    {
+      "name": "夜雨声烦",
+      "hp": 88,
+      "is_self": false
+    },
+    {
+      "name": "Yilou",
+      "hp": 83,
+      "is_self": true
+    },
+    {
+      "name": "Meiko",
+      "hp": 80,
+      "is_self": false
+    },
+    {
+      "name": "老王不摆烂",
+      "hp": 76,
+      "is_self": false
+    },
+    {
+      "name": "BardKing",
+      "hp": 70,
+      "is_self": false
+    },
+    {
+      "name": "小火龙",
+      "hp": 62,
+      "is_self": false
+    }
+  ],
+  "traits": [
+    {
+      "name": "Brawler",
+      "count": 3,
+      "active": true,
+      "next_breakpoint": 4
+    },
+    {
+      "name": "Wild",
+      "count": 3,
+      "active": true,
+      "next_breakpoint": 4
+    },
+    {
+      "name": "Demon",
+      "count": 2,
+      "active": true,
+      "next_breakpoint": 4
+    },
+    {
+      "name": "Glacial",
+      "count": 2,
+      "active": true,
+      "next_breakpoint": 4
+    },
+    {
+      "name": "Sorcerer",
+      "count": 2,
+      "active": true,
+      "next_breakpoint": 4
+    },
+    {
+      "name": "Blademaster",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 3
+    },
+    {
+      "name": "Guardian",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 2
+    }
+  ],
+  "augment_choices": null,
+  "augments": null,
+  "notes": [
+    "正在观察 咕噜咕噜 的棋盘，对手等级 7"
+  ]
+}

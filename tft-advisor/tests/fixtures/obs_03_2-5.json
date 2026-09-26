@@ -1,0 +1,185 @@
+{
+  "screen_type": "planning",
+  "viewing_own_board": true,
+  "viewed_player_name": "Yilou",
+  "stage": "2-5",
+  "gold": 24,
+  "level": 5,
+  "xp_current": 2,
+  "xp_needed": 20,
+  "hp": 100,
+  "streak": 3,
+  "shop": [
+    {
+      "name": "Braum",
+      "cost": 2
+    },
+    {
+      "name": "Pyke",
+      "cost": 2
+    },
+    {
+      "name": "Garen",
+      "cost": 1
+    },
+    {
+      "name": "Ashe",
+      "cost": 3
+    },
+    {
+      "name": "Lucian",
+      "cost": 2
+    }
+  ],
+  "shop_locked": false,
+  "board": [
+    {
+      "name": "Garen",
+      "star": 2,
+      "items": [],
+      "row": 0,
+      "col": 3
+    },
+    {
+      "name": "Darius",
+      "star": 1,
+      "items": [],
+      "row": 0,
+      "col": 2
+    },
+    {
+      "name": "Graves",
+      "star": 2,
+      "items": [
+        "Giant Slayer"
+      ],
+      "row": 3,
+      "col": 3
+    },
+    {
+      "name": "Vayne",
+      "star": 1,
+      "items": [],
+      "row": 3,
+      "col": 1
+    },
+    {
+      "name": "Lucian",
+      "star": 1,
+      "items": [],
+      "row": 3,
+      "col": 5
+    }
+  ],
+  "bench": [
+    {
+      "name": "Lucian",
+      "star": 1,
+      "items": [],
+      "row": null,
+      "col": 0
+    },
+    {
+      "name": "Braum",
+      "star": 1,
+      "items": [],
+      "row": null,
+      "col": 1
+    },
+    {
+      "name": "Vayne",
+      "star": 1,
+      "items": [],
+      "row": null,
+      "col": 2
+    }
+  ],
+  "item_bench": [
+    "Chain Vest"
+  ],
+  "players": [
+    {
+      "name": "Yilou",
+      "hp": 100,
+      "is_self": true
+    },
+    {
+      "name": "咕噜咕噜",
+      "hp": 96,
+      "is_self": false
+    },
+    {
+      "name": "SkyWalker",
+      "hp": 94,
+      "is_self": false
+    },
+    {
+      "name": "Meiko",
+      "hp": 92,
+      "is_self": false
+    },
+    {
+      "name": "夜雨声烦",
+      "hp": 90,
+      "is_self": false
+    },
+    {
+      "name": "老王不摆烂",
+      "hp": 88,
+      "is_self": false
+    },
+    {
+      "name": "BardKing",
+      "hp": 85,
+      "is_self": false
+    },
+    {
+      "name": "小火龙",
+      "hp": 81,
+      "is_self": false
+    }
+  ],
+  "traits": [
+    {
+      "name": "Noble",
+      "count": 3,
+      "active": true,
+      "next_breakpoint": 6
+    },
+    {
+      "name": "Gunslinger",
+      "count": 2,
+      "active": true,
+      "next_breakpoint": 4
+    },
+    {
+      "name": "Knight",
+      "count": 2,
+      "active": true,
+      "next_breakpoint": 4
+    },
+    {
+      "name": "Imperial",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 2
+    },
+    {
+      "name": "Pirate",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 3
+    },
+    {
+      "name": "Ranger",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 2
+    }
+  ],
+  "augment_choices": null,
+  "augments": [
+    "Rich Get Richer"
+  ],
+  "notes": []
+}

@@ -1,0 +1,226 @@
+{
+  "screen_type": "planning",
+  "viewing_own_board": true,
+  "viewed_player_name": "Yilou",
+  "stage": "4-5",
+  "gold": 32,
+  "level": 8,
+  "xp_current": 12,
+  "xp_needed": 76,
+  "hp": 58,
+  "streak": -2,
+  "shop": [
+    {
+      "name": "Kayle",
+      "cost": 5
+    },
+    {
+      "name": "Draven",
+      "cost": 4
+    },
+    {
+      "name": "Lucian",
+      "cost": 2
+    },
+    {
+      "name": null,
+      "cost": null
+    },
+    {
+      "name": "Pyke",
+      "cost": 2
+    }
+  ],
+  "shop_locked": false,
+  "board": [
+    {
+      "name": "Garen",
+      "star": 2,
+      "items": [
+        "Bramble Vest",
+        "Warmog's Armor"
+      ],
+      "row": 0,
+      "col": 3
+    },
+    {
+      "name": "Darius",
+      "star": 2,
+      "items": [],
+      "row": 0,
+      "col": 2
+    },
+    {
+      "name": "Braum",
+      "star": 2,
+      "items": [
+        "Dragon's Claw"
+      ],
+      "row": 0,
+      "col": 4
+    },
+    {
+      "name": "Kayle",
+      "star": 1,
+      "items": [],
+      "row": 1,
+      "col": 3
+    },
+    {
+      "name": "Graves",
+      "star": 2,
+      "items": [
+        "Giant Slayer"
+      ],
+      "row": 3,
+      "col": 2
+    },
+    {
+      "name": "Vayne",
+      "star": 2,
+      "items": [],
+      "row": 3,
+      "col": 0
+    },
+    {
+      "name": "Lucian",
+      "star": 2,
+      "items": [
+        "Infinity Edge",
+        "Last Whisper"
+      ],
+      "row": 3,
+      "col": 4
+    },
+    {
+      "name": "Miss Fortune",
+      "star": 1,
+      "items": [],
+      "row": 3,
+      "col": 6
+    }
+  ],
+  "bench": [
+    {
+      "name": "Ashe",
+      "star": 2,
+      "items": [],
+      "row": null,
+      "col": 0
+    },
+    {
+      "name": "Garen",
+      "star": 1,
+      "items": [],
+      "row": null,
+      "col": 1
+    },
+    {
+      "name": "Lucian",
+      "star": 1,
+      "items": [],
+      "row": null,
+      "col": 2
+    }
+  ],
+  "item_bench": [],
+  "players": [
+    {
+      "name": "咕噜咕噜",
+      "hp": 90,
+      "is_self": false
+    },
+    {
+      "name": "SkyWalker",
+      "hp": 78,
+      "is_self": false
+    },
+    {
+      "name": "夜雨声烦",
+      "hp": 66,
+      "is_self": false
+    },
+    {
+      "name": "Yilou",
+      "hp": 58,
+      "is_self": true
+    },
+    {
+      "name": "Meiko",
+      "hp": 44,
+      "is_self": false
+    },
+    {
+      "name": "老王不摆烂",
+      "hp": 31,
+      "is_self": false
+    },
+    {
+      "name": "BardKing",
+      "hp": 12,
+      "is_self": false
+    },
+    {
+      "name": "小火龙",
+      "hp": 0,
+      "is_self": false
+    }
+  ],
+  "traits": [
+    {
+      "name": "Noble",
+      "count": 4,
+      "active": true,
+      "next_breakpoint": 6
+    },
+    {
+      "name": "Gunslinger",
+      "count": 3,
+      "active": true,
+      "next_breakpoint": 4
+    },
+    {
+      "name": "Knight",
+      "count": 3,
+      "active": true,
+      "next_breakpoint": 4
+    },
+    {
+      "name": "Pirate",
+      "count": 2,
+      "active": false,
+      "next_breakpoint": 3
+    },
+    {
+      "name": "Glacial",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 2
+    },
+    {
+      "name": "Guardian",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 2
+    },
+    {
+      "name": "Imperial",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 2
+    },
+    {
+      "name": "Ranger",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 2
+    }
+  ],
+  "augment_choices": null,
+  "augments": [
+    "Rich Get Richer",
+    "Combat Training",
+    "Level Up!"
+  ],
+  "notes": []
+}

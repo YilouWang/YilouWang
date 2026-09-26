@@ -1,0 +1,126 @@
+{
+  "screen_type": "planning",
+  "viewing_own_board": true,
+  "viewed_player_name": "Yilou",
+  "stage": "1-2",
+  "gold": 2,
+  "level": 2,
+  "xp_current": 0,
+  "xp_needed": 2,
+  "hp": 100,
+  "streak": null,
+  "shop": [
+    {
+      "name": "Vayne",
+      "cost": 1
+    },
+    {
+      "name": "Warwick",
+      "cost": 1
+    },
+    {
+      "name": "Garen",
+      "cost": 1
+    },
+    {
+      "name": "Darius",
+      "cost": 1
+    },
+    {
+      "name": "Graves",
+      "cost": 1
+    }
+  ],
+  "shop_locked": false,
+  "board": [
+    {
+      "name": "Garen",
+      "star": 1,
+      "items": [],
+      "row": 0,
+      "col": 3
+    },
+    {
+      "name": "Graves",
+      "star": 1,
+      "items": [
+        "B.F. Sword"
+      ],
+      "row": 3,
+      "col": 3
+    }
+  ],
+  "bench": [],
+  "item_bench": [],
+  "players": [
+    {
+      "name": "Yilou",
+      "hp": 100,
+      "is_self": true
+    },
+    {
+      "name": "咕噜咕噜",
+      "hp": 100,
+      "is_self": false
+    },
+    {
+      "name": "SkyWalker",
+      "hp": 100,
+      "is_self": false
+    },
+    {
+      "name": "夜雨声烦",
+      "hp": 100,
+      "is_self": false
+    },
+    {
+      "name": "Meiko",
+      "hp": 100,
+      "is_self": false
+    },
+    {
+      "name": "老王不摆烂",
+      "hp": 100,
+      "is_self": false
+    },
+    {
+      "name": "BardKing",
+      "hp": 100,
+      "is_self": false
+    },
+    {
+      "name": "小火龙",
+      "hp": 100,
+      "is_self": false
+    }
+  ],
+  "traits": [
+    {
+      "name": "Gunslinger",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 2
+    },
+    {
+      "name": "Knight",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 2
+    },
+    {
+      "name": "Noble",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 3
+    },
+    {
+      "name": "Pirate",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 3
+    }
+  ],
+  "augment_choices": null,
+  "augments": [],
+  "notes": []
+}

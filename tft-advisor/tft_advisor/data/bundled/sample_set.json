@@ -1,0 +1,2375 @@
+{
+ "items": [
+  {
+   "apiName": "TFT_Item_BFSword",
+   "name": "B.F. Sword",
+   "composition": [],
+   "desc": "B.F. Sword component",
+   "icon": "ASSETS/Maps/TFT/Icons/B.F.Sword.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": [
+    "component"
+   ]
+  },
+  {
+   "apiName": "TFT_Item_RecurveBow",
+   "name": "Recurve Bow",
+   "composition": [],
+   "desc": "Recurve Bow component",
+   "icon": "ASSETS/Maps/TFT/Icons/RecurveBow.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": [
+    "component"
+   ]
+  },
+  {
+   "apiName": "TFT_Item_NeedlesslyLargeRod",
+   "name": "Needlessly Large Rod",
+   "composition": [],
+   "desc": "Needlessly Large Rod component",
+   "icon": "ASSETS/Maps/TFT/Icons/NeedlesslyLargeRod.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": [
+    "component"
+   ]
+  },
+  {
+   "apiName": "TFT_Item_TearOfTheGoddess",
+   "name": "Tear of the Goddess",
+   "composition": [],
+   "desc": "Tear of the Goddess component",
+   "icon": "ASSETS/Maps/TFT/Icons/TearoftheGoddess.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": [
+    "component"
+   ]
+  },
+  {
+   "apiName": "TFT_Item_ChainVest",
+   "name": "Chain Vest",
+   "composition": [],
+   "desc": "Chain Vest component",
+   "icon": "ASSETS/Maps/TFT/Icons/ChainVest.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": [
+    "component"
+   ]
+  },
+  {
+   "apiName": "TFT_Item_NegatronCloak",
+   "name": "Negatron Cloak",
+   "composition": [],
+   "desc": "Negatron Cloak component",
+   "icon": "ASSETS/Maps/TFT/Icons/NegatronCloak.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": [
+    "component"
+   ]
+  },
+  {
+   "apiName": "TFT_Item_GiantsBelt",
+   "name": "Giant's Belt",
+   "composition": [],
+   "desc": "Giant's Belt component",
+   "icon": "ASSETS/Maps/TFT/Icons/Giant'sBelt.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": [
+    "component"
+   ]
+  },
+  {
+   "apiName": "TFT_Item_SparringGloves",
+   "name": "Sparring Gloves",
+   "composition": [],
+   "desc": "Sparring Gloves component",
+   "icon": "ASSETS/Maps/TFT/Icons/SparringGloves.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": [
+    "component"
+   ]
+  },
+  {
+   "apiName": "TFT_Item_Spatula",
+   "name": "Spatula",
+   "composition": [],
+   "desc": "Spatula component",
+   "icon": "ASSETS/Maps/TFT/Icons/Spatula.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": [
+    "component"
+   ]
+  },
+  {
+   "apiName": "TFT_Item_FryingPan",
+   "name": "Frying Pan",
+   "composition": [],
+   "desc": "Frying Pan component",
+   "icon": "ASSETS/Maps/TFT/Icons/FryingPan.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": [
+    "component"
+   ]
+  },
+  {
+   "apiName": "TFT_Item_Deathblade",
+   "name": "Deathblade",
+   "composition": [
+    "TFT_Item_BFSword",
+    "TFT_Item_BFSword"
+   ],
+   "desc": "<TFTKeyword>Deathblade</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Deathblade.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_MadredsBloodrazor",
+   "name": "Giant Slayer",
+   "composition": [
+    "TFT_Item_BFSword",
+    "TFT_Item_RecurveBow"
+   ],
+   "desc": "<TFTKeyword>Giant Slayer</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/GiantSlayer.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_HextechGunblade",
+   "name": "Hextech Gunblade",
+   "composition": [
+    "TFT_Item_BFSword",
+    "TFT_Item_NeedlesslyLargeRod"
+   ],
+   "desc": "<TFTKeyword>Hextech Gunblade</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/HextechGunblade.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_SpearOfShojin",
+   "name": "Spear of Shojin",
+   "composition": [
+    "TFT_Item_BFSword",
+    "TFT_Item_TearOfTheGoddess"
+   ],
+   "desc": "<TFTKeyword>Spear of Shojin</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/SpearofShojin.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_GuardianAngel",
+   "name": "Edge of Night",
+   "composition": [
+    "TFT_Item_BFSword",
+    "TFT_Item_ChainVest"
+   ],
+   "desc": "<TFTKeyword>Edge of Night</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/EdgeofNight.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_Bloodthirster",
+   "name": "Bloodthirster",
+   "composition": [
+    "TFT_Item_BFSword",
+    "TFT_Item_NegatronCloak"
+   ],
+   "desc": "<TFTKeyword>Bloodthirster</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Bloodthirster.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_SteraksGage",
+   "name": "Sterak's Gage",
+   "composition": [
+    "TFT_Item_BFSword",
+    "TFT_Item_GiantsBelt"
+   ],
+   "desc": "<TFTKeyword>Sterak's Gage</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Sterak'sGage.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_InfinityEdge",
+   "name": "Infinity Edge",
+   "composition": [
+    "TFT_Item_BFSword",
+    "TFT_Item_SparringGloves"
+   ],
+   "desc": "<TFTKeyword>Infinity Edge</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/InfinityEdge.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_RapidFireCannon",
+   "name": "Red Buff",
+   "composition": [
+    "TFT_Item_RecurveBow",
+    "TFT_Item_RecurveBow"
+   ],
+   "desc": "<TFTKeyword>Red Buff</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/RedBuff.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_GuinsoosRageblade",
+   "name": "Guinsoo's Rageblade",
+   "composition": [
+    "TFT_Item_RecurveBow",
+    "TFT_Item_NeedlesslyLargeRod"
+   ],
+   "desc": "<TFTKeyword>Guinsoo's Rageblade</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Guinsoo'sRageblade.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_StatikkShiv",
+   "name": "Void Staff",
+   "composition": [
+    "TFT_Item_RecurveBow",
+    "TFT_Item_TearOfTheGoddess"
+   ],
+   "desc": "<TFTKeyword>Void Staff</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/VoidStaff.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_TitansResolve",
+   "name": "Titan's Resolve",
+   "composition": [
+    "TFT_Item_RecurveBow",
+    "TFT_Item_ChainVest"
+   ],
+   "desc": "<TFTKeyword>Titan's Resolve</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Titan'sResolve.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_RunaansHurricane",
+   "name": "Kraken's Fury",
+   "composition": [
+    "TFT_Item_RecurveBow",
+    "TFT_Item_NegatronCloak"
+   ],
+   "desc": "<TFTKeyword>Kraken's Fury</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Kraken'sFury.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_Leviathan",
+   "name": "Nashor's Tooth",
+   "composition": [
+    "TFT_Item_RecurveBow",
+    "TFT_Item_GiantsBelt"
+   ],
+   "desc": "<TFTKeyword>Nashor's Tooth</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Nashor'sTooth.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_LastWhisper",
+   "name": "Last Whisper",
+   "composition": [
+    "TFT_Item_RecurveBow",
+    "TFT_Item_SparringGloves"
+   ],
+   "desc": "<TFTKeyword>Last Whisper</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/LastWhisper.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_RabadonsDeathcap",
+   "name": "Rabadon's Deathcap",
+   "composition": [
+    "TFT_Item_NeedlesslyLargeRod",
+    "TFT_Item_NeedlesslyLargeRod"
+   ],
+   "desc": "<TFTKeyword>Rabadon's Deathcap</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Rabadon'sDeathcap.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_ArchangelsStaff",
+   "name": "Archangel's Staff",
+   "composition": [
+    "TFT_Item_NeedlesslyLargeRod",
+    "TFT_Item_TearOfTheGoddess"
+   ],
+   "desc": "<TFTKeyword>Archangel's Staff</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Archangel'sStaff.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_Crownguard",
+   "name": "Crownguard",
+   "composition": [
+    "TFT_Item_NeedlesslyLargeRod",
+    "TFT_Item_ChainVest"
+   ],
+   "desc": "<TFTKeyword>Crownguard</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Crownguard.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_IonicSpark",
+   "name": "Ionic Spark",
+   "composition": [
+    "TFT_Item_NeedlesslyLargeRod",
+    "TFT_Item_NegatronCloak"
+   ],
+   "desc": "<TFTKeyword>Ionic Spark</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/IonicSpark.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_Morellonomicon",
+   "name": "Morellonomicon",
+   "composition": [
+    "TFT_Item_NeedlesslyLargeRod",
+    "TFT_Item_GiantsBelt"
+   ],
+   "desc": "<TFTKeyword>Morellonomicon</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Morellonomicon.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_JeweledGauntlet",
+   "name": "Jeweled Gauntlet",
+   "composition": [
+    "TFT_Item_NeedlesslyLargeRod",
+    "TFT_Item_SparringGloves"
+   ],
+   "desc": "<TFTKeyword>Jeweled Gauntlet</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/JeweledGauntlet.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_BlueBuff",
+   "name": "Blue Buff",
+   "composition": [
+    "TFT_Item_TearOfTheGoddess",
+    "TFT_Item_TearOfTheGoddess"
+   ],
+   "desc": "<TFTKeyword>Blue Buff</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/BlueBuff.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_FrozenHeart",
+   "name": "Protector's Vow",
+   "composition": [
+    "TFT_Item_TearOfTheGoddess",
+    "TFT_Item_ChainVest"
+   ],
+   "desc": "<TFTKeyword>Protector's Vow</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Protector'sVow.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_AdaptiveHelm",
+   "name": "Adaptive Helm",
+   "composition": [
+    "TFT_Item_TearOfTheGoddess",
+    "TFT_Item_NegatronCloak"
+   ],
+   "desc": "<TFTKeyword>Adaptive Helm</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/AdaptiveHelm.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_Redemption",
+   "name": "Spirit Visage",
+   "composition": [
+    "TFT_Item_TearOfTheGoddess",
+    "TFT_Item_GiantsBelt"
+   ],
+   "desc": "<TFTKeyword>Spirit Visage</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/SpiritVisage.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_UnstableConcoction",
+   "name": "Hand of Justice",
+   "composition": [
+    "TFT_Item_TearOfTheGoddess",
+    "TFT_Item_SparringGloves"
+   ],
+   "desc": "<TFTKeyword>Hand of Justice</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/HandofJustice.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_BrambleVest",
+   "name": "Bramble Vest",
+   "composition": [
+    "TFT_Item_ChainVest",
+    "TFT_Item_ChainVest"
+   ],
+   "desc": "<TFTKeyword>Bramble Vest</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/BrambleVest.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_GargoyleStoneplate",
+   "name": "Gargoyle Stoneplate",
+   "composition": [
+    "TFT_Item_ChainVest",
+    "TFT_Item_NegatronCloak"
+   ],
+   "desc": "<TFTKeyword>Gargoyle Stoneplate</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/GargoyleStoneplate.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_RedBuff",
+   "name": "Sunfire Cape",
+   "composition": [
+    "TFT_Item_ChainVest",
+    "TFT_Item_GiantsBelt"
+   ],
+   "desc": "<TFTKeyword>Sunfire Cape</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/SunfireCape.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_NightHarvester",
+   "name": "Steadfast Heart",
+   "composition": [
+    "TFT_Item_ChainVest",
+    "TFT_Item_SparringGloves"
+   ],
+   "desc": "<TFTKeyword>Steadfast Heart</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/SteadfastHeart.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_DragonsClaw",
+   "name": "Dragon's Claw",
+   "composition": [
+    "TFT_Item_NegatronCloak",
+    "TFT_Item_NegatronCloak"
+   ],
+   "desc": "<TFTKeyword>Dragon's Claw</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Dragon'sClaw.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_SpectralGauntlet",
+   "name": "Evenshroud",
+   "composition": [
+    "TFT_Item_NegatronCloak",
+    "TFT_Item_GiantsBelt"
+   ],
+   "desc": "<TFTKeyword>Evenshroud</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Evenshroud.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_Quicksilver",
+   "name": "Quicksilver",
+   "composition": [
+    "TFT_Item_NegatronCloak",
+    "TFT_Item_SparringGloves"
+   ],
+   "desc": "<TFTKeyword>Quicksilver</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Quicksilver.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_WarmogsArmor",
+   "name": "Warmog's Armor",
+   "composition": [
+    "TFT_Item_GiantsBelt",
+    "TFT_Item_GiantsBelt"
+   ],
+   "desc": "<TFTKeyword>Warmog's Armor</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Warmog'sArmor.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_PowerGauntlet",
+   "name": "Guardbreaker",
+   "composition": [
+    "TFT_Item_GiantsBelt",
+    "TFT_Item_SparringGloves"
+   ],
+   "desc": "<TFTKeyword>Guardbreaker</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Guardbreaker.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_ThiefsGloves",
+   "name": "Thief's Gloves",
+   "composition": [
+    "TFT_Item_SparringGloves",
+    "TFT_Item_SparringGloves"
+   ],
+   "desc": "<TFTKeyword>Thief's Gloves</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Thief'sGloves.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT_Item_ForceOfNature",
+   "name": "Tactician's Crown",
+   "composition": [
+    "TFT_Item_Spatula",
+    "TFT_Item_Spatula"
+   ],
+   "desc": "<TFTKeyword>Tactician's Crown</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/Tactician'sCrown.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": false,
+   "tags": []
+  },
+  {
+   "apiName": "TFT99_Item_KnightEmblemItem",
+   "name": "Knight Emblem",
+   "composition": [
+    "TFT_Item_Spatula",
+    "TFT_Item_BFSword"
+   ],
+   "desc": "<TFTKeyword>Knight Emblem</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/KnightEmblem.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": true,
+   "tags": []
+  },
+  {
+   "apiName": "TFT99_Item_SorcererEmblemItem",
+   "name": "Sorcerer Emblem",
+   "composition": [
+    "TFT_Item_Spatula",
+    "TFT_Item_NeedlesslyLargeRod"
+   ],
+   "desc": "<TFTKeyword>Sorcerer Emblem</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/SorcererEmblem.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": true,
+   "tags": []
+  },
+  {
+   "apiName": "TFT99_Item_BlademasterEmblemItem",
+   "name": "Blademaster Emblem",
+   "composition": [
+    "TFT_Item_FryingPan",
+    "TFT_Item_BFSword"
+   ],
+   "desc": "<TFTKeyword>Blademaster Emblem</TFTKeyword> does @Damage@ things",
+   "icon": "ASSETS/Maps/TFT/Icons/BlademasterEmblem.TFT_Set99.tex",
+   "effects": {},
+   "associatedTraits": [],
+   "incompatibleTraits": [],
+   "unique": true,
+   "tags": []
+  },
+  {
+   "apiName": "TFT9_Item_OrnnDeathsDefiance",
+   "name": "Death's Defiance",
+   "composition": [
+    "TFT_Item_BFSword",
+    "TFT_Item_BFSword"
+   ],
+   "desc": "",
+   "icon": "ASSETS/Maps/TFT/Icons/dd.TFT_Set99.tex",
+   "effects": {},
+   "unique": false
+  },
+  {
+   "apiName": "TFT5_Item_DeathbladeRadiant",
+   "name": "Radiant Deathblade",
+   "composition": [],
+   "desc": "",
+   "icon": "ASSETS/Maps/TFT/Icons/rdb.TFT_Set99.tex",
+   "effects": {},
+   "unique": false
+  },
+  {
+   "apiName": "TFT8_Item_ExoPrimeEmblemItem",
+   "name": "Exo Emblem",
+   "composition": [
+    "TFT_Item_Spatula",
+    "TFT_Item_ChainVest"
+   ],
+   "desc": "",
+   "icon": "ASSETS/Maps/TFT/Icons/exo.TFT_Set99.tex",
+   "effects": {},
+   "unique": true
+  },
+  {
+   "apiName": "TFT_Item_TutorialSword",
+   "name": "Tutorial Sword",
+   "composition": [
+    "TFT_Item_BFSword",
+    "TFT_Item_RecurveBow"
+   ],
+   "desc": "",
+   "icon": "ASSETS/Maps/TFT/Icons/tut.TFT_Set99.tex",
+   "effects": {},
+   "unique": false
+  }
+ ],
+ "setData": [
+  {
+   "mutator": "TFTSet98",
+   "name": "Old Set",
+   "number": 98,
+   "champions": [
+    {
+     "apiName": "TFT99_Garen",
+     "characterName": "TFT99_Garen",
+     "name": "Garen",
+     "cost": 1,
+     "traits": [
+      "Knight",
+      "Noble"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Garen.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Garen_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Garen ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Graves",
+     "characterName": "TFT99_Graves",
+     "name": "Graves",
+     "cost": 1,
+     "traits": [
+      "Gunslinger",
+      "Pirate"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Graves.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Graves_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Graves ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Vayne",
+     "characterName": "TFT99_Vayne",
+     "name": "Vayne",
+     "cost": 1,
+     "traits": [
+      "Ranger",
+      "Noble"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Vayne.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Vayne_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Vayne ability",
+      "desc": "",
+      "variables": []
+     }
+    }
+   ],
+   "traits": [
+    {
+     "apiName": "TFT99_Knight",
+     "name": "Knight",
+     "desc": "Knight units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Knight.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      },
+      {
+       "minUnits": 6,
+       "maxUnits": 25,
+       "style": 3,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Noble",
+     "name": "Noble",
+     "desc": "Noble units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Noble.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 3,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 6,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "mutator": "TFTTutorial",
+   "name": "Tutorial",
+   "number": 1,
+   "champions": [
+    {
+     "apiName": "TFT99_Garen",
+     "characterName": "TFT99_Garen",
+     "name": "Garen",
+     "cost": 1,
+     "traits": [
+      "Knight",
+      "Noble"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Garen.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Garen_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Garen ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Graves",
+     "characterName": "TFT99_Graves",
+     "name": "Graves",
+     "cost": 1,
+     "traits": [
+      "Gunslinger",
+      "Pirate"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Graves.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Graves_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Graves ability",
+      "desc": "",
+      "variables": []
+     }
+    }
+   ],
+   "traits": []
+  },
+  {
+   "mutator": "TFTSet99",
+   "name": "Sample Set (NOT CURRENT - offline fallback)",
+   "number": 99,
+   "champions": [
+    {
+     "apiName": "TFT99_Garen",
+     "characterName": "TFT99_Garen",
+     "name": "Garen",
+     "cost": 1,
+     "traits": [
+      "Knight",
+      "Noble"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Garen.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Garen_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Garen ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Graves",
+     "characterName": "TFT99_Graves",
+     "name": "Graves",
+     "cost": 1,
+     "traits": [
+      "Gunslinger",
+      "Pirate"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Graves.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Graves_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Graves ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Vayne",
+     "characterName": "TFT99_Vayne",
+     "name": "Vayne",
+     "cost": 1,
+     "traits": [
+      "Ranger",
+      "Noble"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Vayne.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Vayne_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Vayne ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Warwick",
+     "characterName": "TFT99_Warwick",
+     "name": "Warwick",
+     "cost": 1,
+     "traits": [
+      "Wild",
+      "Brawler"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Warwick.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Warwick_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Warwick ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Darius",
+     "characterName": "TFT99_Darius",
+     "name": "Darius",
+     "cost": 1,
+     "traits": [
+      "Knight",
+      "Imperial"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Darius.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Darius_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Darius ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Lucian",
+     "characterName": "TFT99_Lucian",
+     "name": "Lucian",
+     "cost": 2,
+     "traits": [
+      "Gunslinger",
+      "Noble"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Lucian.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Lucian_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Lucian ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Ahri",
+     "characterName": "TFT99_Ahri",
+     "name": "Ahri",
+     "cost": 2,
+     "traits": [
+      "Sorcerer",
+      "Wild"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Ahri.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Ahri_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Ahri ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Braum",
+     "characterName": "TFT99_Braum",
+     "name": "Braum",
+     "cost": 2,
+     "traits": [
+      "Guardian",
+      "Glacial"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Braum.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Braum_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Braum ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Shen",
+     "characterName": "TFT99_Shen",
+     "name": "Shen",
+     "cost": 2,
+     "traits": [
+      "Blademaster",
+      "Ninja"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Shen.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Shen_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Shen ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Pyke",
+     "characterName": "TFT99_Pyke",
+     "name": "Pyke",
+     "cost": 2,
+     "traits": [
+      "Assassin",
+      "Pirate"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Pyke.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Pyke_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Pyke ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Katarina",
+     "characterName": "TFT99_Katarina",
+     "name": "Katarina",
+     "cost": 3,
+     "traits": [
+      "Assassin",
+      "Imperial"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Katarina.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Katarina_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Katarina ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Ashe",
+     "characterName": "TFT99_Ashe",
+     "name": "Ashe",
+     "cost": 3,
+     "traits": [
+      "Ranger",
+      "Glacial"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Ashe.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Ashe_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Ashe ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Morgana",
+     "characterName": "TFT99_Morgana",
+     "name": "Morgana",
+     "cost": 3,
+     "traits": [
+      "Sorcerer",
+      "Demon"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Morgana.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Morgana_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Morgana ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Aatrox",
+     "characterName": "TFT99_Aatrox",
+     "name": "Aatrox",
+     "cost": 3,
+     "traits": [
+      "Blademaster",
+      "Demon"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Aatrox.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Aatrox_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Aatrox ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Volibear",
+     "characterName": "TFT99_Volibear",
+     "name": "Volibear",
+     "cost": 3,
+     "traits": [
+      "Brawler",
+      "Glacial"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Volibear.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Volibear_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Volibear ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Draven",
+     "characterName": "TFT99_Draven",
+     "name": "Draven",
+     "cost": 4,
+     "traits": [
+      "Blademaster",
+      "Imperial"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Draven.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Draven_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Draven ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Gnar",
+     "characterName": "TFT99_Gnar",
+     "name": "Gnar",
+     "cost": 4,
+     "traits": [
+      "Wild",
+      "Brawler"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Gnar.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Gnar_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Gnar ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Akali",
+     "characterName": "TFT99_Akali",
+     "name": "Akali",
+     "cost": 4,
+     "traits": [
+      "Ninja",
+      "Assassin"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Akali.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Akali_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Akali ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_MissFortune",
+     "characterName": "TFT99_MissFortune",
+     "name": "Miss Fortune",
+     "cost": 5,
+     "traits": [
+      "Gunslinger",
+      "Pirate"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/MissFortune.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/MissFortune_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Miss Fortune ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Kayle",
+     "characterName": "TFT99_Kayle",
+     "name": "Kayle",
+     "cost": 5,
+     "traits": [
+      "Knight",
+      "Noble"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Kayle.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Kayle_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Kayle ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_TrainingDummy",
+     "characterName": "TFT99_TrainingDummy",
+     "name": "Training Dummy",
+     "cost": 1,
+     "traits": [],
+     "icon": null
+    },
+    {
+     "apiName": "TFT99_ArmoryKeyA",
+     "characterName": "TFT99_ArmoryKeyA",
+     "name": "Armory Key",
+     "cost": 8,
+     "traits": [
+      "Knight"
+     ],
+     "icon": null
+    }
+   ],
+   "traits": [
+    {
+     "apiName": "TFT99_Knight",
+     "name": "Knight",
+     "desc": "Knight units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Knight.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      },
+      {
+       "minUnits": 6,
+       "maxUnits": 25,
+       "style": 3,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Noble",
+     "name": "Noble",
+     "desc": "Noble units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Noble.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 3,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 6,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Gunslinger",
+     "name": "Gunslinger",
+     "desc": "Gunslinger units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Gunslinger.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Pirate",
+     "name": "Pirate",
+     "desc": "Pirate units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Pirate.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 3,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Ranger",
+     "name": "Ranger",
+     "desc": "Ranger units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Ranger.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Wild",
+     "name": "Wild",
+     "desc": "Wild units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Wild.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Brawler",
+     "name": "Brawler",
+     "desc": "Brawler units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Brawler.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Imperial",
+     "name": "Imperial",
+     "desc": "Imperial units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Imperial.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Sorcerer",
+     "name": "Sorcerer",
+     "desc": "Sorcerer units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Sorcerer.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      },
+      {
+       "minUnits": 6,
+       "maxUnits": 25,
+       "style": 3,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Glacial",
+     "name": "Glacial",
+     "desc": "Glacial units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Glacial.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      },
+      {
+       "minUnits": 6,
+       "maxUnits": 25,
+       "style": 3,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Guardian",
+     "name": "Guardian",
+     "desc": "Guardian units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Guardian.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Blademaster",
+     "name": "Blademaster",
+     "desc": "Blademaster units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Blademaster.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 3,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 6,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Ninja",
+     "name": "Ninja",
+     "desc": "Ninja units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Ninja.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 1,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Assassin",
+     "name": "Assassin",
+     "desc": "Assassin units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Assassin.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 3,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 6,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Demon",
+     "name": "Demon",
+     "desc": "Demon units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Demon.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "sets": {
+  "99": {
+   "name": "Sample Set (NOT CURRENT - offline fallback)",
+   "champions": [
+    {
+     "apiName": "TFT99_Garen",
+     "characterName": "TFT99_Garen",
+     "name": "Garen",
+     "cost": 1,
+     "traits": [
+      "Knight",
+      "Noble"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Garen.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Garen_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Garen ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Graves",
+     "characterName": "TFT99_Graves",
+     "name": "Graves",
+     "cost": 1,
+     "traits": [
+      "Gunslinger",
+      "Pirate"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Graves.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Graves_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Graves ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Vayne",
+     "characterName": "TFT99_Vayne",
+     "name": "Vayne",
+     "cost": 1,
+     "traits": [
+      "Ranger",
+      "Noble"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Vayne.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Vayne_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Vayne ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Warwick",
+     "characterName": "TFT99_Warwick",
+     "name": "Warwick",
+     "cost": 1,
+     "traits": [
+      "Wild",
+      "Brawler"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Warwick.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Warwick_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Warwick ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Darius",
+     "characterName": "TFT99_Darius",
+     "name": "Darius",
+     "cost": 1,
+     "traits": [
+      "Knight",
+      "Imperial"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Darius.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Darius_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Darius ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Lucian",
+     "characterName": "TFT99_Lucian",
+     "name": "Lucian",
+     "cost": 2,
+     "traits": [
+      "Gunslinger",
+      "Noble"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Lucian.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Lucian_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Lucian ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Ahri",
+     "characterName": "TFT99_Ahri",
+     "name": "Ahri",
+     "cost": 2,
+     "traits": [
+      "Sorcerer",
+      "Wild"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Ahri.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Ahri_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Ahri ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Braum",
+     "characterName": "TFT99_Braum",
+     "name": "Braum",
+     "cost": 2,
+     "traits": [
+      "Guardian",
+      "Glacial"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Braum.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Braum_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Braum ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Shen",
+     "characterName": "TFT99_Shen",
+     "name": "Shen",
+     "cost": 2,
+     "traits": [
+      "Blademaster",
+      "Ninja"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Shen.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Shen_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Shen ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Pyke",
+     "characterName": "TFT99_Pyke",
+     "name": "Pyke",
+     "cost": 2,
+     "traits": [
+      "Assassin",
+      "Pirate"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Pyke.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Pyke_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Pyke ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Katarina",
+     "characterName": "TFT99_Katarina",
+     "name": "Katarina",
+     "cost": 3,
+     "traits": [
+      "Assassin",
+      "Imperial"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Katarina.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Katarina_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Katarina ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Ashe",
+     "characterName": "TFT99_Ashe",
+     "name": "Ashe",
+     "cost": 3,
+     "traits": [
+      "Ranger",
+      "Glacial"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Ashe.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Ashe_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Ashe ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Morgana",
+     "characterName": "TFT99_Morgana",
+     "name": "Morgana",
+     "cost": 3,
+     "traits": [
+      "Sorcerer",
+      "Demon"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Morgana.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Morgana_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Morgana ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Aatrox",
+     "characterName": "TFT99_Aatrox",
+     "name": "Aatrox",
+     "cost": 3,
+     "traits": [
+      "Blademaster",
+      "Demon"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Aatrox.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Aatrox_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Aatrox ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Volibear",
+     "characterName": "TFT99_Volibear",
+     "name": "Volibear",
+     "cost": 3,
+     "traits": [
+      "Brawler",
+      "Glacial"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Volibear.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Volibear_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Volibear ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Draven",
+     "characterName": "TFT99_Draven",
+     "name": "Draven",
+     "cost": 4,
+     "traits": [
+      "Blademaster",
+      "Imperial"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Draven.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Draven_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Draven ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Gnar",
+     "characterName": "TFT99_Gnar",
+     "name": "Gnar",
+     "cost": 4,
+     "traits": [
+      "Wild",
+      "Brawler"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Gnar.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Gnar_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Gnar ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Akali",
+     "characterName": "TFT99_Akali",
+     "name": "Akali",
+     "cost": 4,
+     "traits": [
+      "Ninja",
+      "Assassin"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Akali.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Akali_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Akali ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_MissFortune",
+     "characterName": "TFT99_MissFortune",
+     "name": "Miss Fortune",
+     "cost": 5,
+     "traits": [
+      "Gunslinger",
+      "Pirate"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/MissFortune.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/MissFortune_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Miss Fortune ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_Kayle",
+     "characterName": "TFT99_Kayle",
+     "name": "Kayle",
+     "cost": 5,
+     "traits": [
+      "Knight",
+      "Noble"
+     ],
+     "role": null,
+     "icon": "ASSETS/Maps/TFT/Icons/Kayle.TFT_Set99.tex",
+     "squareIcon": "ASSETS/Maps/TFT/Icons/Kayle_square.TFT_Set99.tex",
+     "stats": {},
+     "ability": {
+      "name": "Kayle ability",
+      "desc": "",
+      "variables": []
+     }
+    },
+    {
+     "apiName": "TFT99_TrainingDummy",
+     "characterName": "TFT99_TrainingDummy",
+     "name": "Training Dummy",
+     "cost": 1,
+     "traits": [],
+     "icon": null
+    },
+    {
+     "apiName": "TFT99_ArmoryKeyA",
+     "characterName": "TFT99_ArmoryKeyA",
+     "name": "Armory Key",
+     "cost": 8,
+     "traits": [
+      "Knight"
+     ],
+     "icon": null
+    }
+   ],
+   "traits": [
+    {
+     "apiName": "TFT99_Knight",
+     "name": "Knight",
+     "desc": "Knight units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Knight.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      },
+      {
+       "minUnits": 6,
+       "maxUnits": 25,
+       "style": 3,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Noble",
+     "name": "Noble",
+     "desc": "Noble units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Noble.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 3,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 6,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Gunslinger",
+     "name": "Gunslinger",
+     "desc": "Gunslinger units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Gunslinger.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Pirate",
+     "name": "Pirate",
+     "desc": "Pirate units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Pirate.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 3,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Ranger",
+     "name": "Ranger",
+     "desc": "Ranger units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Ranger.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Wild",
+     "name": "Wild",
+     "desc": "Wild units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Wild.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Brawler",
+     "name": "Brawler",
+     "desc": "Brawler units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Brawler.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Imperial",
+     "name": "Imperial",
+     "desc": "Imperial units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Imperial.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Sorcerer",
+     "name": "Sorcerer",
+     "desc": "Sorcerer units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Sorcerer.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      },
+      {
+       "minUnits": 6,
+       "maxUnits": 25,
+       "style": 3,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Glacial",
+     "name": "Glacial",
+     "desc": "Glacial units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Glacial.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      },
+      {
+       "minUnits": 6,
+       "maxUnits": 25,
+       "style": 3,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Guardian",
+     "name": "Guardian",
+     "desc": "Guardian units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Guardian.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Blademaster",
+     "name": "Blademaster",
+     "desc": "Blademaster units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Blademaster.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 3,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 6,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Ninja",
+     "name": "Ninja",
+     "desc": "Ninja units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Ninja.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 1,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Assassin",
+     "name": "Assassin",
+     "desc": "Assassin units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Assassin.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 3,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 6,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    },
+    {
+     "apiName": "TFT99_Demon",
+     "name": "Demon",
+     "desc": "Demon units gain <b>bonus</b> stats. @MinUnits@",
+     "icon": "ASSETS/Maps/TFT/Icons/Demon.TFT_Set99.tex",
+     "effects": [
+      {
+       "minUnits": 2,
+       "maxUnits": 25,
+       "style": 1,
+       "variables": {}
+      },
+      {
+       "minUnits": 4,
+       "maxUnits": 25,
+       "style": 2,
+       "variables": {}
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

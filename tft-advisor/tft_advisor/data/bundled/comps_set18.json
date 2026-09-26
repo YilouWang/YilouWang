@@ -1,0 +1,4178 @@
+{
+ "meta": {
+  "set": 18,
+  "patch": "18.3",
+  "source": "TFTAcademy tier list 18.3 (updated 2026-09-25), converted 2026-09-26. Units are CommunityDragon apiNames; rows: 0 = front, 3 = back.",
+  "note": "Meta changes every patch: override with [data].comps_file or refresh the file."
+ },
+ "comps": [
+  {
+   "name": "6 Juggernaut Flex",
+   "tier": "A",
+   "style": "fast8",
+   "units": [
+    "DA_18_Yorick",
+    "DA_Scuttlecrab18",
+    "DA_Vi18",
+    "DA_Amumu18",
+    "DA_18_Sivir",
+    "DA_18_Zyra",
+    "DA_18_Ashe",
+    "DA_18_Maokai",
+    "DA_18_Kennen"
+   ],
+   "stars": {},
+   "carry": "DA_18_Zyra",
+   "carry_items": [
+    "Spear of Shojin",
+    "Archangel's Staff",
+    "Hextech Gunblade"
+   ],
+   "item_holders": {
+    "DA_Amumu18": [
+     "Warmogs Armor",
+     "Bramble Vest",
+     "Dragon's Claw"
+    ],
+    "DA_18_Sivir": [
+     "Red Buff",
+     "Giant Slayer",
+     "Infinity Edge"
+    ],
+    "DA_18_Zyra": [
+     "Spear of Shojin",
+     "Archangel's Staff",
+     "Hextech Gunblade"
+    ],
+    "DA_18_Kennen": [
+     "DA_18_EmblemJuggernaut"
+    ]
+   },
+   "positions": {
+    "DA_18_Yorick": [
+     0,
+     0
+    ],
+    "DA_Scuttlecrab18": [
+     0,
+     2
+    ],
+    "DA_Vi18": [
+     0,
+     3
+    ],
+    "DA_Amumu18": [
+     0,
+     5
+    ],
+    "DA_18_Sivir": [
+     3,
+     5
+    ],
+    "DA_18_Zyra": [
+     3,
+     6
+    ],
+    "DA_18_Ashe": [
+     3,
+     0
+    ],
+    "DA_18_Maokai": [
+     0,
+     4
+    ],
+    "DA_18_Kennen": [
+     1,
+     3
+    ]
+   },
+   "early": [
+    "DA_18_Rakan",
+    "DA_18_Yorick",
+    "DA_Karma18",
+    "DA_18_Yunara"
+   ],
+   "traits": [
+    "4 Juggernaut",
+    "2 Hunter",
+    "2 Primal",
+    "2 Inferno",
+    "2 Summoner"
+   ],
+   "difficulty": "HARD",
+   "notes": "Consider this as a flex option to Malphite AP if you were playing around juggernauts in the midgame already. Forceable with Jugg +1. Very strong if you make it to juggernaut Kennen. Prio Zyra Items since secondary carries can be flexible. Sivir + Ashe is strong but so is AP nid after the buff or 5 costs like Ivern/Lux/Draven. Turtle Primal buff."
+  },
+  {
+   "name": "Ahri Morgana",
+   "tier": "A",
+   "style": "fast8",
+   "units": [
+    "DA_Karma18",
+    "DA_18_Sentry",
+    "DA_Krug18",
+    "DA_18_Sett",
+    "DA_18_Morgana",
+    "DA_18_Ahri",
+    "DA_Sentinel18",
+    "DA_Taric18"
+   ],
+   "stars": {},
+   "carry": "DA_18_Ahri",
+   "carry_items": [
+    "Jeweled Gauntlet",
+    "Striker's Flail",
+    "Spear of Shojin"
+   ],
+   "item_holders": {
+    "DA_18_Morgana": [
+     "Void Staff",
+     "Morellonomicon"
+    ],
+    "DA_18_Ahri": [
+     "Jeweled Gauntlet",
+     "Striker's Flail",
+     "Spear of Shojin"
+    ],
+    "DA_Sentinel18": [
+     "Dragon's Claw",
+     "Bramble Vest",
+     "Warmogs Armor"
+    ]
+   },
+   "positions": {
+    "DA_Karma18": [
+     3,
+     0
+    ],
+    "DA_18_Sentry": [
+     3,
+     4
+    ],
+    "DA_Krug18": [
+     2,
+     2
+    ],
+    "DA_18_Sett": [
+     1,
+     2
+    ],
+    "DA_18_Morgana": [
+     2,
+     3
+    ],
+    "DA_18_Ahri": [
+     3,
+     2
+    ],
+    "DA_Sentinel18": [
+     0,
+     3
+    ],
+    "DA_Taric18": [
+     1,
+     3
+    ]
+   },
+   "early": [
+    "DA_18_Rakan",
+    "DA_18_Yorick",
+    "DA_Karma18",
+    "DA_18_Yunara"
+   ],
+   "traits": [
+    "3 Invoker",
+    "3 Riftbeast",
+    "3 Blossom",
+    "2 Vanguard",
+    "2 Brawler",
+    "2 Spellweaver"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Morgana holds utility items. You can tank either Sentinel or Sett. Best emblem = Invoker on Ahri. Late game cap with Ashe + Alune over Karma."
+  },
+  {
+   "name": "Aphelios Nidalee",
+   "tier": "A",
+   "style": "fast8",
+   "units": [
+    "DA_18_Varus",
+    "DA_18_Diana",
+    "DA_KogMaw18_AD",
+    "DA_Vi18",
+    "DA_Amumu18",
+    "DA_18_Aphelios",
+    "DA_Nidalee18_AP",
+    "DA_Sentinel18"
+   ],
+   "stars": {},
+   "carry": "DA_18_Aphelios",
+   "carry_items": [
+    "Red Buff",
+    "Deathblade",
+    "Giant Slayer"
+   ],
+   "item_holders": {
+    "DA_18_Aphelios": [
+     "Red Buff",
+     "Deathblade",
+     "Giant Slayer"
+    ],
+    "DA_Nidalee18_AP": [
+     "Infinity Edge",
+     "Spear of Shojin",
+     "Sterak's Gage"
+    ],
+    "DA_Sentinel18": [
+     "Protector's Vow",
+     "Protector's Vow",
+     "Warmogs Armor"
+    ]
+   },
+   "positions": {
+    "DA_18_Varus": [
+     3,
+     6
+    ],
+    "DA_18_Diana": [
+     1,
+     2
+    ],
+    "DA_KogMaw18_AD": [
+     3,
+     1
+    ],
+    "DA_Vi18": [
+     1,
+     3
+    ],
+    "DA_Amumu18": [
+     0,
+     3
+    ],
+    "DA_18_Aphelios": [
+     3,
+     0
+    ],
+    "DA_Nidalee18_AP": [
+     2,
+     0
+    ],
+    "DA_Sentinel18": [
+     0,
+     2
+    ]
+   },
+   "early": [
+    "DA_18_Ornn",
+    "DA_18_Varus",
+    "DA_18_Xayah",
+    "DA_18_Shen"
+   ],
+   "traits": [
+    "2 Adaptor",
+    "2 Primal",
+    "2 Invoker",
+    "2 Rapidfire",
+    "2 Juggernaut",
+    "2 Inferno",
+    "2 Vanguard",
+    "2 Lunar"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Red Buff is BIS Aphelios but you can also play Rageblade build. Amumu or Sentinel 2 can be your main tank (you're often contested so prioritize whichever gets upgraded). Kogmaw Provides Free Shred + Sunder. "
+  },
+  {
+   "name": "Aphelios Rapidfire",
+   "tier": "A",
+   "style": "fast8",
+   "units": [
+    "DA_18_Rakan",
+    "DA_18_Varus",
+    "DA_18_Xayah",
+    "DA_CrimsonRaptor18",
+    "DA_Sentinel18",
+    "DA_Amumu18",
+    "DA_18_Aphelios",
+    "DA_Brambleback18"
+   ],
+   "stars": {},
+   "carry": "DA_18_Aphelios",
+   "carry_items": [
+    "Infinity Edge",
+    "Kraken's Fury",
+    "Striker's Flail"
+   ],
+   "item_holders": {
+    "DA_CrimsonRaptor18": [
+     "Last Whisper"
+    ],
+    "DA_Sentinel18": [
+     "Protector's Vow"
+    ],
+    "DA_Amumu18": [
+     "Warmogs Armor",
+     "Gargoyle Stoneplate",
+     "Bramble Vest"
+    ],
+    "DA_18_Aphelios": [
+     "Infinity Edge",
+     "Kraken's Fury",
+     "Striker's Flail"
+    ],
+    "DA_Brambleback18": [
+     "Rapidfire Emblem",
+     "Edge of Night",
+     "Quicksilver"
+    ]
+   },
+   "positions": {
+    "DA_18_Rakan": [
+     1,
+     3
+    ],
+    "DA_18_Varus": [
+     3,
+     6
+    ],
+    "DA_18_Xayah": [
+     3,
+     2
+    ],
+    "DA_CrimsonRaptor18": [
+     3,
+     1
+    ],
+    "DA_Sentinel18": [
+     1,
+     2
+    ],
+    "DA_Amumu18": [
+     0,
+     3
+    ],
+    "DA_18_Aphelios": [
+     3,
+     0
+    ],
+    "DA_Brambleback18": [
+     2,
+     0
+    ]
+   },
+   "early": [
+    "DA_18_Ornn",
+    "DA_18_Xayah",
+    "DA_18_Varus",
+    "DA_18_Shen"
+   ],
+   "traits": [
+    "4 Rapidfire",
+    "3 Riftbeast",
+    "2 Juggernaut",
+    "2 Inferno",
+    "2 Vanguard",
+    "2 Fae"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Only strong with +1 Rapidfire, play another version if you have it. Don't need much attack speed with 5 rapidfire."
+  },
+  {
+   "name": "Ashe Juggernauts",
+   "tier": "A",
+   "style": "fast8",
+   "units": [
+    "DA_18_Rakan",
+    "DA_Vi18",
+    "DA_Amumu18",
+    "DA_18_Sivir",
+    "DA_18_Ivern",
+    "DA_18_Maokai",
+    "DA_Taric18",
+    "DA_18_Ashe"
+   ],
+   "stars": {},
+   "carry": "DA_18_Ashe",
+   "carry_items": [
+    "Spear of Shojin",
+    "Last Whisper",
+    "Red Buff"
+   ],
+   "item_holders": {
+    "DA_Amumu18": [
+     "Warmogs Armor",
+     "Bramble Vest",
+     "Dragon's Claw"
+    ],
+    "DA_18_Sivir": [
+     "Infinity Edge",
+     "Striker's Flail",
+     "Spear of Shojin"
+    ],
+    "DA_18_Ashe": [
+     "Spear of Shojin",
+     "Last Whisper",
+     "Red Buff"
+    ]
+   },
+   "positions": {
+    "DA_18_Rakan": [
+     0,
+     2
+    ],
+    "DA_Vi18": [
+     0,
+     3
+    ],
+    "DA_Amumu18": [
+     0,
+     5
+    ],
+    "DA_18_Sivir": [
+     3,
+     4
+    ],
+    "DA_18_Ivern": [
+     3,
+     0
+    ],
+    "DA_18_Maokai": [
+     0,
+     4
+    ],
+    "DA_Taric18": [
+     0,
+     1
+    ],
+    "DA_18_Ashe": [
+     3,
+     6
+    ]
+   },
+   "early": [
+    "DA_Karma18",
+    "DA_18_Rakan",
+    "DA_18_Yorick",
+    "DA_18_Yunara"
+   ],
+   "traits": [
+    "4 Juggernaut",
+    "2 Hunter",
+    "2 Primal",
+    "2 Vanguard"
+   ],
+   "difficulty": "HARD",
+   "notes": "Consider this as a flex option for a Sivir board if you were playing around Juggernauts in the midgame already. If you get Juggernaut emblem, you can play 6 Juggernauts. Can also play other 5 cost AD carries like Dragon and Draven. Take turtle primal buff."
+  },
+  {
+   "name": "Azir Rammus",
+   "tier": "A",
+   "style": "reroll3",
+   "units": [
+    "DA_18_Veigar",
+    "DA_18_Teemo",
+    "DA_Fiddlesticks18",
+    "DA_18_Azir",
+    "DA_18_Rammus",
+    "DA_18_Soraka",
+    "DA_18_Zyra"
+   ],
+   "stars": {
+    "DA_18_Teemo": 3,
+    "DA_18_Azir": 3,
+    "DA_18_Rammus": 3
+   },
+   "carry": "DA_18_Azir",
+   "carry_items": [
+    "Hextech Gunblade",
+    "Rabadon's Deathcap",
+    "Striker's Flail"
+   ],
+   "item_holders": {
+    "DA_18_Azir": [
+     "Hextech Gunblade",
+     "Rabadon's Deathcap",
+     "Striker's Flail"
+    ],
+    "DA_18_Rammus": [
+     "Crownguard",
+     "Gargoyle Stoneplate",
+     "Gargoyle Stoneplate"
+    ],
+    "DA_18_Zyra": [
+     "Void Staff",
+     "Morellonomicon"
+    ]
+   },
+   "positions": {
+    "DA_18_Veigar": [
+     3,
+     6
+    ],
+    "DA_18_Teemo": [
+     2,
+     3
+    ],
+    "DA_Fiddlesticks18": [
+     2,
+     4
+    ],
+    "DA_18_Azir": [
+     3,
+     0
+    ],
+    "DA_18_Rammus": [
+     0,
+     3
+    ],
+    "DA_18_Soraka": [
+     3,
+     4
+    ],
+    "DA_18_Zyra": [
+     3,
+     2
+    ]
+   },
+   "early": [
+    "DA_Karma18",
+    "DA_18_Yorick",
+    "DA_18_Yunara",
+    "DA_18_Azir"
+   ],
+   "traits": [
+    "3 Sprykin",
+    "2 Blackthorn",
+    "2 Executioner",
+    "2 Defender",
+    "2 Spellweaver",
+    "2 Flora Fatalis",
+    "2 Summoner"
+   ],
+   "difficulty": "EASY",
+   "notes": "With enough mana gen from blackthorn, Azir doesn't need attack speed, but Rageblade is okay on him."
+  },
+  {
+   "name": "Lunarwood Kha'zix",
+   "tier": "A",
+   "style": "reroll3",
+   "units": [
+    "DA_18_Ornn",
+    "DA_Fiddlesticks18",
+    "DA_18_Diana",
+    "DA_18_Hecarim",
+    "DA_18_KhaZix",
+    "DA_18_Soraka",
+    "DA_18_Ezreal",
+    "DA_18_Alune"
+   ],
+   "stars": {
+    "DA_18_Diana": 3,
+    "DA_18_Hecarim": 3,
+    "DA_18_KhaZix": 3
+   },
+   "carry": "DA_18_Ezreal",
+   "carry_items": [
+    "Red Buff",
+    "Spear of Shojin",
+    "Deathblade"
+   ],
+   "item_holders": {
+    "DA_18_Diana": [
+     "Jeweled Gauntlet",
+     "Hand Of Justice",
+     "Ionic Spark"
+    ],
+    "DA_18_Hecarim": [
+     "Warmogs Armor",
+     "Gargoyle Stoneplate",
+     "Spirit Visage"
+    ],
+    "DA_18_KhaZix": [
+     "Hand Of Justice",
+     "Hand Of Justice",
+     "Rabadon's Deathcap"
+    ],
+    "DA_18_Ezreal": [
+     "Red Buff",
+     "Spear of Shojin",
+     "Deathblade"
+    ]
+   },
+   "positions": {
+    "DA_18_Ornn": [
+     2,
+     2
+    ],
+    "DA_Fiddlesticks18": [
+     2,
+     3
+    ],
+    "DA_18_Diana": [
+     1,
+     1
+    ],
+    "DA_18_Hecarim": [
+     0,
+     2
+    ],
+    "DA_18_KhaZix": [
+     0,
+     1
+    ],
+    "DA_18_Soraka": [
+     3,
+     2
+    ],
+    "DA_18_Ezreal": [
+     3,
+     0
+    ],
+    "DA_18_Alune": [
+     3,
+     1
+    ]
+   },
+   "early": [
+    "DA_18_Ornn",
+    "DA_18_Alistar",
+    "DA_18_LeBlanc",
+    "DA_18_KhaZix"
+   ],
+   "traits": [
+    "3 Elderwood",
+    "2 Vanguard",
+    "2 Executioner",
+    "2 Lunar",
+    "2 Defender",
+    "2 Spellweaver",
+    "2 Flora Fatalis",
+    "1 Rival"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Ideally, Khazix gains Ravager > Executioner > Spellweaver > Rapidfire with takedowns. Can play 3rd Executioner/Lux/Ivern or another executioner before Alune. Double Hoj is bis after the buff but can play jg/deathcap instead of one of them too."
+  },
+  {
+   "name": "Malphite AP Flex",
+   "tier": "A",
+   "style": "fast8",
+   "units": [
+    "DA_18_Yorick",
+    "DA_18_Azir",
+    "DA_Fiddlesticks18",
+    "DA_Amumu18",
+    "DA_18_Malphite",
+    "DA_18_Soraka",
+    "DA_18_Zyra",
+    "DA_18_Kennen"
+   ],
+   "stars": {},
+   "carry": "DA_18_Soraka",
+   "carry_items": [
+    "Rabadon's Deathcap",
+    "Adaptive Helm",
+    "Jeweled Gauntlet"
+   ],
+   "item_holders": {
+    "DA_18_Malphite": [
+     "Gargoyle Stoneplate",
+     "Warmogs Armor",
+     "Crownguard"
+    ],
+    "DA_18_Soraka": [
+     "Rabadon's Deathcap",
+     "Adaptive Helm",
+     "Jeweled Gauntlet"
+    ],
+    "DA_18_Zyra": [
+     "Spear of Shojin",
+     "Void Staff",
+     "Archangel's Staff"
+    ]
+   },
+   "positions": {
+    "DA_18_Yorick": [
+     2,
+     6
+    ],
+    "DA_18_Azir": [
+     3,
+     6
+    ],
+    "DA_Fiddlesticks18": [
+     2,
+     3
+    ],
+    "DA_Amumu18": [
+     2,
+     2
+    ],
+    "DA_18_Malphite": [
+     0,
+     3
+    ],
+    "DA_18_Soraka": [
+     3,
+     1
+    ],
+    "DA_18_Zyra": [
+     3,
+     0
+    ],
+    "DA_18_Kennen": [
+     3,
+     2
+    ]
+   },
+   "early": [
+    "DA_18_Rakan",
+    "DA_18_Yorick",
+    "DA_Karma18",
+    "DA_18_Yunara"
+   ],
+   "traits": [
+    "3 Executioner",
+    "3 Summoner",
+    "2 Juggernaut",
+    "2 Inferno",
+    "2 Blackthorn",
+    "2 Flora Fatalis"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Core is Malphite + Azir + 2 Flora Fatalis for healing. Can play Ahri/Zyra/Ezreal as additional carries and Lillia/Amumu/Kennen/Maokai as supporting frontline."
+  },
+  {
+   "name": "Spirit Blossom",
+   "tier": "A",
+   "style": "fast8",
+   "units": [
+    "DA_Karma18",
+    "DA_18_Yorick",
+    "DA_Vi18",
+    "DA_18_Sivir",
+    "DA_18_Zyra",
+    "DA_18_Ahri",
+    "DA_18_Sett",
+    "DA_18_GnarSmall",
+    "DA_18_Ashe"
+   ],
+   "stars": {},
+   "carry": "DA_18_Ashe",
+   "carry_items": [
+    "Red Buff",
+    "Spear of Shojin",
+    "Last Whisper"
+   ],
+   "item_holders": {
+    "DA_18_Ahri": [
+     "Spear of Shojin",
+     "Jeweled Gauntlet",
+     "Striker's Flail"
+    ],
+    "DA_18_Sett": [
+     "Bramble Vest",
+     "Dragon's Claw",
+     "Warmogs Armor"
+    ],
+    "DA_18_Ashe": [
+     "Red Buff",
+     "Spear of Shojin",
+     "Last Whisper"
+    ]
+   },
+   "positions": {
+    "DA_Karma18": [
+     3,
+     0
+    ],
+    "DA_18_Yorick": [
+     0,
+     1
+    ],
+    "DA_Vi18": [
+     0,
+     3
+    ],
+    "DA_18_Sivir": [
+     3,
+     3
+    ],
+    "DA_18_Zyra": [
+     3,
+     2
+    ],
+    "DA_18_Ahri": [
+     3,
+     6
+    ],
+    "DA_18_Sett": [
+     0,
+     5
+    ],
+    "DA_18_GnarSmall": [
+     1,
+     3
+    ],
+    "DA_18_Ashe": [
+     3,
+     4
+    ]
+   },
+   "early": [
+    "DA_Karma18",
+    "DA_18_Rakan",
+    "DA_18_Yorick",
+    "DA_18_Yunara"
+   ],
+   "traits": [
+    "5 Blossom",
+    "2 Hunter",
+    "2 Primal",
+    "2 Juggernaut",
+    "2 Brawler",
+    "2 Spellweaver",
+    "2 Summoner"
+   ],
+   "difficulty": "EASY",
+   "notes": "Core of the comp is Ahri + Sett + Ashe. The rest of the units are flexible. If itemizing Sivir, go for Execute Primal. If far ahead and win streaking, you can play for Phoenix Primal."
+  },
+  {
+   "name": "10 Riftbeast",
+   "tier": "B",
+   "style": "fast9",
+   "units": [
+    "DA_18_Sentry",
+    "DA_Gromp18_AP",
+    "DA_Murkwolf18",
+    "DA_Scuttlecrab18",
+    "DA_Krug18",
+    "DA_CrimsonRaptor18",
+    "DA_Brambleback18",
+    "DA_Sentinel18",
+    "DA_Taric18",
+    "DA_18_GnarSmall",
+    "DA_18_ElderDragon"
+   ],
+   "stars": {},
+   "carry": "DA_18_ElderDragon",
+   "carry_items": [
+    "Infinity Edge",
+    "Striker's Flail",
+    "Deathblade"
+   ],
+   "item_holders": {
+    "DA_Brambleback18": [
+     "Edge of Night",
+     "Quicksilver",
+     "Giant Slayer"
+    ],
+    "DA_Sentinel18": [
+     "Warmogs Armor",
+     "Protector's Vow",
+     "Crownguard"
+    ],
+    "DA_18_GnarSmall": [
+     "Thief's Gloves"
+    ],
+    "DA_18_ElderDragon": [
+     "Infinity Edge",
+     "Striker's Flail",
+     "Deathblade"
+    ]
+   },
+   "positions": {
+    "DA_18_Sentry": [
+     3,
+     2
+    ],
+    "DA_Gromp18_AP": [
+     3,
+     0
+    ],
+    "DA_Murkwolf18": [
+     3,
+     6
+    ],
+    "DA_Scuttlecrab18": [
+     0,
+     1
+    ],
+    "DA_Krug18": [
+     0,
+     0
+    ],
+    "DA_CrimsonRaptor18": [
+     3,
+     4
+    ],
+    "DA_Brambleback18": [
+     0,
+     2
+    ],
+    "DA_Sentinel18": [
+     0,
+     3
+    ],
+    "DA_Taric18": [
+     0,
+     4
+    ],
+    "DA_18_GnarSmall": [
+     2,
+     2
+    ],
+    "DA_18_ElderDragon": [
+     2,
+     3
+    ]
+   },
+   "early": [
+    "DA_Cinderling18",
+    "DA_18_Sentry",
+    "DA_Scuttlecrab18",
+    "DA_18_Yorick"
+   ],
+   "traits": [
+    "7 Riftbeast",
+    "2 Ravager",
+    "2 Invoker",
+    "2 Vanguard",
+    "2 Brawler"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Alpha Mark the Elder Dragon. Strong with any augment that gives you +1 team size so you can fit in another carry."
+  },
+  {
+   "name": "Ahri Zyra",
+   "tier": "B",
+   "style": "fast8",
+   "units": [
+    "DA_18_Ahri",
+    "DA_18_Zyra",
+    "DA_18_GnarSmall",
+    "DA_18_Sett",
+    "DA_18_Yorick",
+    "DA_18_Alune",
+    "DA_18_Diana",
+    "DA_Taric18",
+    "DA_Amumu18"
+   ],
+   "stars": {},
+   "carry": "DA_18_Ahri",
+   "carry_items": [
+    "Jeweled Gauntlet",
+    "Striker's Flail",
+    "Spear of Shojin"
+   ],
+   "item_holders": {
+    "DA_18_Ahri": [
+     "Jeweled Gauntlet",
+     "Striker's Flail",
+     "Spear of Shojin"
+    ],
+    "DA_18_Zyra": [
+     "Void Staff",
+     "Morellonomicon",
+     "Spear of Shojin"
+    ],
+    "DA_18_GnarSmall": [
+     "Thief's Gloves"
+    ],
+    "DA_18_Sett": [
+     "Warmogs Armor",
+     "Dragon's Claw",
+     "Bramble Vest"
+    ]
+   },
+   "positions": {
+    "DA_18_Ahri": [
+     3,
+     6
+    ],
+    "DA_18_Zyra": [
+     3,
+     4
+    ],
+    "DA_18_GnarSmall": [
+     2,
+     3
+    ],
+    "DA_18_Sett": [
+     0,
+     4
+    ],
+    "DA_18_Yorick": [
+     0,
+     0
+    ],
+    "DA_18_Alune": [
+     3,
+     5
+    ],
+    "DA_18_Diana": [
+     1,
+     3
+    ],
+    "DA_Taric18": [
+     1,
+     2
+    ],
+    "DA_Amumu18": [
+     0,
+     3
+    ]
+   },
+   "early": [
+    "DA_Karma18",
+    "DA_18_Rakan",
+    "DA_18_Yorick",
+    "DA_18_Yunara"
+   ],
+   "traits": [
+    "3 Blossom",
+    "2 Juggernaut",
+    "2 Vanguard",
+    "2 Brawler",
+    "2 Lunar",
+    "2 Spellweaver",
+    "2 Summoner"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Play when you hit Zyra 2 on your Ahri rolldown instead of Morgana. Play 5 blossom on level 8 with Karma+1 then try to go 9 for the 5 costs, itemize alune 2 lategame."
+  },
+  {
+   "name": "Aphelios Elderwood",
+   "tier": "B",
+   "style": "fast8",
+   "units": [
+    "DA_18_Diana",
+    "DA_18_Xayah",
+    "DA_18_Alistar",
+    "DA_18_Hecarim",
+    "DA_18_Lillia",
+    "DA_18_Aphelios",
+    "DA_18_GnarSmall",
+    "DA_18_Ornn",
+    "DA_18_Ezreal"
+   ],
+   "stars": {},
+   "carry": "DA_18_Ezreal",
+   "carry_items": [
+    "Spear of Shojin",
+    "Red Buff",
+    "Last Whisper"
+   ],
+   "item_holders": {
+    "DA_18_Hecarim": [
+     "Crownguard",
+     "Warmogs Armor",
+     "Evenshroud"
+    ],
+    "DA_18_Lillia": [
+     "Protector's Vow"
+    ],
+    "DA_18_Aphelios": [
+     "Elderwood Emblem",
+     "Guinsoo's Rageblade",
+     "Kraken's Fury"
+    ],
+    "DA_18_GnarSmall": [
+     "Thief's Gloves"
+    ],
+    "DA_18_Ezreal": [
+     "Spear of Shojin",
+     "Red Buff",
+     "Last Whisper"
+    ]
+   },
+   "positions": {
+    "DA_18_Diana": [
+     0,
+     4
+    ],
+    "DA_18_Xayah": [
+     3,
+     6
+    ],
+    "DA_18_Alistar": [
+     0,
+     5
+    ],
+    "DA_18_Hecarim": [
+     0,
+     2
+    ],
+    "DA_18_Lillia": [
+     0,
+     0
+    ],
+    "DA_18_Aphelios": [
+     3,
+     0
+    ],
+    "DA_18_GnarSmall": [
+     1,
+     2
+    ],
+    "DA_18_Ornn": [
+     1,
+     6
+    ],
+    "DA_18_Ezreal": [
+     3,
+     1
+    ]
+   },
+   "early": [
+    "DA_18_Varus",
+    "DA_18_Ornn",
+    "DA_18_Xayah",
+    "DA_18_Shen"
+   ],
+   "traits": [
+    "5 Elderwood",
+    "2 Rapidfire",
+    "2 Vanguard",
+    "2 Brawler",
+    "2 Fae",
+    "2 Lunar",
+    "2 Defender"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Comp to play with AD items and an elderwood emblem. If you hit elderwood lux with emblem you can drop Lillia for 9 Elderwood."
+  },
+  {
+   "name": "Aphelios Flex",
+   "tier": "B",
+   "style": "fast8",
+   "units": [
+    "DA_18_Diana",
+    "DA_KogMaw18_AD",
+    "DA_Krug18",
+    "DA_CrimsonRaptor18",
+    "DA_18_Zyra",
+    "DA_Sentinel18",
+    "DA_18_Aphelios",
+    "DA_18_Sett"
+   ],
+   "stars": {},
+   "carry": "DA_18_Aphelios",
+   "carry_items": [
+    "Red Buff",
+    "Deathblade",
+    "Giant Slayer"
+   ],
+   "item_holders": {
+    "DA_Sentinel18": [
+     "Protector's Vow"
+    ],
+    "DA_18_Aphelios": [
+     "Red Buff",
+     "Deathblade",
+     "Giant Slayer"
+    ],
+    "DA_18_Sett": [
+     "Warmogs Armor",
+     "Bramble Vest",
+     "Dragon's Claw"
+    ]
+   },
+   "positions": {
+    "DA_18_Diana": [
+     1,
+     2
+    ],
+    "DA_KogMaw18_AD": [
+     3,
+     2
+    ],
+    "DA_Krug18": [
+     1,
+     3
+    ],
+    "DA_CrimsonRaptor18": [
+     3,
+     6
+    ],
+    "DA_18_Zyra": [
+     3,
+     1
+    ],
+    "DA_Sentinel18": [
+     0,
+     3
+    ],
+    "DA_18_Aphelios": [
+     3,
+     0
+    ],
+    "DA_18_Sett": [
+     0,
+     2
+    ]
+   },
+   "early": [
+    "DA_18_Ornn",
+    "DA_18_Varus",
+    "DA_18_Xayah",
+    "DA_18_Shen"
+   ],
+   "traits": [
+    "3 Riftbeast",
+    "2 Invoker",
+    "2 Rapidfire",
+    "2 Vanguard",
+    "2 Brawler",
+    "2 Lunar",
+    "2 Summoner"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Core units are Aphelios + Diana + Sentinel + Mama Beak. This is a variation of Aphelios to play with AP items instead of melee items. Red Buff is BIS Aphelios but you can also play Rageblade build. Frontline is either Amumu+Scuttlecrab or Sett + Krug."
+  },
+  {
+   "name": "Aphelios Vanguards",
+   "tier": "B",
+   "style": "fast8",
+   "units": [
+    "DA_18_Diana",
+    "DA_18_Hecarim",
+    "DA_CrimsonRaptor18",
+    "DA_18_Zyra",
+    "DA_18_Aphelios",
+    "DA_Brambleback18",
+    "DA_Sentinel18",
+    "DA_Taric18"
+   ],
+   "stars": {},
+   "carry": "DA_18_Aphelios",
+   "carry_items": [
+    "Red Buff",
+    "Deathblade",
+    "Giant Slayer"
+   ],
+   "item_holders": {
+    "DA_CrimsonRaptor18": [
+     "Last Whisper"
+    ],
+    "DA_18_Aphelios": [
+     "Red Buff",
+     "Deathblade",
+     "Giant Slayer"
+    ],
+    "DA_Brambleback18": [
+     "Edge of Night",
+     "Quicksilver",
+     "Sterak's Gage"
+    ],
+    "DA_Sentinel18": [
+     "Protector's Vow",
+     "Protector's Vow",
+     "Warmogs Armor"
+    ]
+   },
+   "positions": {
+    "DA_18_Diana": [
+     1,
+     2
+    ],
+    "DA_18_Hecarim": [
+     1,
+     3
+    ],
+    "DA_CrimsonRaptor18": [
+     3,
+     1
+    ],
+    "DA_18_Zyra": [
+     3,
+     6
+    ],
+    "DA_18_Aphelios": [
+     3,
+     0
+    ],
+    "DA_Brambleback18": [
+     1,
+     1
+    ],
+    "DA_Sentinel18": [
+     0,
+     3
+    ],
+    "DA_Taric18": [
+     0,
+     2
+    ]
+   },
+   "early": [
+    "DA_18_Ornn",
+    "DA_18_Varus",
+    "DA_18_Xayah",
+    "DA_18_Shen"
+   ],
+   "traits": [
+    "4 Vanguard",
+    "3 Riftbeast",
+    "2 Ravager",
+    "2 Rapidfire",
+    "2 Lunar",
+    "2 Summoner"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Core units are Aphelios + Diana + Sentinel + Mama Beak. Red Buff is BIS Aphelios but you can also play Rageblade build. Play Scuttlecrab + Rakan over Brambleback if no melee items. Can duo carry Zyra or Morgana if extra AP items. "
+  },
+  {
+   "name": "Ashe Fast 9 ",
+   "tier": "B",
+   "style": "fast9",
+   "units": [
+    "DA_Cinderling18",
+    "DA_18_Yorick",
+    "DA_Amumu18",
+    "DA_18_Sett",
+    "DA_18_GnarSmall",
+    "DA_18_Kennen",
+    "DA_18_Ashe",
+    "DA_18_ElderDragon"
+   ],
+   "stars": {},
+   "carry": "DA_18_Ashe",
+   "carry_items": [
+    "Spear of Shojin",
+    "Red Buff",
+    "Last Whisper"
+   ],
+   "item_holders": {
+    "DA_18_Sett": [
+     "Warmogs Armor",
+     "Spirit Visage",
+     "Steadfast Heart"
+    ],
+    "DA_18_Ashe": [
+     "Spear of Shojin",
+     "Red Buff",
+     "Last Whisper"
+    ],
+    "DA_18_ElderDragon": [
+     "Infinity Edge",
+     "Sterak's Gage",
+     "Striker's Flail"
+    ]
+   },
+   "positions": {
+    "DA_Cinderling18": [
+     3,
+     0
+    ],
+    "DA_18_Yorick": [
+     2,
+     0
+    ],
+    "DA_Amumu18": [
+     1,
+     3
+    ],
+    "DA_18_Sett": [
+     0,
+     3
+    ],
+    "DA_18_GnarSmall": [
+     2,
+     3
+    ],
+    "DA_18_Kennen": [
+     2,
+     4
+    ],
+    "DA_18_Ashe": [
+     3,
+     6
+    ],
+    "DA_18_ElderDragon": [
+     2,
+     5
+    ]
+   },
+   "early": [
+    "DA_Karma18",
+    "DA_18_Rakan",
+    "DA_18_Yorick",
+    "DA_18_Yunara"
+   ],
+   "traits": [
+    "3 Blossom",
+    "2 Hunter",
+    "2 Juggernaut",
+    "2 Inferno",
+    "2 Brawler"
+   ],
+   "difficulty": "HARD",
+   "notes": "Prioritize Ashe items > Tank items > leftover duo carry items (ideally Elder Dragon). Comp is very expensive so make sure you take good econ augments. "
+  },
+  {
+   "name": "Azir Reroll",
+   "tier": "B",
+   "style": "reroll3",
+   "units": [
+    "DA_18_KhaZix",
+    "DA_18_Azir",
+    "DA_18_RekSai",
+    "DA_18_Yorick",
+    "DA_Vi18",
+    "DA_18_Sett",
+    "DA_18_Yunara"
+   ],
+   "stars": {
+    "DA_18_KhaZix": 3,
+    "DA_18_Azir": 3,
+    "DA_Vi18": 3
+   },
+   "carry": "DA_18_Azir",
+   "carry_items": [
+    "Archangel's Staff",
+    "Hextech Gunblade",
+    "Jeweled Gauntlet"
+   ],
+   "item_holders": {
+    "DA_18_Azir": [
+     "Archangel's Staff",
+     "Hextech Gunblade",
+     "Jeweled Gauntlet"
+    ],
+    "DA_Vi18": [
+     "Gargoyle Stoneplate",
+     "Gargoyle Stoneplate",
+     "Warmogs Armor"
+    ],
+    "DA_18_Yunara": [
+     "Void Staff"
+    ]
+   },
+   "positions": {
+    "DA_18_KhaZix": [
+     2,
+     3
+    ],
+    "DA_18_Azir": [
+     3,
+     0
+    ],
+    "DA_18_RekSai": [
+     2,
+     5
+    ],
+    "DA_18_Yorick": [
+     2,
+     4
+    ],
+    "DA_Vi18": [
+     0,
+     3
+    ],
+    "DA_18_Sett": [
+     2,
+     2
+    ],
+    "DA_18_Yunara": [
+     3,
+     1
+    ]
+   },
+   "early": [
+    "DA_18_Yorick",
+    "DA_18_Yunara",
+    "DA_Karma18",
+    "DA_18_Azir"
+   ],
+   "traits": [
+    "3 Blossom",
+    "2 Juggernaut",
+    "2 Brawler",
+    "2 Blackthorn",
+    "2 Executioner",
+    "2 Summoner",
+    "1 Rival"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "More of an Azir comp than a Khazix comp, we just want executioner buff than we feed Kha to blackthorn hex for offensive Azir Stacks. If you have lots of Kha upgrades drop Sett + Reksai for Ahri + WW/Malphite for Spellweaver+Ravager. With enough mana gen from blackthorn, Azir doesn't need attack speed, but Rageblade is okay on him."
+  },
+  {
+   "name": "Caitlyn Hunters",
+   "tier": "B",
+   "style": "reroll2",
+   "units": [
+    "DA_18_Rakan",
+    "DA_18_Sejuani",
+    "DA_18_Caitlyn",
+    "DA_Scuttlecrab18",
+    "DA_18_Tristana",
+    "DA_Vi18",
+    "DA_18_Sivir"
+   ],
+   "stars": {
+    "DA_18_Sejuani": 3,
+    "DA_18_Caitlyn": 3,
+    "DA_Scuttlecrab18": 3
+   },
+   "carry": "DA_18_Sivir",
+   "carry_items": [
+    "Infinity Edge",
+    "Last Whisper",
+    "Red Buff"
+   ],
+   "item_holders": {
+    "DA_18_Caitlyn": [
+     "Guinsoo's Rageblade",
+     "Kraken's Fury",
+     "Hextech Gunblade"
+    ],
+    "DA_Scuttlecrab18": [
+     "Spirit Visage",
+     "Gargoyle Stoneplate",
+     "Warmogs Armor"
+    ],
+    "DA_18_Sivir": [
+     "Infinity Edge",
+     "Last Whisper",
+     "Red Buff"
+    ]
+   },
+   "positions": {
+    "DA_18_Rakan": [
+     2,
+     2
+    ],
+    "DA_18_Sejuani": [
+     2,
+     1
+    ],
+    "DA_18_Caitlyn": [
+     3,
+     6
+    ],
+    "DA_Scuttlecrab18": [
+     0,
+     4
+    ],
+    "DA_18_Tristana": [
+     3,
+     4
+    ],
+    "DA_Vi18": [
+     2,
+     3
+    ],
+    "DA_18_Sivir": [
+     3,
+     5
+    ]
+   },
+   "early": [
+    "DA_18_Rakan",
+    "DA_18_Yorick",
+    "DA_18_Caitlyn",
+    "DA_18_Tristana"
+   ],
+   "traits": [
+    "4 Juggernaut",
+    "3 Hunter",
+    "2 Primal",
+    "2 Fae"
+   ],
+   "difficulty": "EASY",
+   "notes": "Can also tank Sejuani 3. Tank whoever you can hit first. Can also play 4 Vanguard version with Elise. Sivir takes leftover utility / AD items (red buff highly impractical so oftentimes you play Morello). Take Turtle Primal buff. +1 or 2 tiers with radiant items (especially radiant Guinsoo)."
+  },
+  {
+   "name": "Coven Ahri",
+   "tier": "B",
+   "style": "fast8",
+   "units": [
+    "DA_Sentinel18",
+    "DA_Taric18",
+    "DA_18_Morgana",
+    "DA_18_Diana",
+    "DA_18_Ahri",
+    "DA_18_Alune",
+    "DA_18_Cassiopeia",
+    "DA_Fiddlesticks18",
+    "DA_18_Elise"
+   ],
+   "stars": {},
+   "carry": "DA_18_Ahri",
+   "carry_items": [
+    "Jeweled Gauntlet",
+    "Striker's Flail",
+    "Spear of Shojin"
+   ],
+   "item_holders": {
+    "DA_Sentinel18": [
+     "Crownguard",
+     "Protector's Vow",
+     "Warmogs Armor"
+    ],
+    "DA_18_Morgana": [
+     "Void Staff",
+     "Morellonomicon"
+    ],
+    "DA_18_Ahri": [
+     "Jeweled Gauntlet",
+     "Striker's Flail",
+     "Spear of Shojin"
+    ]
+   },
+   "positions": {
+    "DA_Sentinel18": [
+     0,
+     3
+    ],
+    "DA_Taric18": [
+     0,
+     2
+    ],
+    "DA_18_Morgana": [
+     2,
+     2
+    ],
+    "DA_18_Diana": [
+     1,
+     2
+    ],
+    "DA_18_Ahri": [
+     3,
+     0
+    ],
+    "DA_18_Alune": [
+     3,
+     1
+    ],
+    "DA_18_Cassiopeia": [
+     3,
+     2
+    ],
+    "DA_Fiddlesticks18": [
+     2,
+     4
+    ],
+    "DA_18_Elise": [
+     1,
+     4
+    ]
+   },
+   "early": [
+    "DA_18_Rakan",
+    "DA_18_Yorick",
+    "DA_Karma18",
+    "DA_18_Yunara"
+   ],
+   "traits": [
+    "4 Vanguard",
+    "4 Spellweaver",
+    "3 Coven",
+    "2 Invoker",
+    "2 Lunar",
+    "1 Flora Fatalis"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Play Coven throughout the game but still using strongest board, try to greed for a 250 cash-out. Spellweaver emblem on Morgana->Drop Fiddle is really strong, so is Invoker emblem on Ahri."
+  },
+  {
+   "name": "Defender Cassio",
+   "tier": "B",
+   "style": "reroll3",
+   "units": [
+    "DA_18_Leona",
+    "DA_18_Ornn",
+    "DA_18_Shen",
+    "DA_18_Cassiopeia",
+    "DA_Fiddlesticks18",
+    "DA_18_Rammus",
+    "DA_18_Lillia"
+   ],
+   "stars": {
+    "DA_18_Ornn": 3,
+    "DA_18_Cassiopeia": 3,
+    "DA_Fiddlesticks18": 3,
+    "DA_18_Rammus": 3
+   },
+   "carry": "DA_18_Cassiopeia",
+   "carry_items": [
+    "Spear of Shojin",
+    "Hextech Gunblade",
+    "Archangel's Staff"
+   ],
+   "item_holders": {
+    "DA_18_Cassiopeia": [
+     "Spear of Shojin",
+     "Hextech Gunblade",
+     "Archangel's Staff"
+    ],
+    "DA_Fiddlesticks18": [
+     "Titan's Resolve",
+     "Adaptive Helm",
+     "Crownguard"
+    ],
+    "DA_18_Rammus": [
+     "Ionic Spark",
+     "Sunfire Cape",
+     "Steadfast Heart"
+    ],
+    "DA_18_Lillia": [
+     "Thief's Gloves"
+    ]
+   },
+   "positions": {
+    "DA_18_Leona": [
+     0,
+     2
+    ],
+    "DA_18_Ornn": [
+     0,
+     1
+    ],
+    "DA_18_Shen": [
+     0,
+     3
+    ],
+    "DA_18_Cassiopeia": [
+     3,
+     6
+    ],
+    "DA_Fiddlesticks18": [
+     0,
+     4
+    ],
+    "DA_18_Rammus": [
+     0,
+     5
+    ],
+    "DA_18_Lillia": [
+     0,
+     0
+    ]
+   },
+   "early": [
+    "DA_Karma18",
+    "DA_18_Leona",
+    "DA_18_Ornn",
+    "DA_18_LeBlanc"
+   ],
+   "traits": [
+    "6 Defender",
+    "2 Spellweaver",
+    "1 Flora Fatalis"
+   ],
+   "difficulty": "EASY",
+   "notes": "Very BIS dependent. Can play from Coven Cashout. Can also play for Ornn 3 to potentially farm Artifacts. Always play 6 Defender. Duo carry on 8 is any 4 or 5 cost AP carry. Titans on fiddle because we have no other use for bow."
+  },
+  {
+   "name": "Dragon 9",
+   "tier": "B",
+   "style": "fast9",
+   "units": [
+    "DA_Amumu18",
+    "DA_Sentinel18",
+    "DA_18_Morgana",
+    "DA_Taric18",
+    "DA_18_Kennen",
+    "DA_18_ElderDragon",
+    "DA_18_Ivern",
+    "DA_18_Maokai"
+   ],
+   "stars": {},
+   "carry": "DA_18_Ivern",
+   "carry_items": [
+    "Spear of Shojin",
+    "Adaptive Helm",
+    "Adaptive Helm"
+   ],
+   "item_holders": {
+    "DA_Sentinel18": [
+     "Protector's Vow"
+    ],
+    "DA_18_Morgana": [
+     "Void Staff",
+     "Rabadon's Deathcap",
+     "Jeweled Gauntlet"
+    ],
+    "DA_18_Kennen": [
+     "Thief's Gloves"
+    ],
+    "DA_18_ElderDragon": [
+     "Infinity Edge",
+     "Deathblade",
+     "Striker's Flail"
+    ],
+    "DA_18_Ivern": [
+     "Spear of Shojin",
+     "Adaptive Helm",
+     "Adaptive Helm"
+    ],
+    "DA_18_Maokai": [
+     "Warmogs Armor",
+     "Crownguard",
+     "Evenshroud"
+    ]
+   },
+   "positions": {
+    "DA_Amumu18": [
+     0,
+     4
+    ],
+    "DA_Sentinel18": [
+     0,
+     3
+    ],
+    "DA_18_Morgana": [
+     1,
+     4
+    ],
+    "DA_Taric18": [
+     0,
+     1
+    ],
+    "DA_18_Kennen": [
+     0,
+     2
+    ],
+    "DA_18_ElderDragon": [
+     2,
+     6
+    ],
+    "DA_18_Ivern": [
+     3,
+     0
+    ],
+    "DA_18_Maokai": [
+     0,
+     5
+    ]
+   },
+   "early": [
+    "DA_Cinderling18",
+    "DA_18_Sentry",
+    "DA_18_Yorick",
+    "DA_Scuttlecrab18"
+   ],
+   "traits": [
+    "2 Invoker",
+    "2 Juggernaut",
+    "2 Inferno",
+    "2 Vanguard"
+   ],
+   "difficulty": "HARD",
+   "notes": "Alpha Mark the Elder Dragon. Your duo carry with Elder Dragon is highly flexible. Can replace Morgana for Lux, Alune, Soraka for AP options. Can also play AD duo carry: Ashe, Draven, Ezreal, etc. "
+  },
+  {
+   "name": "Draven AD 9",
+   "tier": "B",
+   "style": "fast9",
+   "units": [
+    "DA_18_Alistar",
+    "DA_Amumu18",
+    "DA_Draven18",
+    "DA_18_Ivern",
+    "DA_Taric18",
+    "DA_18_GnarSmall",
+    "DA_18_Kennen",
+    "DA_18_Maokai",
+    "DA_18_Ezreal"
+   ],
+   "stars": {},
+   "carry": "DA_Draven18",
+   "carry_items": [
+    "Kraken's Fury",
+    "Guinsoo's Rageblade",
+    "Deathblade"
+   ],
+   "item_holders": {
+    "DA_Draven18": [
+     "Kraken's Fury",
+     "Guinsoo's Rageblade",
+     "Deathblade"
+    ],
+    "DA_18_GnarSmall": [
+     "Thief's Gloves"
+    ],
+    "DA_18_Kennen": [
+     "Thief's Gloves"
+    ],
+    "DA_18_Maokai": [
+     "Warmogs Armor",
+     "Gargoyle Stoneplate",
+     "Bramble Vest"
+    ],
+    "DA_18_Ezreal": [
+     "Spear of Shojin",
+     "Last Whisper",
+     "Deathblade"
+    ]
+   },
+   "positions": {
+    "DA_18_Alistar": [
+     0,
+     1
+    ],
+    "DA_Amumu18": [
+     0,
+     2
+    ],
+    "DA_Draven18": [
+     3,
+     6
+    ],
+    "DA_18_Ivern": [
+     3,
+     0
+    ],
+    "DA_Taric18": [
+     0,
+     4
+    ],
+    "DA_18_GnarSmall": [
+     1,
+     3
+    ],
+    "DA_18_Kennen": [
+     0,
+     3
+    ],
+    "DA_18_Maokai": [
+     0,
+     5
+    ],
+    "DA_18_Ezreal": [
+     3,
+     5
+    ]
+   },
+   "early": [
+    "DA_18_Rengar",
+    "DA_18_RekSai",
+    "DA_18_Alistar",
+    "DA_18_Warwick"
+   ],
+   "traits": [
+    "3 Elderwood",
+    "2 Juggernaut",
+    "2 Inferno",
+    "2 Brawler",
+    "2 Executioner"
+   ],
+   "difficulty": "HARD",
+   "notes": "Only play from early win streak and lots of gold. Because you are aiming for scaling 5 costs, aim to level 9 around end of Stage 4 / beginning of Stage 5. Best Draven quests are dealing damage for gold, but avoid the 10k damage in 1 round because you can get trapped."
+  },
+  {
+   "name": "Elderwood Veigar",
+   "tier": "B",
+   "style": "reroll1",
+   "units": [
+    "DA_18_RekSai",
+    "DA_18_Ornn",
+    "DA_18_Veigar",
+    "DA_18_Alistar",
+    "DA_18_LeBlanc",
+    "DA_18_Cassiopeia",
+    "DA_Fiddlesticks18"
+   ],
+   "stars": {
+    "DA_18_RekSai": 3,
+    "DA_18_Ornn": 3,
+    "DA_18_Veigar": 3,
+    "DA_18_Alistar": 3,
+    "DA_18_LeBlanc": 3
+   },
+   "carry": "DA_18_Veigar",
+   "carry_items": [
+    "Jeweled Gauntlet",
+    "Blue Buff",
+    "Hextech Gunblade"
+   ],
+   "item_holders": {
+    "DA_18_Ornn": [
+     "Warmogs Armor",
+     "Crownguard",
+     "Gargoyle Stoneplate"
+    ],
+    "DA_18_Veigar": [
+     "Jeweled Gauntlet",
+     "Blue Buff",
+     "Hextech Gunblade"
+    ],
+    "DA_18_LeBlanc": [
+     "Void Staff",
+     "Morellonomicon"
+    ]
+   },
+   "positions": {
+    "DA_18_RekSai": [
+     2,
+     2
+    ],
+    "DA_18_Ornn": [
+     0,
+     3
+    ],
+    "DA_18_Veigar": [
+     3,
+     0
+    ],
+    "DA_18_Alistar": [
+     2,
+     5
+    ],
+    "DA_18_LeBlanc": [
+     3,
+     2
+    ],
+    "DA_18_Cassiopeia": [
+     3,
+     4
+    ],
+    "DA_Fiddlesticks18": [
+     2,
+     4
+    ]
+   },
+   "early": [
+    "DA_18_Kobuko",
+    "DA_18_RekSai",
+    "DA_18_Veigar",
+    "DA_18_Teemo"
+   ],
+   "traits": [
+    "4 Spellweaver",
+    "3 Elderwood",
+    "2 Brawler",
+    "2 Blackthorn",
+    "2 Defender",
+    "1 Flora Fatalis"
+   ],
+   "difficulty": "EASY",
+   "notes": "Play with lots of copies of Ornn and Veigar, we need to hit fast to start scaling. Sacrifice Lifebloom plant to Blackthorn early. Late game you can sacrifice Leblanc 3 for big stats -> move her items to another spellweaver. After you hit rush 9 for Kobuko + Gnar. After you cash out first Ornn artifact, move items to Alistar."
+  },
+  {
+   "name": "Primal Flex",
+   "tier": "B",
+   "style": "fast8",
+   "units": [
+    "DA_Cinderling18",
+    "DA_Scuttlecrab18",
+    "DA_KogMaw18_AD",
+    "DA_Sentinel18",
+    "DA_Amumu18",
+    "DA_Nidalee18_AP",
+    "DA_18_Sivir",
+    "DA_Taric18"
+   ],
+   "stars": {},
+   "carry": "DA_18_Sivir",
+   "carry_items": [
+    "Infinity Edge",
+    "Red Buff",
+    "Striker's Flail"
+   ],
+   "item_holders": {
+    "DA_Sentinel18": [
+     "Protector's Vow"
+    ],
+    "DA_Amumu18": [
+     "Warmogs Armor",
+     "Gargoyle Stoneplate",
+     "Bramble Vest"
+    ],
+    "DA_Nidalee18_AP": [
+     "Infinity Edge",
+     "Sterak's Gage",
+     "Spear of Shojin"
+    ],
+    "DA_18_Sivir": [
+     "Infinity Edge",
+     "Red Buff",
+     "Striker's Flail"
+    ]
+   },
+   "positions": {
+    "DA_Cinderling18": [
+     3,
+     6
+    ],
+    "DA_Scuttlecrab18": [
+     0,
+     4
+    ],
+    "DA_KogMaw18_AD": [
+     3,
+     1
+    ],
+    "DA_Sentinel18": [
+     0,
+     3
+    ],
+    "DA_Amumu18": [
+     0,
+     2
+    ],
+    "DA_Nidalee18_AP": [
+     2,
+     0
+    ],
+    "DA_18_Sivir": [
+     3,
+     0
+    ],
+    "DA_Taric18": [
+     0,
+     5
+    ]
+   },
+   "early": [
+    "DA_18_Yorick",
+    "DA_Cinderling18",
+    "DA_Gromp18_AP",
+    "DA_Scuttlecrab18"
+   ],
+   "traits": [
+    "3 Riftbeast",
+    "2 Adaptor",
+    "2 Hunter",
+    "2 Primal",
+    "2 Invoker",
+    "2 Juggernaut",
+    "2 Vanguard"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Just a small variation on the malphite board, play Amumu + Vanguard over Blackthorn/Brawler. Prioritize Nidalee > Sivir items. Kogmaw provides free Shred and Sunder. Max cap is drop riftbeasts for Maokai + Ashe + Kennen. Hunter emblem is incredible on Nidalee. Take tiger primal buff."
+  },
+  {
+   "name": "Primal Jungle",
+   "tier": "B",
+   "style": "fast8",
+   "units": [
+    "DA_Cinderling18",
+    "DA_18_RekSai",
+    "DA_KogMaw18_AD",
+    "DA_Krug18",
+    "DA_Sentinel18",
+    "DA_18_Malphite",
+    "DA_Nidalee18_AP",
+    "DA_18_Sivir"
+   ],
+   "stars": {},
+   "carry": "DA_18_Sivir",
+   "carry_items": [
+    "Infinity Edge",
+    "Red Buff",
+    "Striker's Flail"
+   ],
+   "item_holders": {
+    "DA_18_Malphite": [
+     "Gargoyle Stoneplate",
+     "Warmogs Armor",
+     "Crownguard"
+    ],
+    "DA_Nidalee18_AP": [
+     "Infinity Edge",
+     "Sterak's Gage",
+     "Spear of Shojin"
+    ],
+    "DA_18_Sivir": [
+     "Infinity Edge",
+     "Red Buff",
+     "Striker's Flail"
+    ]
+   },
+   "positions": {
+    "DA_Cinderling18": [
+     3,
+     6
+    ],
+    "DA_18_RekSai": [
+     2,
+     6
+    ],
+    "DA_KogMaw18_AD": [
+     3,
+     1
+    ],
+    "DA_Krug18": [
+     2,
+     3
+    ],
+    "DA_Sentinel18": [
+     2,
+     5
+    ],
+    "DA_18_Malphite": [
+     0,
+     3
+    ],
+    "DA_Nidalee18_AP": [
+     2,
+     0
+    ],
+    "DA_18_Sivir": [
+     3,
+     0
+    ]
+   },
+   "early": [
+    "DA_18_Yorick",
+    "DA_Cinderling18",
+    "DA_Gromp18_AP",
+    "DA_Scuttlecrab18"
+   ],
+   "traits": [
+    "3 Riftbeast",
+    "2 Adaptor",
+    "2 Hunter",
+    "2 Primal",
+    "2 Invoker",
+    "2 Brawler",
+    "2 Blackthorn"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Krug on the Blackthorn hex. Prioritize Nidalee > Sivir items. Kogmaw provides free Shred and Sunder. Max cap is drop riftbeasts for Gnar + Ashe + Taric. Hunter emblem is incredible on Nidalee. Can also drop Malphite for Sett + Vanguard. Take tiger primal buff."
+  },
+  {
+   "name": "Riftbeast Reroll",
+   "tier": "B",
+   "style": "reroll1",
+   "units": [
+    "DA_Cinderling18",
+    "DA_18_Sentry",
+    "DA_Murkwolf18",
+    "DA_Scuttlecrab18",
+    "DA_Krug18",
+    "DA_Sentinel18",
+    "DA_Brambleback18",
+    "DA_18_GnarSmall"
+   ],
+   "stars": {
+    "DA_Cinderling18": 3,
+    "DA_18_Sentry": 3,
+    "DA_Scuttlecrab18": 3,
+    "DA_Krug18": 3
+   },
+   "carry": "DA_Krug18",
+   "carry_items": [
+    "Warmogs Armor",
+    "Gargoyle Stoneplate",
+    "Spirit Visage"
+   ],
+   "item_holders": {
+    "DA_Cinderling18": [
+     "Infinity Edge",
+     "Blue Buff",
+     "Last Whisper"
+    ],
+    "DA_18_Sentry": [
+     "Blue Buff",
+     "Rabadon's Deathcap",
+     "Jeweled Gauntlet"
+    ],
+    "DA_Krug18": [
+     "Warmogs Armor",
+     "Gargoyle Stoneplate",
+     "Spirit Visage"
+    ],
+    "DA_Brambleback18": [
+     "Thief's Gloves"
+    ]
+   },
+   "positions": {
+    "DA_Cinderling18": [
+     3,
+     6
+    ],
+    "DA_18_Sentry": [
+     3,
+     5
+    ],
+    "DA_Murkwolf18": [
+     2,
+     3
+    ],
+    "DA_Scuttlecrab18": [
+     2,
+     4
+    ],
+    "DA_Krug18": [
+     0,
+     4
+    ],
+    "DA_Sentinel18": [
+     2,
+     2
+    ],
+    "DA_Brambleback18": [
+     2,
+     6
+    ],
+    "DA_18_GnarSmall": [
+     2,
+     5
+    ]
+   },
+   "early": [
+    "DA_Cinderling18",
+    "DA_18_Sentry",
+    "DA_18_Yorick",
+    "DA_Scuttlecrab18"
+   ],
+   "traits": [
+    "7 Riftbeast",
+    "2 Ravager",
+    "2 Invoker",
+    "2 Brawler"
+   ],
+   "difficulty": "EASY",
+   "notes": "Use 5 Riftbeast shops to finish your 3* because you want to rush 7 Riftbeast on Level 7 ASAP. You can carry ALL of the riftbeast carries besides Mama Beak if you have items. Krug 3 is the best tank but you can also tank Sentinel 2 > Scuttle Crab 3. Alpha Mark Cinderling early > Crab late."
+  },
+  {
+   "name": "Solara Yunara",
+   "tier": "B",
+   "style": "reroll2",
+   "units": [
+    "DA_18_Leona",
+    "DA_18_Yorick",
+    "DA_Karma18",
+    "DA_18_Kayle",
+    "DA_18_LeBlanc",
+    "DA_18_Sejuani",
+    "DA_18_Yunara",
+    "DA_18_Azir"
+   ],
+   "stars": {
+    "DA_18_Leona": 3,
+    "DA_18_Yorick": 3,
+    "DA_Karma18": 3,
+    "DA_18_Sejuani": 3,
+    "DA_18_Yunara": 3
+   },
+   "carry": "DA_18_Yunara",
+   "carry_items": [
+    "Deathblade",
+    "Spear of Shojin",
+    "Last Whisper"
+   ],
+   "item_holders": {
+    "DA_Karma18": [
+     "Spear of Shojin",
+     "Void Staff",
+     "Jeweled Gauntlet"
+    ],
+    "DA_18_Sejuani": [
+     "Gargoyle Stoneplate",
+     "Warmogs Armor",
+     "Gargoyle Stoneplate"
+    ],
+    "DA_18_Yunara": [
+     "Deathblade",
+     "Spear of Shojin",
+     "Last Whisper"
+    ]
+   },
+   "positions": {
+    "DA_18_Leona": [
+     3,
+     0
+    ],
+    "DA_18_Yorick": [
+     2,
+     3
+    ],
+    "DA_Karma18": [
+     3,
+     5
+    ],
+    "DA_18_Kayle": [
+     3,
+     2
+    ],
+    "DA_18_LeBlanc": [
+     3,
+     4
+    ],
+    "DA_18_Sejuani": [
+     0,
+     3
+    ],
+    "DA_18_Yunara": [
+     3,
+     6
+    ],
+    "DA_18_Azir": [
+     3,
+     1
+    ]
+   },
+   "early": [
+    "DA_Karma18",
+    "DA_18_Yorick",
+    "DA_18_LeBlanc",
+    "DA_18_Yunara"
+   ],
+   "traits": [
+    "3 Solar",
+    "3 Blossom",
+    "2 Juggernaut",
+    "2 Executioner",
+    "2 Spellweaver",
+    "2 Summoner"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Prioritize 3* Yunara & Karma + 3 Blossom + LeBlanc early for clone copies. Add 3 Solar after you finish your 3* at levels 7/8 once you get 5 three stars online. Hold only 1 copy of Kayle on the bench max when rolling."
+  },
+  {
+   "name": "Woodblossom",
+   "tier": "B",
+   "style": "fast8",
+   "units": [
+    "DA_18_Ornn",
+    "DA_18_Alistar",
+    "DA_18_Yunara",
+    "DA_Fiddlesticks18",
+    "DA_18_Soraka",
+    "DA_18_Ahri",
+    "DA_18_Ezreal",
+    "DA_18_Sett"
+   ],
+   "stars": {},
+   "carry": "DA_18_Ezreal",
+   "carry_items": [
+    "Spear of Shojin",
+    "Last Whisper",
+    "Deathblade"
+   ],
+   "item_holders": {
+    "DA_18_Ahri": [
+     "Executioner Emblem",
+     "Morellonomicon",
+     "Spear of Shojin"
+    ],
+    "DA_18_Ezreal": [
+     "Spear of Shojin",
+     "Last Whisper",
+     "Deathblade"
+    ],
+    "DA_18_Sett": [
+     "Warmogs Armor",
+     "Gargoyle Stoneplate",
+     "Gargoyle Stoneplate"
+    ]
+   },
+   "positions": {
+    "DA_18_Ornn": [
+     0,
+     1
+    ],
+    "DA_18_Alistar": [
+     0,
+     2
+    ],
+    "DA_18_Yunara": [
+     3,
+     0
+    ],
+    "DA_Fiddlesticks18": [
+     0,
+     3
+    ],
+    "DA_18_Soraka": [
+     3,
+     2
+    ],
+    "DA_18_Ahri": [
+     3,
+     4
+    ],
+    "DA_18_Ezreal": [
+     3,
+     6
+    ],
+    "DA_18_Sett": [
+     0,
+     4
+    ]
+   },
+   "early": [
+    "DA_18_Ornn",
+    "DA_18_Xayah",
+    "DA_18_Shen",
+    "DA_18_LeBlanc"
+   ],
+   "traits": [
+    "3 Elderwood",
+    "3 Executioner",
+    "3 Blossom",
+    "2 Brawler",
+    "2 Defender",
+    "2 Spellweaver",
+    "2 Flora Fatalis"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Best With executioner emblem. Focus Ezreal + Tank items first then rest on Ahri->Soraka."
+  },
+  {
+   "name": "Yi Rengar",
+   "tier": "B",
+   "style": "reroll3",
+   "units": [
+    "DA_18_Yorick",
+    "DA_Krug18",
+    "DA_18_MasterYi_AD",
+    "DA_18_Rengar",
+    "DA_Vi18",
+    "DA_18_Sett",
+    "DA_Nidalee18_AP"
+   ],
+   "stars": {
+    "DA_Krug18": 3,
+    "DA_18_MasterYi_AD": 3,
+    "DA_18_Rengar": 3,
+    "DA_Vi18": 3
+   },
+   "carry": "DA_Nidalee18_AP",
+   "carry_items": [
+    "Guinsoo's Rageblade",
+    "Spear of Shojin",
+    "Rabadon's Deathcap"
+   ],
+   "item_holders": {
+    "DA_18_MasterYi_AD": [
+     "Edge of Night",
+     "Titan's Resolve",
+     "Kraken's Fury"
+    ],
+    "DA_18_Rengar": [
+     "Titan's Resolve",
+     "Edge of Night",
+     "Guinsoo's Rageblade"
+    ],
+    "DA_Vi18": [
+     "Warmogs Armor",
+     "Gargoyle Stoneplate",
+     "Evenshroud"
+    ],
+    "DA_Nidalee18_AP": [
+     "Guinsoo's Rageblade",
+     "Spear of Shojin",
+     "Rabadon's Deathcap"
+    ]
+   },
+   "positions": {
+    "DA_18_Yorick": [
+     2,
+     0
+    ],
+    "DA_Krug18": [
+     0,
+     1
+    ],
+    "DA_18_MasterYi_AD": [
+     2,
+     6
+    ],
+    "DA_18_Rengar": [
+     2,
+     5
+    ],
+    "DA_Vi18": [
+     0,
+     5
+    ],
+    "DA_18_Sett": [
+     0,
+     0
+    ],
+    "DA_Nidalee18_AP": [
+     3,
+     6
+    ]
+   },
+   "early": [
+    "DA_Karma18",
+    "DA_18_Yorick",
+    "DA_Gromp18_AP",
+    "DA_18_MasterYi_AD"
+   ],
+   "traits": [
+    "3 Blossom",
+    "2 Adaptor",
+    "2 Primal",
+    "2 Juggernaut",
+    "2 Brawler",
+    "1 Rival"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "+1 tier in strength with Artifact.  VI 3 is stronger than Krug 3. Item priority: Master Yi/Rengar > Tank > Nidalee. Only take Phoenix Primal buff if ahead. Otherwise, Execute / Healing Primal. Rengar and Yi have the exact same BIS. Yi is stronger but itemize whoever is upgraded first. "
+  },
+  {
+   "name": "Adaptor Reroll",
+   "tier": "C",
+   "style": "reroll3",
+   "units": [
+    "DA_18_Yorick",
+    "DA_Krug18",
+    "DA_KogMaw18_AD",
+    "DA_18_MasterYi_AD",
+    "DA_Vi18",
+    "DA_18_Sett",
+    "DA_Nidalee18_AP"
+   ],
+   "stars": {
+    "DA_Krug18": 3,
+    "DA_KogMaw18_AD": 3,
+    "DA_18_MasterYi_AD": 3,
+    "DA_Vi18": 3
+   },
+   "carry": "DA_Nidalee18_AP",
+   "carry_items": [
+    "Guinsoo's Rageblade",
+    "Spear of Shojin",
+    "Rabadon's Deathcap"
+   ],
+   "item_holders": {
+    "DA_KogMaw18_AD": [
+     "Spear of Shojin",
+     "Rabadon's Deathcap",
+     "Jeweled Gauntlet"
+    ],
+    "DA_18_MasterYi_AD": [
+     "Guinsoo's Rageblade",
+     "Edge of Night",
+     "Titan's Resolve"
+    ],
+    "DA_Vi18": [
+     "Warmogs Armor",
+     "Gargoyle Stoneplate",
+     "Gargoyle Stoneplate"
+    ],
+    "DA_Nidalee18_AP": [
+     "Guinsoo's Rageblade",
+     "Spear of Shojin",
+     "Rabadon's Deathcap"
+    ]
+   },
+   "positions": {
+    "DA_18_Yorick": [
+     2,
+     0
+    ],
+    "DA_Krug18": [
+     0,
+     1
+    ],
+    "DA_KogMaw18_AD": [
+     3,
+     6
+    ],
+    "DA_18_MasterYi_AD": [
+     2,
+     6
+    ],
+    "DA_Vi18": [
+     0,
+     5
+    ],
+    "DA_18_Sett": [
+     0,
+     0
+    ],
+    "DA_Nidalee18_AP": [
+     3,
+     5
+    ]
+   },
+   "early": [
+    "DA_18_MasterYi_AD",
+    "DA_Karma18",
+    "DA_18_Yorick",
+    "DA_Gromp18_AP"
+   ],
+   "traits": [
+    "3 Adaptor",
+    "3 Blossom",
+    "2 Primal",
+    "2 Juggernaut",
+    "2 Brawler"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "+1 tier in strength with Artifact or Brawler emblem. Level 7 board is no Gromp. VI 3 is stronger than Krug 3, but harder to hit because of Vi's popularity. Item priority: Master Yi > Tank > Kogmaw > Nidalee. Only take Phoenix Primal buff if ahead. Otherwise, Execute / Healing Primal."
+  },
+  {
+   "name": "Elderwood Executioners",
+   "tier": "C",
+   "style": "fast8",
+   "units": [
+    "DA_18_Ornn",
+    "DA_18_Alistar",
+    "DA_Taric18",
+    "DA_Fiddlesticks18",
+    "DA_18_Ezreal",
+    "DA_18_Soraka",
+    "DA_Lux18_Base",
+    "DA_18_GnarSmall",
+    "DA_18_Hecarim"
+   ],
+   "stars": {},
+   "carry": "DA_18_Ezreal",
+   "carry_items": [
+    "Spear of Shojin",
+    "Last Whisper",
+    "Deathblade"
+   ],
+   "item_holders": {
+    "DA_18_Ezreal": [
+     "Spear of Shojin",
+     "Last Whisper",
+     "Deathblade"
+    ],
+    "DA_18_Soraka": [
+     "Spear of Shojin",
+     "Rabadon's Deathcap",
+     "Void Staff"
+    ],
+    "DA_Lux18_Base": [
+     "Executioner Emblem",
+     "Spear of Shojin"
+    ],
+    "DA_18_Hecarim": [
+     "Dragon's Claw",
+     "Bramble Vest",
+     "Sunfire Cape"
+    ]
+   },
+   "positions": {
+    "DA_18_Ornn": [
+     0,
+     1
+    ],
+    "DA_18_Alistar": [
+     0,
+     2
+    ],
+    "DA_Taric18": [
+     0,
+     4
+    ],
+    "DA_Fiddlesticks18": [
+     0,
+     5
+    ],
+    "DA_18_Ezreal": [
+     3,
+     6
+    ],
+    "DA_18_Soraka": [
+     3,
+     4
+    ],
+    "DA_Lux18_Base": [
+     3,
+     0
+    ],
+    "DA_18_GnarSmall": [
+     1,
+     3
+    ],
+    "DA_18_Hecarim": [
+     0,
+     3
+    ]
+   },
+   "early": [
+    "DA_18_Ornn",
+    "DA_18_Xayah",
+    "DA_18_LeBlanc",
+    "DA_18_Shen"
+   ],
+   "traits": [
+    "5 Elderwood",
+    "2 Vanguard",
+    "2 Brawler",
+    "2 Executioner",
+    "2 Defender",
+    "2 Flora Fatalis"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Look for Elderwood Lux. 3 Executioner is a big spike so always look to play around it if possible. Can also chase 9 Elderwood if you have Elderwood Lux."
+  },
+  {
+   "name": "Invoker Nidalee",
+   "tier": "C",
+   "style": "fast8",
+   "units": [
+    "DA_18_Sentry",
+    "DA_Scuttlecrab18",
+    "DA_KogMaw18_AD",
+    "DA_Vi18",
+    "DA_18_Morgana",
+    "DA_Nidalee18_AP",
+    "DA_Sentinel18",
+    "DA_Taric18"
+   ],
+   "stars": {},
+   "carry": "DA_Nidalee18_AP",
+   "carry_items": [
+    "Jeweled Gauntlet",
+    "Guinsoo's Rageblade",
+    "Striker's Flail"
+   ],
+   "item_holders": {
+    "DA_18_Morgana": [
+     "Morellonomicon",
+     "Archangel's Staff",
+     "Adaptive Helm"
+    ],
+    "DA_Nidalee18_AP": [
+     "Jeweled Gauntlet",
+     "Guinsoo's Rageblade",
+     "Striker's Flail"
+    ],
+    "DA_Sentinel18": [
+     "Protector's Vow",
+     "Warmogs Armor",
+     "Adaptive Helm"
+    ]
+   },
+   "positions": {
+    "DA_18_Sentry": [
+     3,
+     6
+    ],
+    "DA_Scuttlecrab18": [
+     0,
+     4
+    ],
+    "DA_KogMaw18_AD": [
+     3,
+     1
+    ],
+    "DA_Vi18": [
+     0,
+     5
+    ],
+    "DA_18_Morgana": [
+     1,
+     2
+    ],
+    "DA_Nidalee18_AP": [
+     3,
+     0
+    ],
+    "DA_Sentinel18": [
+     0,
+     3
+    ],
+    "DA_Taric18": [
+     0,
+     2
+    ]
+   },
+   "early": [
+    "DA_18_Rakan",
+    "DA_18_Xayah",
+    "DA_Scuttlecrab18",
+    "DA_18_Kayle"
+   ],
+   "traits": [
+    "4 Invoker",
+    "3 Riftbeast",
+    "2 Adaptor",
+    "2 Primal",
+    "2 Juggernaut",
+    "2 Vanguard"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Prioritize Nidalee > Morello on Morgana + Tank > leftover AP on Morgana. Riftbeast Alpha Mark the Scuttle Crab. Kogmaw provides free Sunder / Shred. Take tiger primal buff."
+  },
+  {
+   "name": "Moo-nara",
+   "tier": "C",
+   "style": "reroll2",
+   "units": [
+    "DA_18_Alistar",
+    "DA_18_Yunara",
+    "DA_18_Ezreal",
+    "DA_18_Azir",
+    "DA_18_GnarSmall",
+    "DA_18_Yorick",
+    "DA_18_Sett",
+    "DA_18_RekSai"
+   ],
+   "stars": {
+    "DA_18_Alistar": 3,
+    "DA_18_Yunara": 3
+   },
+   "carry": "DA_18_Ezreal",
+   "carry_items": [
+    "Last Whisper",
+    "Spear of Shojin",
+    "Red Buff"
+   ],
+   "item_holders": {
+    "DA_18_Alistar": [
+     "Gargoyle Stoneplate",
+     "Spirit Visage",
+     "Warmogs Armor"
+    ],
+    "DA_18_Yunara": [
+     "Deathblade",
+     "Spear of Shojin",
+     "Striker's Flail"
+    ],
+    "DA_18_Ezreal": [
+     "Last Whisper",
+     "Spear of Shojin",
+     "Red Buff"
+    ]
+   },
+   "positions": {
+    "DA_18_Alistar": [
+     0,
+     4
+    ],
+    "DA_18_Yunara": [
+     3,
+     6
+    ],
+    "DA_18_Ezreal": [
+     3,
+     5
+    ],
+    "DA_18_Azir": [
+     3,
+     0
+    ],
+    "DA_18_GnarSmall": [
+     2,
+     4
+    ],
+    "DA_18_Yorick": [
+     0,
+     0
+    ],
+    "DA_18_Sett": [
+     0,
+     3
+    ],
+    "DA_18_RekSai": [
+     0,
+     2
+    ]
+   },
+   "early": [
+    "DA_Karma18",
+    "DA_18_Yorick",
+    "DA_18_Yunara",
+    "DA_18_Azir"
+   ],
+   "traits": [
+    "4 Brawler",
+    "3 Elderwood",
+    "3 Executioner",
+    "3 Blossom",
+    "2 Blackthorn",
+    "2 Summoner"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Play when you have lots of copies of Yunara with sword items. Leftover AD on Ezreal. Can also play 3* Leblanc / Ahri 2* as an AP duo carry if you have the items for it. Play Azir + Reksai on 6 before you find Ezreal + Sett. Level for more executioners."
+  },
+  {
+   "name": "Rengar Reroll",
+   "tier": "C",
+   "style": "reroll3",
+   "units": [
+    "DA_18_Diana",
+    "DA_18_Hecarim",
+    "DA_CrimsonRaptor18",
+    "DA_18_Rengar",
+    "DA_18_Aphelios",
+    "DA_Brambleback18",
+    "DA_Sentinel18",
+    "DA_Taric18"
+   ],
+   "stars": {
+    "DA_18_Diana": 3,
+    "DA_18_Hecarim": 3,
+    "DA_CrimsonRaptor18": 3,
+    "DA_18_Rengar": 3
+   },
+   "carry": "DA_CrimsonRaptor18",
+   "carry_items": [
+    "Last Whisper",
+    "Kraken's Fury",
+    "Guinsoo's Rageblade"
+   ],
+   "item_holders": {
+    "DA_18_Diana": [
+     "Thief's Gloves"
+    ],
+    "DA_18_Hecarim": [
+     "Protector's Vow",
+     "Sunfire Cape",
+     "Warmogs Armor"
+    ],
+    "DA_CrimsonRaptor18": [
+     "Last Whisper",
+     "Kraken's Fury",
+     "Guinsoo's Rageblade"
+    ],
+    "DA_18_Rengar": [
+     "Edge of Night",
+     "Titan's Resolve",
+     "Guinsoo's Rageblade"
+    ]
+   },
+   "positions": {
+    "DA_18_Diana": [
+     1,
+     0
+    ],
+    "DA_18_Hecarim": [
+     0,
+     1
+    ],
+    "DA_CrimsonRaptor18": [
+     3,
+     0
+    ],
+    "DA_18_Rengar": [
+     0,
+     0
+    ],
+    "DA_18_Aphelios": [
+     3,
+     1
+    ],
+    "DA_Brambleback18": [
+     1,
+     1
+    ],
+    "DA_Sentinel18": [
+     0,
+     6
+    ],
+    "DA_Taric18": [
+     1,
+     6
+    ]
+   },
+   "early": [
+    "DA_18_Rakan",
+    "DA_18_Yorick",
+    "DA_18_Elise",
+    "DA_18_Rengar"
+   ],
+   "traits": [
+    "4 Vanguard",
+    "3 Riftbeast",
+    "2 Ravager",
+    "2 Rapidfire",
+    "2 Lunar",
+    "1 Rival"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Strong with artifacts. Rengar prefers to be paired with other carries that can use AD scaling. But he is a flexible unit with no traits so you can play him with whatever you hit."
+  },
+  {
+   "name": "Solar Kayle",
+   "tier": "C",
+   "style": "reroll2",
+   "units": [
+    "DA_18_Leona",
+    "DA_18_Rakan",
+    "DA_18_Ornn",
+    "DA_18_Xayah",
+    "DA_18_Sejuani",
+    "DA_18_Kayle",
+    "DA_18_Hecarim"
+   ],
+   "stars": {
+    "DA_18_Leona": 3,
+    "DA_18_Rakan": 3,
+    "DA_18_Ornn": 3,
+    "DA_18_Xayah": 3,
+    "DA_18_Sejuani": 3,
+    "DA_18_Kayle": 3
+   },
+   "carry": "DA_18_Kayle",
+   "carry_items": [
+    "Guinsoo's Rageblade",
+    "DA_Artifact_NavoriFlickerblade",
+    "Rabadon's Deathcap"
+   ],
+   "item_holders": {
+    "DA_18_Ornn": [
+     "Gargoyle Stoneplate",
+     "Warmogs Armor",
+     "Spirit Visage"
+    ],
+    "DA_18_Xayah": [
+     "Guinsoo's Rageblade",
+     "Red Buff",
+     "Deathblade"
+    ],
+    "DA_18_Kayle": [
+     "Guinsoo's Rageblade",
+     "DA_Artifact_NavoriFlickerblade",
+     "Rabadon's Deathcap"
+    ]
+   },
+   "positions": {
+    "DA_18_Leona": [
+     1,
+     4
+    ],
+    "DA_18_Rakan": [
+     2,
+     3
+    ],
+    "DA_18_Ornn": [
+     0,
+     4
+    ],
+    "DA_18_Xayah": [
+     3,
+     5
+    ],
+    "DA_18_Sejuani": [
+     1,
+     3
+    ],
+    "DA_18_Kayle": [
+     3,
+     6
+    ],
+    "DA_18_Hecarim": [
+     2,
+     4
+    ]
+   },
+   "early": [
+    "DA_18_Leona",
+    "DA_18_Ornn",
+    "DA_18_Sejuani",
+    "DA_18_Kayle"
+   ],
+   "traits": [
+    "3 Elderwood",
+    "3 Solar",
+    "2 Rapidfire",
+    "2 Juggernaut",
+    "2 Vanguard",
+    "2 Fae",
+    "2 Defender"
+   ],
+   "difficulty": "EASY",
+   "notes": "Roll on 3-1 to try and finish a 3* 1 cost for bench space -> Slow roll above 50g on level 5. Ornn Artifact print is very strong but only scales quickly once you get him to 3*. Kayle has built in 20% Shred at 2*. "
+  },
+  {
+   "name": "Solar Melee",
+   "tier": "C",
+   "style": "reroll1",
+   "units": [
+    "DA_18_Leona",
+    "DA_18_Akali_AD",
+    "DA_18_Camille",
+    "DA_18_Ornn",
+    "DA_18_Varus",
+    "DA_18_Kayle",
+    "DA_18_Sejuani"
+   ],
+   "stars": {
+    "DA_18_Leona": 3,
+    "DA_18_Akali_AD": 3,
+    "DA_18_Camille": 3,
+    "DA_18_Ornn": 3,
+    "DA_18_Varus": 3
+   },
+   "carry": "DA_18_Varus",
+   "carry_items": [
+    "Spear of Shojin",
+    "Last Whisper",
+    "Infinity Edge"
+   ],
+   "item_holders": {
+    "DA_18_Akali_AD": [
+     "Jeweled Gauntlet",
+     "Hand Of Justice",
+     "Edge of Night"
+    ],
+    "DA_18_Camille": [
+     "Sterak's Gage",
+     "Quicksilver",
+     "Infinity Edge"
+    ],
+    "DA_18_Ornn": [
+     "Gargoyle Stoneplate",
+     "Crownguard",
+     "Warmogs Armor"
+    ],
+    "DA_18_Varus": [
+     "Spear of Shojin",
+     "Last Whisper",
+     "Infinity Edge"
+    ]
+   },
+   "positions": {
+    "DA_18_Leona": [
+     2,
+     3
+    ],
+    "DA_18_Akali_AD": [
+     2,
+     0
+    ],
+    "DA_18_Camille": [
+     2,
+     1
+    ],
+    "DA_18_Ornn": [
+     0,
+     3
+    ],
+    "DA_18_Varus": [
+     3,
+     0
+    ],
+    "DA_18_Kayle": [
+     3,
+     6
+    ],
+    "DA_18_Sejuani": [
+     2,
+     6
+    ]
+   },
+   "early": [
+    "DA_18_Akali_AD",
+    "DA_18_Camille",
+    "DA_18_Leona",
+    "DA_18_Ornn"
+   ],
+   "traits": [
+    "3 Solar",
+    "2 Ravager",
+    "2 Rapidfire",
+    "2 Inferno",
+    "2 Defender"
+   ],
+   "difficulty": "EASY",
+   "notes": "Akali can be AD or AP (Flex IE/JG) Itemize Tank + 3star melee first -> 2nd melee -> Varus items. Only go for Kayle and Sej 3 with lots of money. Can  Swap out Ornn for Yorick/Rakan."
+  },
+  {
+   "name": "Sprykin Teemo",
+   "tier": "C",
+   "style": "reroll2",
+   "units": [
+    "DA_18_Rammus",
+    "DA_Fiddlesticks18",
+    "DA_18_Veigar",
+    "DA_18_Teemo",
+    "DA_KogMaw18_AD",
+    "DA_18_Kobuko",
+    "DA_18_RekSai"
+   ],
+   "stars": {
+    "DA_18_Teemo": 3,
+    "DA_18_Kobuko": 3,
+    "DA_18_RekSai": 3
+   },
+   "carry": "DA_18_Teemo",
+   "carry_items": [
+    "Spear of Shojin",
+    "Rabadon's Deathcap",
+    "Jeweled Gauntlet"
+   ],
+   "item_holders": {
+    "DA_18_Teemo": [
+     "Spear of Shojin",
+     "Rabadon's Deathcap",
+     "Jeweled Gauntlet"
+    ],
+    "DA_KogMaw18_AD": [
+     "Morellonomicon"
+    ],
+    "DA_18_RekSai": [
+     "Sprykin Emblem",
+     "Gargoyle Stoneplate",
+     "Warmogs Armor"
+    ]
+   },
+   "positions": {
+    "DA_18_Rammus": [
+     2,
+     4
+    ],
+    "DA_Fiddlesticks18": [
+     2,
+     2
+    ],
+    "DA_18_Veigar": [
+     3,
+     4
+    ],
+    "DA_18_Teemo": [
+     3,
+     6
+    ],
+    "DA_KogMaw18_AD": [
+     3,
+     5
+    ],
+    "DA_18_Kobuko": [
+     2,
+     3
+    ],
+    "DA_18_RekSai": [
+     0,
+     3
+    ]
+   },
+   "early": [
+    "DA_18_Kobuko",
+    "DA_18_Veigar",
+    "DA_18_Teemo",
+    "DA_18_RekSai"
+   ],
+   "traits": [
+    "3 Sprykin",
+    "2 Invoker",
+    "2 Brawler",
+    "2 Blackthorn",
+    "2 Defender",
+    "2 Spellweaver",
+    "1 Flora Fatalis"
+   ],
+   "difficulty": "EASY",
+   "notes": "Best with Sprykin emblem and lots of copies of Teemo early. Sacrifice a 3* unit (ideally Kobuko) to give Rek'Sai big stats. Can also tank Rammus 3 if very rich / high rolling. Kog'maw provides free Shred / Sunder."
+  },
+  {
+   "name": "Teemowood",
+   "tier": "C",
+   "style": "reroll2",
+   "units": [
+    "DA_18_Kobuko",
+    "DA_18_Veigar",
+    "DA_18_Alistar",
+    "DA_18_LeBlanc",
+    "DA_18_Teemo",
+    "DA_18_Hecarim",
+    "DA_Sentinel18"
+   ],
+   "stars": {
+    "DA_18_Alistar": 3,
+    "DA_18_LeBlanc": 3,
+    "DA_18_Teemo": 3
+   },
+   "carry": "DA_18_Teemo",
+   "carry_items": [
+    "Void Staff",
+    "Morellonomicon",
+    "Spear of Shojin"
+   ],
+   "item_holders": {
+    "DA_18_Alistar": [
+     "Warmogs Armor",
+     "Gargoyle Stoneplate",
+     "Gargoyle Stoneplate"
+    ],
+    "DA_18_LeBlanc": [
+     "Spear of Shojin",
+     "Jeweled Gauntlet",
+     "Striker's Flail"
+    ],
+    "DA_18_Teemo": [
+     "Void Staff",
+     "Morellonomicon",
+     "Spear of Shojin"
+    ]
+   },
+   "positions": {
+    "DA_18_Kobuko": [
+     2,
+     1
+    ],
+    "DA_18_Veigar": [
+     3,
+     0
+    ],
+    "DA_18_Alistar": [
+     0,
+     4
+    ],
+    "DA_18_LeBlanc": [
+     3,
+     5
+    ],
+    "DA_18_Teemo": [
+     3,
+     6
+    ],
+    "DA_18_Hecarim": [
+     2,
+     3
+    ],
+    "DA_Sentinel18": [
+     2,
+     4
+    ]
+   },
+   "early": [
+    "DA_18_Kobuko",
+    "DA_18_RekSai",
+    "DA_18_Veigar",
+    "DA_18_Teemo"
+   ],
+   "traits": [
+    "3 Elderwood",
+    "3 Sprykin",
+    "2 Invoker",
+    "2 Vanguard",
+    "2 Brawler",
+    "2 Spellweaver"
+   ],
+   "difficulty": "EASY",
+   "notes": "Best with winstreak opener around Leblanc or Teemo with Brawler frontline."
+  },
+  {
+   "name": "Warwick Reroll",
+   "tier": "C",
+   "style": "reroll2",
+   "units": [
+    "DA_18_RekSai",
+    "DA_Murkwolf18",
+    "DA_18_Warwick",
+    "DA_18_Azir",
+    "DA_Krug18",
+    "DA_Brambleback18",
+    "DA_18_Malphite"
+   ],
+   "stars": {
+    "DA_Murkwolf18": 3,
+    "DA_18_Warwick": 3,
+    "DA_Krug18": 3
+   },
+   "carry": "DA_18_Malphite",
+   "carry_items": [
+    "Warmogs Armor",
+    "Gargoyle Stoneplate",
+    "Crownguard"
+   ],
+   "item_holders": {
+    "DA_Murkwolf18": [
+     "Deathblade",
+     "Edge of Night",
+     "Hand Of Justice"
+    ],
+    "DA_18_Warwick": [
+     "Sterak's Gage",
+     "Titan's Resolve",
+     "Spear of Shojin"
+    ],
+    "DA_18_Malphite": [
+     "Warmogs Armor",
+     "Gargoyle Stoneplate",
+     "Crownguard"
+    ]
+   },
+   "positions": {
+    "DA_18_RekSai": [
+     2,
+     6
+    ],
+    "DA_Murkwolf18": [
+     3,
+     1
+    ],
+    "DA_18_Warwick": [
+     3,
+     0
+    ],
+    "DA_18_Azir": [
+     3,
+     2
+    ],
+    "DA_Krug18": [
+     2,
+     3
+    ],
+    "DA_Brambleback18": [
+     2,
+     2
+    ],
+    "DA_18_Malphite": [
+     0,
+     3
+    ]
+   },
+   "early": [
+    "DA_18_Kobuko",
+    "DA_18_RekSai",
+    "DA_Murkwolf18",
+    "DA_18_Warwick"
+   ],
+   "traits": [
+    "4 Blackthorn",
+    "3 Riftbeast",
+    "2 Ravager",
+    "2 Brawler"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Aim to play a 3* unit in the Blackthorn center hex for max stats, preferably Krug 3. Leftover AD items on Murkwolf. Can also tank Rek'sai 3 if you can't find Malphite 2."
+  },
+  {
+   "name": "Emblem Rengar",
+   "tier": "X",
+   "style": "reroll3",
+   "units": [
+    "DA_18_Kobuko",
+    "DA_18_Rammus",
+    "DA_18_Rengar",
+    "DA_18_Tristana",
+    "DA_18_Lillia",
+    "DA_18_Sivir",
+    "DA_18_GnarSmall"
+   ],
+   "stars": {
+    "DA_18_Rammus": 3,
+    "DA_18_Rengar": 3,
+    "DA_18_Tristana": 3
+   },
+   "carry": "DA_18_Tristana",
+   "carry_items": [
+    "Guinsoo's Rageblade",
+    "Last Whisper",
+    "Deathblade"
+   ],
+   "item_holders": {
+    "DA_18_Rammus": [
+     "Gargoyle Stoneplate",
+     "Spirit Visage",
+     "Warmogs Armor"
+    ],
+    "DA_18_Rengar": [
+     "Sprykin Emblem",
+     "Edge of Night",
+     "Guinsoo's Rageblade"
+    ],
+    "DA_18_Tristana": [
+     "Guinsoo's Rageblade",
+     "Last Whisper",
+     "Deathblade"
+    ]
+   },
+   "positions": {
+    "DA_18_Kobuko": [
+     2,
+     2
+    ],
+    "DA_18_Rammus": [
+     0,
+     4
+    ],
+    "DA_18_Rengar": [
+     2,
+     6
+    ],
+    "DA_18_Tristana": [
+     3,
+     6
+    ],
+    "DA_18_Lillia": [
+     2,
+     1
+    ],
+    "DA_18_Sivir": [
+     3,
+     4
+    ],
+    "DA_18_GnarSmall": [
+     2,
+     3
+    ]
+   },
+   "early": [
+    "DA_18_Rakan",
+    "DA_18_Xayah",
+    "DA_18_Yorick",
+    "DA_18_Rengar"
+   ],
+   "traits": [
+    "3 Sprykin",
+    "2 Hunter",
+    "2 Brawler",
+    "2 Fae",
+    "2 Defender",
+    "1 Rival"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Only play when you have emblem for Rengar. Stacking 4 Fae ASAP is important so you can get a gold engine. Can also tank Lillia primary if you can't find Rammus. Can flex in Primal as well if you have emblem."
+  },
+  {
+   "name": "Fae Tristana",
+   "tier": "X",
+   "style": "reroll3",
+   "units": [
+    "DA_18_Kobuko",
+    "DA_18_Rakan",
+    "DA_Vi18",
+    "DA_18_Rammus",
+    "DA_18_Tristana",
+    "DA_18_Lillia",
+    "DA_18_Sivir"
+   ],
+   "stars": {
+    "DA_Vi18": 3,
+    "DA_18_Rammus": 3,
+    "DA_18_Tristana": 3
+   },
+   "carry": "DA_18_Sivir",
+   "carry_items": [
+    "Fae Emblem",
+    "Last Whisper",
+    "Red Buff"
+   ],
+   "item_holders": {
+    "DA_18_Rammus": [
+     "Gargoyle Stoneplate",
+     "Spirit Visage",
+     "Warmogs Armor"
+    ],
+    "DA_18_Tristana": [
+     "Guinsoo's Rageblade",
+     "Hextech Gunblade",
+     "Giant Slayer"
+    ],
+    "DA_18_Sivir": [
+     "Fae Emblem",
+     "Last Whisper",
+     "Red Buff"
+    ]
+   },
+   "positions": {
+    "DA_18_Kobuko": [
+     2,
+     1
+    ],
+    "DA_18_Rakan": [
+     2,
+     3
+    ],
+    "DA_Vi18": [
+     1,
+     3
+    ],
+    "DA_18_Rammus": [
+     0,
+     4
+    ],
+    "DA_18_Tristana": [
+     3,
+     6
+    ],
+    "DA_18_Lillia": [
+     2,
+     2
+    ],
+    "DA_18_Sivir": [
+     3,
+     5
+    ]
+   },
+   "early": [
+    "DA_18_Rakan",
+    "DA_18_Varus",
+    "DA_18_Xayah",
+    "DA_18_Hecarim"
+   ],
+   "traits": [
+    "3 Sprykin",
+    "2 Hunter",
+    "2 Primal",
+    "2 Juggernaut",
+    "2 Fae",
+    "2 Defender"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Only play when you have Fae emblem. Stacking 4 Fae ASAP is important so you can get a gold engine. Can also tank Vi primary if you can't find Rammus. Execute Primal > Item Primal unless very far ahead / win streaking."
+  },
+  {
+   "name": "Inferno Fast 9",
+   "tier": "X",
+   "style": "fast8",
+   "units": [
+    "DA_18_Akali_AD",
+    "DA_18_Shen",
+    "DA_Vi18",
+    "DA_18_Lillia",
+    "DA_18_Sivir",
+    "DA_Amumu18",
+    "DA_18_Ashe",
+    "DA_18_Kennen",
+    "DA_Lux18_Base"
+   ],
+   "stars": {},
+   "carry": "DA_18_Ashe",
+   "carry_items": [
+    "Spear of Shojin",
+    "Red Buff",
+    "Inferno Emblem"
+   ],
+   "item_holders": {
+    "DA_18_Lillia": [
+     "Protector's Vow"
+    ],
+    "DA_18_Sivir": [
+     "Last Whisper",
+     "Infinity Edge"
+    ],
+    "DA_Amumu18": [
+     "Warmogs Armor",
+     "Bramble Vest",
+     "Dragon's Claw"
+    ],
+    "DA_18_Ashe": [
+     "Spear of Shojin",
+     "Red Buff",
+     "Inferno Emblem"
+    ],
+    "DA_18_Kennen": [
+     "Edge of Night",
+     "Bloodthirster",
+     "Quicksilver"
+    ],
+    "DA_Lux18_Base": [
+     "Spear of Shojin",
+     "Rabadon's Deathcap",
+     "Jeweled Gauntlet"
+    ]
+   },
+   "positions": {
+    "DA_18_Akali_AD": [
+     1,
+     0
+    ],
+    "DA_18_Shen": [
+     0,
+     1
+    ],
+    "DA_Vi18": [
+     0,
+     2
+    ],
+    "DA_18_Lillia": [
+     0,
+     6
+    ],
+    "DA_18_Sivir": [
+     3,
+     4
+    ],
+    "DA_Amumu18": [
+     0,
+     4
+    ],
+    "DA_18_Ashe": [
+     3,
+     6
+    ],
+    "DA_18_Kennen": [
+     0,
+     3
+    ],
+    "DA_Lux18_Base": [
+     3,
+     0
+    ]
+   },
+   "early": [
+    "DA_Karma18",
+    "DA_18_Rakan",
+    "DA_18_Yorick",
+    "DA_18_Yunara"
+   ],
+   "traits": [
+    "3 Inferno",
+    "2 Hunter",
+    "2 Primal",
+    "2 Juggernaut",
+    "2 Defender"
+   ],
+   "difficulty": "HARD",
+   "notes": "Only play with Inferno emblem. Ideally needs Inferno Lux to be super strong but can top 4 without Lux / only Inferno Emblem Ashe. Can also play more frontline instead of 7 inferno or Hunter (Taric/4 Juggernaut)."
+  },
+  {
+   "name": "Ravager Elise",
+   "tier": "X",
+   "style": "reroll2",
+   "units": [
+    "DA_18_Camille",
+    "DA_Murkwolf18",
+    "DA_18_Elise",
+    "DA_18_Hecarim",
+    "DA_18_Diana",
+    "DA_Brambleback18",
+    "DA_18_Morgana",
+    "DA_Sentinel18"
+   ],
+   "stars": {
+    "DA_Murkwolf18": 3,
+    "DA_18_Elise": 3,
+    "DA_18_Diana": 3
+   },
+   "carry": "DA_Sentinel18",
+   "carry_items": [
+    "Warmogs Armor",
+    "Protector's Vow",
+    "Gargoyle Stoneplate"
+   ],
+   "item_holders": {
+    "DA_Murkwolf18": [
+     "Thief's Gloves"
+    ],
+    "DA_18_Elise": [
+     "Titan's Resolve",
+     "Guinsoo's Rageblade",
+     "Archangel's Staff"
+    ],
+    "DA_18_Diana": [
+     "Jeweled Gauntlet",
+     "Striker's Flail",
+     "Hand Of Justice"
+    ],
+    "DA_18_Morgana": [
+     "Void Staff",
+     "Morellonomicon"
+    ],
+    "DA_Sentinel18": [
+     "Warmogs Armor",
+     "Protector's Vow",
+     "Gargoyle Stoneplate"
+    ]
+   },
+   "positions": {
+    "DA_18_Camille": [
+     3,
+     5
+    ],
+    "DA_Murkwolf18": [
+     2,
+     2
+    ],
+    "DA_18_Elise": [
+     1,
+     0
+    ],
+    "DA_18_Hecarim": [
+     0,
+     5
+    ],
+    "DA_18_Diana": [
+     1,
+     1
+    ],
+    "DA_Brambleback18": [
+     3,
+     6
+    ],
+    "DA_18_Morgana": [
+     2,
+     1
+    ],
+    "DA_Sentinel18": [
+     0,
+     1
+    ]
+   },
+   "early": [
+    "DA_18_Camille",
+    "DA_18_Caitlyn",
+    "DA_18_Elise",
+    "DA_18_Diana"
+   ],
+   "traits": [
+    "4 Ravager",
+    "4 Vanguard",
+    "3 Coven",
+    "3 Riftbeast",
+    "2 Invoker"
+   ],
+   "difficulty": "MEDIUM",
+   "notes": "Very strong with Ravager emblem. If no emblem, can play standard 4 Vanguard Coven and flex the last spots. Elise can also play Stoneplate Gargoyle instead of Archangels for a more defensive-heavy build."
+  },
+  {
+   "name": "Trait Ladder",
+   "tier": "X",
+   "style": "fast9",
+   "units": [
+    "DA_18_Ornn",
+    "DA_18_Rakan",
+    "DA_18_Xayah",
+    "DA_18_LeBlanc",
+    "DA_18_Diana",
+    "DA_18_KhaZix",
+    "DA_Fiddlesticks18",
+    "DA_18_Aphelios"
+   ],
+   "stars": {},
+   "carry": "DA_18_Aphelios",
+   "carry_items": [
+    "Guinsoo's Rageblade",
+    "Kraken's Fury",
+    "Last Whisper"
+   ],
+   "item_holders": {
+    "DA_18_LeBlanc": [
+     "Spear of Shojin",
+     "Rabadon's Deathcap"
+    ],
+    "DA_18_KhaZix": [
+     "Ravager Emblem"
+    ],
+    "DA_Fiddlesticks18": [
+     "Warmogs Armor",
+     "Sunfire Cape",
+     "Spirit Visage"
+    ],
+    "DA_18_Aphelios": [
+     "Guinsoo's Rageblade",
+     "Kraken's Fury",
+     "Last Whisper"
+    ]
+   },
+   "positions": {
+    "DA_18_Ornn": [
+     0,
+     4
+    ],
+    "DA_18_Rakan": [
+     0,
+     5
+    ],
+    "DA_18_Xayah": [
+     3,
+     1
+    ],
+    "DA_18_LeBlanc": [
+     3,
+     2
+    ],
+    "DA_18_Diana": [
+     0,
+     2
+    ],
+    "DA_18_KhaZix": [
+     0,
+     3
+    ],
+    "DA_Fiddlesticks18": [
+     0,
+     1
+    ],
+    "DA_18_Aphelios": [
+     3,
+     0
+    ]
+   },
+   "early": [
+    "DA_18_Ornn",
+    "DA_18_Varus",
+    "DA_18_Shen",
+    "DA_18_KhaZix"
+   ],
+   "traits": [
+    "3 Elderwood",
+    "2 Rapidfire",
+    "2 Vanguard",
+    "2 Fae",
+    "2 Lunar",
+    "2 Defender",
+    "2 Spellweaver",
+    "1 Rival",
+    "1 Flora Fatalis"
+   ],
+   "difficulty": "HARD",
+   "notes": "Hard flex composition, but very strong when played well. Any emblem start is fine. Get Khazix 10 takedowns for ravager evolution while gathering the early 2-8 trait cashouts in the midgame. The key interval to plan for is 10 traits for the Tactician Crown -> pivot to legendaries or go for even more cashouts if healthy."
+  },
+  {
+   "name": "Unrivaled Reroll",
+   "tier": "X",
+   "style": "reroll3",
+   "units": [
+    "DA_18_LeBlanc",
+    "DA_18_Diana",
+    "DA_18_Hecarim",
+    "DA_18_KhaZix",
+    "DA_18_Rengar",
+    "DA_18_Ezreal",
+    "DA_18_Aphelios"
+   ],
+   "stars": {
+    "DA_18_Hecarim": 3,
+    "DA_18_KhaZix": 3,
+    "DA_18_Rengar": 3
+   },
+   "carry": "DA_18_KhaZix",
+   "carry_items": [
+    "Hand Of Justice",
+    "Rabadon's Deathcap",
+    "Edge of Night"
+   ],
+   "item_holders": {
+    "DA_18_Hecarim": [
+     "Warmogs Armor",
+     "Gargoyle Stoneplate",
+     "Spirit Visage"
+    ],
+    "DA_18_KhaZix": [
+     "Hand Of Justice",
+     "Rabadon's Deathcap",
+     "Edge of Night"
+    ],
+    "DA_18_Rengar": [
+     "Edge of Night",
+     "Titan's Resolve",
+     "Guinsoo's Rageblade"
+    ],
+    "DA_18_Aphelios": [
+     "Last Whisper",
+     "Red Buff"
+    ]
+   },
+   "positions": {
+    "DA_18_LeBlanc": [
+     3,
+     6
+    ],
+    "DA_18_Diana": [
+     3,
+     5
+    ],
+    "DA_18_Hecarim": [
+     0,
+     3
+    ],
+    "DA_18_KhaZix": [
+     2,
+     1
+    ],
+    "DA_18_Rengar": [
+     2,
+     0
+    ],
+    "DA_18_Ezreal": [
+     3,
+     1
+    ],
+    "DA_18_Aphelios": [
+     3,
+     0
+    ]
+   },
+   "early": [
+    "DA_18_Kobuko",
+    "DA_18_RekSai",
+    "DA_18_KhaZix",
+    "DA_18_Rengar"
+   ],
+   "traits": [
+    "3 Elderwood",
+    "2 Rival",
+    "2 Vanguard",
+    "2 Lunar"
+   ],
+   "difficulty": "CONDITIONAL",
+   "notes": "Ideally, Khazix gains Ravager > Executioner > Rapidfire > Spellweaver with takedowns. "
+  },
+  {
+   "name": "Veigar Consuming Flora",
+   "tier": "X",
+   "style": "reroll1",
+   "units": [
+    "DA_18_Kobuko",
+    "DA_18_RekSai",
+    "DA_18_Veigar",
+    "DA_18_Teemo",
+    "DA_Fiddlesticks18",
+    "DA_18_Rammus",
+    "DA_18_Sett",
+    "DA_18_GnarSmall"
+   ],
+   "stars": {
+    "DA_18_Kobuko": 3,
+    "DA_18_RekSai": 3,
+    "DA_18_Veigar": 3
+   },
+   "carry": "DA_18_Veigar",
+   "carry_items": [
+    "Jeweled Gauntlet",
+    "Blue Buff",
+    "DA_18_EmblemFloraFatalisAugment"
+   ],
+   "item_holders": {
+    "DA_18_RekSai": [
+     "Warmogs Armor",
+     "Gargoyle Stoneplate",
+     "Gargoyle Stoneplate"
+    ],
+    "DA_18_Veigar": [
+     "Jeweled Gauntlet",
+     "Blue Buff",
+     "DA_18_EmblemFloraFatalisAugment"
+    ]
+   },
+   "positions": {
+    "DA_18_Kobuko": [
+     2,
+     3
+    ],
+    "DA_18_RekSai": [
+     0,
+     3
+    ],
+    "DA_18_Veigar": [
+     3,
+     0
+    ],
+    "DA_18_Teemo": [
+     3,
+     3
+    ],
+    "DA_Fiddlesticks18": [
+     2,
+     2
+    ],
+    "DA_18_Rammus": [
+     2,
+     4
+    ],
+    "DA_18_Sett": [
+     2,
+     5
+    ],
+    "DA_18_GnarSmall": [
+     2,
+     1
+    ]
+   },
+   "early": [
+    "DA_18_Kobuko",
+    "DA_18_RekSai",
+    "DA_18_Veigar",
+    "DA_18_Teemo"
+   ],
+   "traits": [
+    "5 Sprykin",
+    "4 Brawler",
+    "2 Blackthorn",
+    "2 Defender",
+    "2 Spellweaver",
+    "1 Flora Fatalis"
+   ],
+   "difficulty": "EASY",
+   "notes": "Very strong with Dawncore and Ludens as well. Sacrifice a 3* unit for maximum Blackthorn stats."
+  }
+ ]
+}

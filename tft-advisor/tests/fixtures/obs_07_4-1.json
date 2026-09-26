@@ -1,0 +1,211 @@
+{
+  "screen_type": "planning",
+  "viewing_own_board": true,
+  "viewed_player_name": "Yilou",
+  "stage": "4-1",
+  "gold": 50,
+  "level": 7,
+  "xp_current": 4,
+  "xp_needed": 48,
+  "hp": 77,
+  "streak": 2,
+  "shop": [
+    {
+      "name": "Draven",
+      "cost": 4
+    },
+    {
+      "name": "Ashe",
+      "cost": 3
+    },
+    {
+      "name": "Lucian",
+      "cost": 2
+    },
+    {
+      "name": "Graves",
+      "cost": 1
+    },
+    {
+      "name": "Akali",
+      "cost": 4
+    }
+  ],
+  "shop_locked": false,
+  "board": [
+    {
+      "name": "Garen",
+      "star": 2,
+      "items": [
+        "Bramble Vest"
+      ],
+      "row": 0,
+      "col": 3
+    },
+    {
+      "name": "Darius",
+      "star": 2,
+      "items": [],
+      "row": 0,
+      "col": 2
+    },
+    {
+      "name": "Braum",
+      "star": 2,
+      "items": [
+        "Dragon's Claw"
+      ],
+      "row": 0,
+      "col": 4
+    },
+    {
+      "name": "Graves",
+      "star": 2,
+      "items": [
+        "Giant Slayer"
+      ],
+      "row": 3,
+      "col": 2
+    },
+    {
+      "name": "Vayne",
+      "star": 2,
+      "items": [],
+      "row": 3,
+      "col": 0
+    },
+    {
+      "name": "Lucian",
+      "star": 2,
+      "items": [
+        "Infinity Edge"
+      ],
+      "row": 3,
+      "col": 4
+    },
+    {
+      "name": "Ashe",
+      "star": 1,
+      "items": [],
+      "row": 3,
+      "col": 6
+    }
+  ],
+  "bench": [
+    {
+      "name": "Katarina",
+      "star": 1,
+      "items": [],
+      "row": null,
+      "col": 0
+    },
+    {
+      "name": "Ashe",
+      "star": 1,
+      "items": [],
+      "row": null,
+      "col": 1
+    }
+  ],
+  "item_bench": [
+    "Recurve Bow"
+  ],
+  "players": [
+    {
+      "name": "咕噜咕噜",
+      "hp": 96,
+      "is_self": false
+    },
+    {
+      "name": "SkyWalker",
+      "hp": 86,
+      "is_self": false
+    },
+    {
+      "name": "夜雨声烦",
+      "hp": 80,
+      "is_self": false
+    },
+    {
+      "name": "Yilou",
+      "hp": 77,
+      "is_self": true
+    },
+    {
+      "name": "Meiko",
+      "hp": 64,
+      "is_self": false
+    },
+    {
+      "name": "老王不摆烂",
+      "hp": 58,
+      "is_self": false
+    },
+    {
+      "name": "BardKing",
+      "hp": 45,
+      "is_self": false
+    },
+    {
+      "name": "小火龙",
+      "hp": 30,
+      "is_self": false
+    }
+  ],
+  "traits": [
+    {
+      "name": "Noble",
+      "count": 3,
+      "active": true,
+      "next_breakpoint": 6
+    },
+    {
+      "name": "Glacial",
+      "count": 2,
+      "active": true,
+      "next_breakpoint": 4
+    },
+    {
+      "name": "Gunslinger",
+      "count": 2,
+      "active": true,
+      "next_breakpoint": 4
+    },
+    {
+      "name": "Knight",
+      "count": 2,
+      "active": true,
+      "next_breakpoint": 4
+    },
+    {
+      "name": "Ranger",
+      "count": 2,
+      "active": true,
+      "next_breakpoint": 4
+    },
+    {
+      "name": "Guardian",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 2
+    },
+    {
+      "name": "Imperial",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 2
+    },
+    {
+      "name": "Pirate",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 3
+    }
+  ],
+  "augment_choices": null,
+  "augments": [
+    "Rich Get Richer",
+    "Combat Training"
+  ],
+  "notes": []
+}

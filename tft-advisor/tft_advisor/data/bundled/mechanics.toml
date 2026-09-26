@@ -1,0 +1,84 @@
+# TFT core mechanics used by the econ / odds engine.
+# Riot changes these between sets and patches. Override any key with your own
+# file and point [data].mechanics_file at it (only the keys you change).
+# Values: Set 18 "Enchanted Wilds", patch 18.3b (2026-09). Sources: Riot patch
+# notes 16.1 / 18.2 / 18.2b quoted by recaps, LoL wiki TFT:Gold / TFT:Experience,
+# CommunityDragon pool data. The HUD shows the live shop odds next to the shop:
+# if they differ from the table below, override [shop_odds] in your own file.
+
+patch = "18.3b"
+notes = "Set 18 Enchanted Wilds"
+
+xp_per_buy = 4
+buy_xp_cost = 4
+roll_cost = 2
+interest_step = 10
+interest_cap = 5
+base_income = 5
+pvp_win_gold = 1
+passive_xp_per_round = 2
+bench_size = 9
+shop_slots = 5
+max_level = 10
+carousel_round = 4
+pve_round = 7
+
+augment_rounds = ["2-1", "3-2", "4-2"]
+
+# (min streak length, bonus gold)
+streak_bonus = [[3, 1], [5, 2], [6, 3]]  # 3-4: +1, 5: +2, 6+: +3
+
+# Percent chance per shop slot to roll each cost tier (1,2,3,4,5 cost).
+[shop_odds]
+1 = [100, 0, 0, 0, 0]
+2 = [100, 0, 0, 0, 0]
+3 = [75, 25, 0, 0, 0]
+4 = [55, 30, 15, 0, 0]
+5 = [45, 33, 20, 2, 0]
+6 = [30, 40, 25, 5, 0]
+7 = [19, 30, 40, 10, 1]
+8 = [15, 20, 32, 30, 3]
+9 = [10, 17, 25, 33, 15]
+10 = [5, 10, 20, 40, 25]
+
+# Copies of EACH champion in the shared pool.
+[pool_size]
+1 = 30
+2 = 25
+3 = 18
+4 = 10
+5 = 9
+
+# XP needed to go from level N to N+1.
+[xp_to_level]
+1 = 2
+2 = 2
+3 = 6
+4 = 10
+5 = 20
+6 = 36
+7 = 56
+8 = 68
+9 = 68
+
+# Base player damage on loss by stage (plus surviving unit damage).
+[stage_damage]
+1 = 0
+2 = 2
+3 = 5
+4 = 7
+5 = 9
+6 = 11
+7 = 17
+8 = 150
+
+# Level a "standard" line reaches by each round.
+[standard_levels]
+"1-1" = 1
+"1-3" = 3
+"2-1" = 4
+"2-5" = 5
+"3-2" = 6
+"4-1" = 7
+"4-5" = 8
+"5-5" = 9

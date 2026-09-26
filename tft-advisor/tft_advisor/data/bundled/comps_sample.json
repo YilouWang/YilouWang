@@ -1,0 +1,46 @@
+{
+  "set": 99,
+  "about": "Sample comps for the synthetic offline set TFTSet99 (tests and demo only, not a real set).",
+  "comps": [
+    {
+      "name": "枪手海盗",
+      "units": ["Miss Fortune", "Graves", "Lucian", "Pyke", "Garen", "Vayne", "Kayle", "Braum"],
+      "carry": "Miss Fortune",
+      "carry_items": ["Infinity Edge", "Giant Slayer", "Last Whisper"],
+      "traits": ["Pirate", "Gunslinger", "Noble"],
+      "style": "fast8",
+      "tier": "A",
+      "notes": "前期枪手贵族过渡，4-1 升 8 级找厄运小姐，装备先给格雷福斯或卢锡安过渡。"
+    },
+    {
+      "name": "冰川游侠",
+      "units": ["Ashe", "Braum", "Volibear", "Vayne", "Warwick", "Gnar", "Aatrox", "Morgana"],
+      "carry": "Ashe",
+      "carry_items": ["Guinsoo's Rageblade", "Giant Slayer", "Infinity Edge"],
+      "traits": ["Glacial", "Ranger", "Brawler"],
+      "style": "reroll3",
+      "tier": "S",
+      "notes": "7 级慢搜艾希三星，布隆和沃利贝尔站前排。"
+    },
+    {
+      "name": "狂野法师",
+      "units": ["Ahri", "Morgana", "Warwick", "Gnar", "Aatrox", "Braum", "Shen", "Kayle"],
+      "carry": "Ahri",
+      "carry_items": ["Blue Buff", "Jeweled Gauntlet", "Rabadon's Deathcap"],
+      "traits": ["Sorcerer", "Wild", "Demon"],
+      "style": "reroll2",
+      "tier": "B",
+      "notes": "6 级慢搜阿狸三星，莫甘娜副C。"
+    },
+    {
+      "name": "帝国剑士",
+      "units": ["Draven", "Katarina", "Darius", "Shen", "Aatrox", "Akali", "Pyke", "Kayle"],
+      "carry": "Draven",
+      "carry_items": ["Infinity Edge", "Bloodthirster", "Last Whisper"],
+      "traits": ["Imperial", "Blademaster", "Assassin"],
+      "style": "standard",
+      "tier": "A",
+      "notes": "标准运营，4-1 升 7 级搜德莱文两星。"
+    }
+  ]
+}

@@ -1,0 +1,520 @@
+"""Screen capture: passive screenshots of the game (like OBS would take).
+
+* ``ScreenCapturer(cfg)`` grabs the game window's client area (Windows) or a
+  whole monitor with ``mss``. One ``mss`` instance per thread (mss is not
+  thread safe). ``grab()`` never raises: it returns ``None`` on any failure
+  and stores a short Chinese explanation in ``last_error``.
+* ``FileCapturer(paths)`` has the same ``grab()`` API and replays image files.
+* ``save_frame(img, directory, tag)`` stores a timestamped PNG.
+
+Only screenshots are taken: nothing here sends input to the game or reads its memory.
+
+Game window lookup (Windows): TFT moved to Unreal Engine with Set 18
+(August 2026). The Unreal build runs as ``TFT.exe`` /
+``TFTClient-Win64-Shipping.exe`` and no longer uses the old
+"League of Legends (TM) Client" title, so ``find_window_rect`` first tries the
+configured title, then any visible top level window whose title is a known TFT
+title or whose owning executable is a known TFT game process, and keeps the
+largest one.
+"""
+
+from __future__ import annotations
+
+import glob
+import os
+import re
+import sys
+import threading
+import time
+from pathlib import Path
+from typing import Any, Callable, Iterable, Optional, Sequence, Union
+
+from PIL import Image
+
+from ..config import CaptureConfig
+
+Rect = tuple[int, int, int, int]  # left, top, width, height (screen pixels)
+PathLike = Union[str, Path]
+
+#: Window titles of the in-game (not lobby) TFT window, old and new client.
+KNOWN_WINDOW_TITLES: tuple[str, ...] = ("League of Legends (TM) Client", "Teamfight Tactics")
+#: Executables that own the in-game window (Unreal client first, legacy last).
+KNOWN_PROCESS_NAMES: tuple[str, ...] = ("TFT.exe", "TFTClient-Win64-Shipping.exe", "League of Legends.exe")
+#: Client areas smaller than this are splash / helper windows, not the game.
+MIN_WINDOW_SIZE = (320, 200)
+
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
+
+# --------------------------------------------------------------------------
+# Win32 helpers (ctypes, Windows only, everything imported lazily)
+# --------------------------------------------------------------------------
+
+_dpi_lock = threading.Lock()
+_dpi_done: Optional[bool] = None
+_win32_cache: dict[str, Any] = {}
+
+
+def set_dpi_awareness() -> bool:
+    """Make this process DPI aware so window rects match mss's physical pixels.
+
+    Without it, with Windows display scaling != 100 %, ``GetClientRect``
+    returns virtualized (scaled) coordinates and every crop is shifted.
+    Idempotent. No-op (returns False) outside Windows.
+    """
+    global _dpi_done
+    if sys.platform != "win32":
+        return False
+    with _dpi_lock:
+        if _dpi_done is not None:
+            return _dpi_done
+        ok = False
+        try:
+            import ctypes
+
+            try:
+                # 2 = PROCESS_PER_MONITOR_DPI_AWARE. S_OK (0) or E_ACCESSDENIED
+                # (already set, e.g. by mss or a manifest) both mean "aware".
+                hr = ctypes.windll.shcore.SetProcessDpiAwareness(2)
+                ok = hr in (0, -2147024891, 0x80070005)
+            except (AttributeError, OSError):
+                ok = False
+            if not ok:
+                try:
+                    ok = bool(ctypes.windll.user32.SetProcessDPIAware())
+                except (AttributeError, OSError):
+                    ok = False
+        except Exception:
+            ok = False
+        _dpi_done = ok
+        return ok
+
+
+def _win32() -> dict[str, Any]:
+    """Private WinDLL handles with argtypes set (does not touch ``ctypes.windll``)."""
+    if _win32_cache:
+        return _win32_cache
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    user32.FindWindowW.restype = wintypes.HWND
+    user32.EnumWindows.argtypes = [enum_proc, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.IsWindow.argtypes = [wintypes.HWND]
+    user32.IsWindow.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.IsIconic.argtypes = [wintypes.HWND]
+    user32.IsIconic.restype = wintypes.BOOL
+    user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetClientRect.restype = wintypes.BOOL
+    user32.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+    user32.ClientToScreen.restype = wintypes.BOOL
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    _win32_cache.update(ctypes=ctypes, wintypes=wintypes, user32=user32, kernel32=kernel32, enum_proc=enum_proc)
+    return _win32_cache
+
+
+def _window_title(hwnd: int) -> str:
+    w = _win32()
+    n = w["user32"].GetWindowTextLengthW(hwnd)
+    if n <= 0:
+        return ""
+    buf = w["ctypes"].create_unicode_buffer(n + 1)
+    w["user32"].GetWindowTextW(hwnd, buf, n + 1)
+    return buf.value
+
+
+def _process_name(hwnd: int) -> Optional[str]:
+    """Executable basename owning a window (needs no special privileges)."""
+    w = _win32()
+    wintypes = w["wintypes"]
+    pid = wintypes.DWORD()
+    if not w["user32"].GetWindowThreadProcessId(hwnd, w["ctypes"].byref(pid)) or not pid.value:
+        return None
+    handle = w["kernel32"].OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return None
+    try:
+        size = wintypes.DWORD(32768)
+        buf = w["ctypes"].create_unicode_buffer(size.value)
+        if not w["kernel32"].QueryFullProcessImageNameW(handle, 0, buf, w["ctypes"].byref(size)):
+            return None
+        return buf.value.replace("/", "\\").rsplit("\\", 1)[-1]
+    finally:
+        w["kernel32"].CloseHandle(handle)
+
+
+def _client_rect(hwnd: int) -> Optional[Rect]:
+    """Screen-space client area (no title bar / borders) of a visible, non minimized window."""
+    w = _win32()
+    user32, wintypes, ctypes = w["user32"], w["wintypes"], w["ctypes"]
+    if not user32.IsWindow(hwnd) or user32.IsIconic(hwnd):
+        return None
+    rect = wintypes.RECT()
+    if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
+        return None
+    origin = wintypes.POINT(0, 0)
+    if not user32.ClientToScreen(hwnd, ctypes.byref(origin)):
+        return None
+    width, height = rect.right - rect.left, rect.bottom - rect.top
+    if width < MIN_WINDOW_SIZE[0] or height < MIN_WINDOW_SIZE[1]:
+        return None
+    return (int(origin.x), int(origin.y), int(width), int(height))
+
+
+def _find_game_hwnd(title: Optional[str], process_names: Sequence[str] = KNOWN_PROCESS_NAMES) -> Optional[int]:
+    w = _win32()
+    user32 = w["user32"]
+    if title:
+        hwnd = user32.FindWindowW(None, title)
+        if hwnd and user32.IsWindowVisible(hwnd) and _client_rect(hwnd):
+            return int(hwnd)
+
+    wanted_titles = {t.casefold() for t in ([title] if title else []) + list(KNOWN_WINDOW_TITLES)}
+    wanted_procs = {p.casefold() for p in process_names}
+    candidates: list[tuple[int, int]] = []  # (area, hwnd)
+
+    def visit(hwnd: Any, _lparam: Any) -> bool:
+        try:
+            if not hwnd or not user32.IsWindowVisible(hwnd):
+                return True
+            match = _window_title(hwnd).strip().casefold() in wanted_titles
+            if not match and wanted_procs:
+                name = _process_name(hwnd)
+                match = bool(name) and name.casefold() in wanted_procs
+            if match:
+                rect = _client_rect(hwnd)
+                if rect:
+                    candidates.append((rect[2] * rect[3], int(hwnd)))
+        except Exception:
+            pass
+        return True  # keep enumerating
+
+    user32.EnumWindows(w["enum_proc"](visit), 0)
+    if not candidates:
+        return None
+    # A game process can briefly expose helper windows: the largest surface is the game.
+    return max(candidates)[1]
+
+
+def find_window_rect(
+    title: Optional[str] = KNOWN_WINDOW_TITLES[0],
+    *,
+    process_names: Sequence[str] = KNOWN_PROCESS_NAMES,
+) -> Optional[Rect]:
+    """``(left, top, width, height)`` of the game window's client area, or None.
+
+    Returns None outside Windows, when the window is not found, minimized, or
+    too small. Never raises.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        set_dpi_awareness()
+        hwnd = _find_game_hwnd(title, process_names)
+        return _client_rect(hwnd) if hwnd else None
+    except Exception:
+        return None
+
+
+# --------------------------------------------------------------------------
+# Capturers
+# --------------------------------------------------------------------------
+
+
+def _new_mss() -> Any:
+    import mss  # lazy: optional on CI, may fail without a display
+
+    factory = getattr(mss, "MSS", None) or mss.mss  # mss >= 10.2 deprecates mss.mss()
+    return factory()
+
+
+def _is_black(img: Image.Image, level: int = 8) -> bool:
+    small = img.resize((64, 36), Image.Resampling.BOX)
+    return all(hi <= level for _lo, hi in small.getextrema())
+
+
+class ScreenCapturer:
+    """Grabs the game window (Windows) or a monitor as an RGB ``PIL.Image``.
+
+    Attributes useful for diagnostics: ``last_error`` (Chinese text or None),
+    ``last_source`` ("window" / "monitor"), ``last_rect`` (left, top, w, h),
+    ``frames`` and ``failures`` counters.
+    """
+
+    #: Seconds between window searches while the game window is not found.
+    SEARCH_INTERVAL_S = 3.0
+    #: Consecutive black frames before ``last_error`` explains fullscreen capture issues.
+    BLACK_FRAMES_HINT = 3
+
+    def __init__(self, cfg: Optional[CaptureConfig] = None, log: Optional[Callable[[str], None]] = None) -> None:
+        self.cfg = cfg or CaptureConfig()
+        self._log = log
+        self._local = threading.local()
+        self._instances: list[Any] = []
+        self._lock = threading.Lock()
+        self._hwnd: Optional[int] = None
+        self._next_search = 0.0
+        self._closed = False
+        self._black_run = 0
+        self.last_error: Optional[str] = None
+        self.last_source: str = ""
+        self.last_rect: Optional[Rect] = None
+        self.frames = 0
+        self.failures = 0
+        set_dpi_awareness()
+
+    # ---- public API --------------------------------------------------------------
+    @property
+    def window_found(self) -> bool:
+        return self.last_source == "window"
+
+    def grab(self) -> Optional[Image.Image]:
+        """One RGB frame, or None on any failure (never raises)."""
+        if self._closed:
+            return None
+        try:
+            sct = self._sct()
+            region, source = self._target(sct)
+            try:
+                shot = sct.grab(region)
+            except Exception:
+                if source != "window":
+                    raise
+                # The window moved / closed between lookup and grab: use the monitor.
+                self._hwnd = None
+                region, source = self._monitor_region(sct), "monitor"
+                shot = sct.grab(region)
+            img = Image.frombytes("RGB", (int(shot.size[0]), int(shot.size[1])), shot.bgra, "raw", "BGRX")
+        except Exception as exc:  # noqa: BLE001 - the capture loop must never die
+            self._drop_sct()
+            self._fail(self._explain(exc))
+            return None
+
+        self.last_source = source
+        self.last_rect = (int(region["left"]), int(region["top"]), int(region["width"]), int(region["height"]))
+        if _is_black(img):
+            self._black_run += 1
+            if self._black_run >= self.BLACK_FRAMES_HINT:
+                self._fail("截图一直是全黑的：游戏可能处于独占全屏模式，请在游戏设置里改成无边框窗口")
+            else:
+                self.failures += 1
+            return None
+        self._black_run = 0
+        self.frames += 1
+        self.last_error = None
+        return img
+
+    def close(self) -> None:
+        self._closed = True
+        with self._lock:
+            instances, self._instances = self._instances, []
+        for inst in instances:
+            try:
+                inst.close()
+            except Exception:
+                pass
+
+    def __enter__(self) -> "ScreenCapturer":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
+
+    # ---- internals -----------------------------------------------------------------
+    def _sct(self) -> Any:
+        inst = getattr(self._local, "sct", None)
+        if inst is None:
+            inst = _new_mss()
+            self._local.sct = inst
+            with self._lock:
+                self._instances.append(inst)
+        return inst
+
+    def _drop_sct(self) -> None:
+        inst = getattr(self._local, "sct", None)
+        self._local.sct = None
+        if inst is None:
+            return
+        with self._lock:
+            if inst in self._instances:
+                self._instances.remove(inst)
+        try:
+            inst.close()
+        except Exception:
+            pass
+
+    def _monitor_region(self, sct: Any) -> dict[str, int]:
+        monitors = sct.monitors
+        idx = int(self.cfg.monitor)
+        if idx < 0 or idx >= len(monitors):
+            idx = 1 if len(monitors) > 1 else 0
+        mon = monitors[idx]
+        return {"left": int(mon["left"]), "top": int(mon["top"]), "width": int(mon["width"]), "height": int(mon["height"])}
+
+    def _window_region(self) -> Optional[dict[str, int]]:
+        if not self.cfg.use_window or sys.platform != "win32":
+            return None
+        try:
+            rect = _client_rect(self._hwnd) if self._hwnd else None
+            if rect is None:
+                now = time.monotonic()
+                if now < self._next_search:
+                    return None
+                self._hwnd = _find_game_hwnd(self.cfg.window_title)
+                self._next_search = now + (0.0 if self._hwnd else self.SEARCH_INTERVAL_S)
+                rect = _client_rect(self._hwnd) if self._hwnd else None
+        except Exception:
+            self._hwnd = None
+            return None
+        if rect is None:
+            return None
+        left, top, width, height = rect
+        return {"left": left, "top": top, "width": width, "height": height}
+
+    def _target(self, sct: Any) -> tuple[dict[str, int], str]:
+        region = self._window_region()
+        if region is not None:
+            return region, "window"
+        return self._monitor_region(sct), "monitor"
+
+    @staticmethod
+    def _explain(exc: Exception) -> str:
+        text = f"{type(exc).__name__}: {exc}"
+        if isinstance(exc, ImportError):
+            return f"截图组件 mss 不可用：{text}"
+        if sys.platform != "win32" and not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+            return f"没有可用的显示器，无法截图（{text}）"
+        return f"截图失败：{text}"
+
+    def _fail(self, message: str) -> None:
+        self.failures += 1
+        if message != self.last_error and self._log is not None:
+            try:
+                self._log(message)
+            except Exception:
+                pass
+        self.last_error = message
+
+
+def _expand_paths(paths: Iterable[PathLike]) -> tuple[list[Path], list[str]]:
+    files: list[Path] = []
+    missing: list[str] = []
+    for raw in paths:
+        text = os.path.expanduser(str(raw))
+        if any(ch in text for ch in "*?["):
+            matches = sorted(Path(p) for p in glob.glob(text))
+            files.extend(p for p in matches if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS)
+            if not matches:
+                missing.append(str(raw))
+            continue
+        p = Path(text)
+        if p.is_dir():
+            files.extend(sorted(c for c in p.iterdir() if c.is_file() and c.suffix.lower() in IMAGE_EXTENSIONS))
+        elif p.is_file():
+            files.append(p)
+        else:
+            missing.append(str(raw))
+    return files, missing
+
+
+class FileCapturer:
+    """Replays image files with the ``ScreenCapturer.grab()`` API (tests / replay).
+
+    ``paths`` may contain files, directories (their images, sorted by name) and
+    glob patterns. ``grab()`` returns the next image as RGB, cycling to the
+    start when ``loop`` is True, or None when exhausted. Unreadable files are
+    skipped. ``current_path`` is the file of the last returned frame.
+    """
+
+    def __init__(self, paths: Iterable[PathLike], loop: bool = False) -> None:
+        if isinstance(paths, (str, Path)):
+            paths = [paths]
+        self.paths, self.missing = _expand_paths(paths)
+        self.loop = loop
+        self.index = 0
+        self.current_path: Optional[Path] = None
+        self.last_error: Optional[str] = None
+        self.frames = 0
+        self._lock = threading.Lock()
+
+    def __len__(self) -> int:
+        return len(self.paths)
+
+    @property
+    def remaining(self) -> int:
+        return max(0, len(self.paths) - self.index)
+
+    def grab(self) -> Optional[Image.Image]:
+        with self._lock:
+            for _ in range(len(self.paths)):
+                if self.index >= len(self.paths):
+                    if not self.loop:
+                        return None
+                    self.index = 0
+                path = self.paths[self.index]
+                self.index += 1
+                try:
+                    with Image.open(path) as im:
+                        img = im.convert("RGB")
+                        img.load()
+                except Exception as exc:  # noqa: BLE001
+                    self.last_error = f"无法读取图片 {path.name}：{exc}"
+                    continue
+                self.current_path = path
+                self.frames += 1
+                return img
+            return None
+
+    def reset(self) -> None:
+        with self._lock:
+            self.index = 0
+            self.current_path = None
+
+    def close(self) -> None:
+        pass
+
+
+_TAG_RE = re.compile(r"[^\w\-]+", re.UNICODE)
+
+
+def save_frame(img: Image.Image, directory: PathLike, tag: str = "frame") -> Path:
+    """Save ``img`` as ``<directory>/<YYYYmmdd-HHMMSS-mmm>_<tag>.png``; returns the path.
+
+    Creates the directory, expands ``~``, never overwrites an existing file.
+    """
+    folder = Path(os.path.expanduser(str(directory)))
+    folder.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{int(now * 1000) % 1000:03d}"
+    safe = _TAG_RE.sub("_", str(tag or "")).strip("_")[:48] or "frame"
+    path = folder / f"{stamp}_{safe}.png"
+    n = 1
+    while path.exists():
+        path = folder / f"{stamp}_{safe}-{n}.png"
+        n += 1
+    out = img if img.mode in ("RGB", "RGBA", "L") else img.convert("RGB")
+    out.save(path, format="PNG", compress_level=3)
+    return path

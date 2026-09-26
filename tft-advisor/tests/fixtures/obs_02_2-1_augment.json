@@ -1,0 +1,173 @@
+{
+  "screen_type": "augment_select",
+  "viewing_own_board": true,
+  "viewed_player_name": "Yilou",
+  "stage": "2-1",
+  "gold": 9,
+  "level": 4,
+  "xp_current": 0,
+  "xp_needed": 10,
+  "hp": 100,
+  "streak": null,
+  "shop": [
+    {
+      "name": "Lucian",
+      "cost": 2
+    },
+    {
+      "name": "Vayne",
+      "cost": 1
+    },
+    {
+      "name": "Ahri",
+      "cost": 2
+    },
+    {
+      "name": "Graves",
+      "cost": 1
+    },
+    {
+      "name": "Warwick",
+      "cost": 1
+    }
+  ],
+  "shop_locked": false,
+  "board": [
+    {
+      "name": "Garen",
+      "star": 1,
+      "items": [],
+      "row": 0,
+      "col": 3
+    },
+    {
+      "name": "Darius",
+      "star": 1,
+      "items": [],
+      "row": 0,
+      "col": 2
+    },
+    {
+      "name": "Graves",
+      "star": 2,
+      "items": [
+        "B.F. Sword"
+      ],
+      "row": 3,
+      "col": 3
+    },
+    {
+      "name": "Vayne",
+      "star": 1,
+      "items": [],
+      "row": 3,
+      "col": 1
+    }
+  ],
+  "bench": [
+    {
+      "name": "Garen",
+      "star": 1,
+      "items": [],
+      "row": null,
+      "col": 0
+    },
+    {
+      "name": "Warwick",
+      "star": 1,
+      "items": [],
+      "row": null,
+      "col": 1
+    }
+  ],
+  "item_bench": [
+    "Recurve Bow"
+  ],
+  "players": [
+    {
+      "name": "Yilou",
+      "hp": 100,
+      "is_self": true
+    },
+    {
+      "name": "咕噜咕噜",
+      "hp": 100,
+      "is_self": false
+    },
+    {
+      "name": "SkyWalker",
+      "hp": 100,
+      "is_self": false
+    },
+    {
+      "name": "Meiko",
+      "hp": 100,
+      "is_self": false
+    },
+    {
+      "name": "老王不摆烂",
+      "hp": 100,
+      "is_self": false
+    },
+    {
+      "name": "小火龙",
+      "hp": 100,
+      "is_self": false
+    },
+    {
+      "name": "夜雨声烦",
+      "hp": 98,
+      "is_self": false
+    },
+    {
+      "name": "BardKing",
+      "hp": 96,
+      "is_self": false
+    }
+  ],
+  "traits": [
+    {
+      "name": "Knight",
+      "count": 2,
+      "active": true,
+      "next_breakpoint": 4
+    },
+    {
+      "name": "Noble",
+      "count": 2,
+      "active": false,
+      "next_breakpoint": 3
+    },
+    {
+      "name": "Gunslinger",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 2
+    },
+    {
+      "name": "Imperial",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 2
+    },
+    {
+      "name": "Pirate",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 3
+    },
+    {
+      "name": "Ranger",
+      "count": 1,
+      "active": false,
+      "next_breakpoint": 2
+    }
+  ],
+  "augment_choices": [
+    "Rich Get Richer",
+    "Pandora's Items",
+    "Combat Training"
+  ],
+  "augments": [],
+  "notes": []
+}
