@@ -99,11 +99,6 @@ def test_resolve_items_and_traits(set_data):
     assert [c.name for c in set_data.trait_units("Gunslinger")] == ["Graves", "Lucian", "Miss Fortune"]
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="setdata._build_index is first-come: an api-name tail (TFT_Item_RedBuff = Sunfire Cape) can "
-    "shadow another item's display name ('Red Buff') depending on item order in the export",
-)
 def test_display_names_beat_api_tails_regardless_of_order():
     data = copy.deepcopy(bundled_sample())
     data["items"] = list(reversed(data["items"]))

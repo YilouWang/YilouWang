@@ -418,6 +418,9 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   var S = {};
   var skew = 0; // server time minus local time, seconds
   var lastAskTs = 0;
+  var ASK_TIMEOUT_S = 120;
+  var STALE_STREAM_MS = 45000; // server pings every 15 s; 3 missed pings = dead stream
+  var lastMsgAt = 0;
 
   function $(id) { return document.getElementById(id); }
   function esc(v) {
@@ -440,7 +443,17 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   function has(v) { return v !== null && v !== undefined && v !== ""; }
   function empty(text) { return '<div class="empty">' + esc(text) + "</div>"; }
   function nowS() { return Date.now() / 1000 + skew; }
-  function stars(n) { n = num(n) || 1; n = Math.max(1, Math.min(4, n)); return new Array(n + 1).join("★"); }
+  function stars(n) { n = Math.round(num(n) || 1); n = Math.max(1, Math.min(4, n)); return new Array(n + 1).join("★"); }
+  // Only touch the DOM when the markup changed: re-rendering on every event
+  // would reset scroll positions (odds table on a phone, log) and swallow taps
+  // on buttons that get replaced between touchstart and click.
+  function setHTML(id, html) {
+    var el = typeof id === "string" ? $(id) : id;
+    if (!el) return;
+    if (el.__html === html) return;
+    el.__html = html;
+    el.innerHTML = html;
+  }
   function pct(p) {
     p = num(p);
     if (p === null) return "-";
@@ -592,6 +605,10 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
       S = data && typeof data === "object" ? data : {};
     } else if (topic === "log") {
       var lg = arr(S.log).slice(-199);
+      for (var i = Math.max(0, lg.length - 5); i < lg.length; i++) {
+        var x = lg[i];
+        if (x && data && x.ts === data.ts && x.text === data.text) return;
+      }
       lg.push(data);
       S.log = lg;
     } else if (topic === "command") {
@@ -612,6 +629,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
       })
       .then(function (j) {
         if (!j) return;
+        if (es && es.readyState === 1 && connMode === "live") return; // the stream is fresher
         S = j;
         if (!es || es.readyState !== 1) setConn("poll");
         if (authBad) { authBad = false; banner(""); }
@@ -649,10 +667,20 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
       es = null;
       sseFailed();
     };
+    lastMsgAt = Date.now();
     TOPICS.forEach(function (t) {
-      src.addEventListener(t, function (ev) { if (es === src) handle(t, ev.data); });
+      src.addEventListener(t, function (ev) { if (es === src) { lastMsgAt = Date.now(); handle(t, ev.data); } });
     });
+    src.addEventListener("ping", function () { if (es === src) lastMsgAt = Date.now(); });
   }
+  // A phone that switched Wi-Fi or slept can keep a dead stream "open" forever.
+  setInterval(function () {
+    if (es && es.readyState === 1 && Date.now() - lastMsgAt > STALE_STREAM_MS) {
+      backoff = 1000;
+      connect();
+      poll();
+    }
+  }, 10000);
   function sseFailed() {
     startPolling();
     if (connMode !== "auth") setConn(connMode === "down" ? "down" : "poll");
@@ -661,10 +689,14 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     backoff = Math.min(backoff * 2, 30000);
   }
 
+  var hiddenAt = 0;
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "visible" && (!es || es.readyState === 2)) {
+    if (document.visibilityState !== "visible") { hiddenAt = Date.now(); return; }
+    var away = hiddenAt ? Date.now() - hiddenAt : 0;
+    hiddenAt = 0;
+    if (!es || es.readyState === 2 || away > 20000) {
       backoff = 1000;
-      connect();
+      connect(); // after a long sleep the old stream is often dead without an error
       poll();
     }
   });
@@ -701,8 +733,8 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   function setText(id, html, cls) {
     var el = $(id);
     if (!el) return;
-    el.innerHTML = html;
-    if (cls !== undefined) el.className = "v " + cls;
+    setHTML(el, html);
+    if (cls !== undefined && el.className !== "v " + cls) el.className = "v " + cls;
   }
 
   function renderTop() {
@@ -732,7 +764,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     if (status.perceiver) pills.push('<span class="pill off info">识别: ' + esc(status.perceiver) + "</span>");
     if (status.set) pills.push('<span class="pill off info">' + esc(status.set) + "</span>");
     if (status.llm === false) pills.push('<span class="pill off">未启用 Claude</span>');
-    $("pills").innerHTML = pills.join("");
+    setHTML("pills", pills.join(""));
 
     var hk = status.hotkeys || {};
     ["analyze", "scout", "shop", "toggle_auto"].forEach(function (k) {
@@ -773,12 +805,12 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     if (has(adv.positioning)) extra.push("<div><b>站位</b>" + esc(adv.positioning) + "</div>");
     if (has(adv.augment)) extra.push("<div><b>海克斯</b>" + esc(adv.augment) + "</div>");
     if (has(adv.scout_request)) extra.push('<div class="warn"><b>需要信息</b>' + esc(adv.scout_request) + "</div>");
-    el.innerHTML =
+    setHTML(el,
       '<div class="hl-text">' + esc(adv.headline) + "</div>" +
       '<div class="badges">' + badges.join("") + "</div>" +
       (list ? '<ul class="actions">' + list + "</ul>" : "") +
       (has(adv.plan) ? '<div class="plan"><b>计划</b>' + esc(adv.plan) + "</div>" : "") +
-      (extra.length ? '<div class="extra">' + extra.join("") + "</div>" : "");
+      (extra.length ? '<div class="extra">' + extra.join("") + "</div>" : ""));
     $("hl-age").textContent = fmtAge(adv.created_at);
   }
 
@@ -792,18 +824,18 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     var card = $("card-requests");
     card.className = "card w4" + (reqs.length ? " attention" : "");
     $("req-count").textContent = reqs.length ? reqs.length + " 条" : "";
-    if (!reqs.length) { $("requests").innerHTML = empty("暂无请求"); return; }
-    $("requests").innerHTML = reqs.map(function (r, i) {
+    if (!reqs.length) { setHTML("requests", empty("暂无请求")); return; }
+    setHTML("requests", reqs.map(function (r, i) {
       return '<div class="reqitem"><div class="rt">' + esc(r.text || ("请切到 " + (r.target_player || "对手") + " 的棋盘")) + "</div>" +
         (has(r.reason) ? '<div class="rr">' + esc(r.reason) + "</div>" : "") +
-        '<div class="rb"><button class="btn req" data-req-scout="' + i + '">我已切到他的棋盘，记录</button>' +
-        '<button class="btn small" data-req-dismiss="' + i + '">忽略</button></div></div>';
-    }).join("");
+        '<div class="rb"><button class="btn req" data-req-scout="' + i + '" data-player="' + esc(r.target_player || "") + '">我已切到他的棋盘，记录</button>' +
+        '<button class="btn small" data-req-dismiss="' + i + '" data-id="' + esc(r.id || "") + '">忽略</button></div></div>';
+    }).join(""));
   }
 
   function renderEcon() {
     var e = g(S, "analysis.econ", null);
-    if (!e || typeof e !== "object") { $("econ").innerHTML = empty("暂无数据"); $("econ-sub").textContent = ""; return; }
+    if (!e || typeof e !== "object") { setHTML("econ", empty("暂无数据")); $("econ-sub").textContent = ""; return; }
     var reco = e.recommendation ? (ECON_LABEL[e.recommendation] || e.recommendation) : "";
     var rows = [];
     function row(k, v) { if (has(v)) rows.push('<span class="k">' + esc(k) + '</span><span class="v">' + v + "</span>"); }
@@ -813,10 +845,10 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     row("搜牌预算", num(e.roll_budget) !== null ? e.roll_budget + " 金" + (e.roll_budget > 0 ? ' <span class="dim" style="font-size:12px">(约 ' + Math.floor(e.roll_budget / 2) + " 次)</span>" : "") : "");
     row("升级还差", num(e.gold_to_next_level) !== null ? e.gold_to_next_level + " 金" + (num(e.xp_to_next) !== null ? ' <span class="dim" style="font-size:12px">(' + e.xp_to_next + " 经验)</span>" : "") : "");
     row("目标等级", num(e.target_level) !== null ? String(e.target_level) : "");
-    $("econ").innerHTML =
+    setHTML("econ",
       (reco ? '<div class="reco">' + esc(reco) + "</div>" : "") +
       (rows.length ? '<div class="kv">' + rows.join("") + "</div>" : "") +
-      (has(e.reason) ? '<div class="reason">' + esc(e.reason) + "</div>" : "");
+      (has(e.reason) ? '<div class="reason">' + esc(e.reason) + "</div>" : ""));
     $("econ-sub").textContent = num(e.gold) !== null ? "按 " + e.gold + " 金计算" : "";
   }
 
@@ -845,7 +877,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     var buy = arr(an.shop_picks), sell = arr(an.sell_candidates);
     html += '<div class="lbl">建议购买</div>' + (buy.length ? '<div class="chips">' + buy.map(function (x) { return '<span class="chip pick">' + esc(unitName(x)) + "</span>"; }).join("") + "</div>" : empty("无"));
     html += '<div class="lbl">可以出售</div>' + (sell.length ? '<div class="chips">' + sell.map(function (x) { return '<span class="chip sell">' + esc(unitName(x)) + "</span>"; }).join("") + "</div>" : empty("无"));
-    $("shop").innerHTML = html;
+    setHTML("shop", html);
   }
 
   function goldKeys(odds) {
@@ -861,7 +893,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
 
   function renderOdds() {
     var odds = arr(g(S, "analysis.odds", [])).filter(function (o) { return o && typeof o === "object"; });
-    if (!odds.length) { $("odds").innerHTML = empty("还没有需要追的棋子"); $("odds-sub").textContent = ""; return; }
+    if (!odds.length) { setHTML("odds", empty("还没有需要追的棋子")); $("odds-sub").textContent = ""; return; }
     var keys = goldKeys(odds);
     var lvl = num(odds[0].level);
     $("odds-sub").textContent = lvl ? "按 " + lvl + " 级商店概率" : "";
@@ -884,15 +916,15 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
         "<td>" + (num(o.remaining_in_pool) !== null ? o.remaining_in_pool : "-") +
         (seenEl ? ' <span class="faint">(别人 ' + seenEl + ")</span>" : "") + "</td></tr>";
     }).join("");
-    $("odds").innerHTML = '<div class="tablewrap"><table><thead>' + head + "</thead><tbody>" + body + "</tbody></table></div>";
+    setHTML("odds", '<div class="tablewrap"><table><thead>' + head + "</thead><tbody>" + body + "</tbody></table></div>");
   }
 
   function renderComps() {
     var comps = arr(g(S, "analysis.comps", [])).filter(function (c) { return c && typeof c === "object"; }).slice(0, 3);
     var dl = $("comp-list");
-    dl.innerHTML = comps.map(function (c) { return '<option value="' + esc(c.name) + '">'; }).join("");
-    if (!comps.length) { $("comps").innerHTML = empty("暂无数据"); return; }
-    $("comps").innerHTML = comps.map(function (c) {
+    setHTML(dl, comps.map(function (c) { return '<option value="' + esc(c.name) + '">'; }).join(""));
+    if (!comps.length) { setHTML("comps", empty("暂无数据")); return; }
+    setHTML("comps", comps.map(function (c) {
       var sc = num(c.score);
       var have = arr(c.have_units), miss = arr(c.missing_units), cont = arr(c.contested_by);
       var carryItems = arr(c.carry_items);
@@ -904,14 +936,14 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
         (miss.length ? '<div class="lbl">还缺</div><div class="chips">' + miss.map(function (u) { return unitChip(u, "miss"); }).join("") + "</div>" : "") +
         (cont.length ? '<div class="contest">有人在玩相同棋子：' + esc(cont.join("、")) + "</div>" : "") +
         (has(c.reason) ? '<div class="reason">' + esc(c.reason) + "</div>" : "") + "</div>";
-    }).join("");
+    }).join(""));
   }
 
   function renderItems() {
     var items = arr(g(S, "analysis.items", [])).filter(function (x) { return x && typeof x === "object"; });
     var plan = g(S, "advice.items", "");
     var html = has(plan) ? '<div style="margin-bottom:6px">' + esc(plan) + "</div>" : "";
-    if (!items.length && !html) { $("items").innerHTML = empty("暂无装备建议"); return; }
+    if (!items.length && !html) { setHTML("items", empty("暂无装备建议")); return; }
     html += items.slice(0, 8).map(function (it) {
       var comps = arr(it.components);
       return '<div class="item">' + (num(it.priority) === 1 ? '<span class="now">现在合</span>' : "") +
@@ -919,7 +951,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
         (comps.length ? '<div class="cp">' + esc(comps.join(" + ")) + "</div>" : "") +
         (has(it.reason) ? '<div class="cp">' + esc(it.reason) + "</div>" : "") + "</div></div>";
     }).join("");
-    $("items").innerHTML = html;
+    setHTML("items", html);
   }
 
   function renderOpponents() {
@@ -957,7 +989,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
           "</div>";
       }).join("");
     }
-    $("opponents").innerHTML = html;
+    setHTML("opponents", html);
   }
 
   function renderSeen() {
@@ -976,7 +1008,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     var augs = arr(st.augments), choices = arr(st.augment_choices);
     if (augs.length) html += '<div class="lbl">已选海克斯</div><div class="chips">' + augs.map(function (x) { return '<span class="chip">' + esc(x) + "</span>"; }).join("") + "</div>";
     if (choices.length) html += '<div class="lbl">可选海克斯</div><div class="chips">' + choices.map(function (x) { return '<span class="chip pick">' + esc(x) + "</span>"; }).join("") + "</div>";
-    $("seen").innerHTML = html;
+    setHTML("seen", html);
     var sub = [];
     if (num(st.last_update)) sub.push("更新于 " + fmtAge(st.last_update));
     if (status.data_source) sub.push("数据: " + status.data_source);
@@ -990,29 +1022,33 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     if (has(status.last_error)) items.push('<li class="bad">最近错误：' + esc(status.last_error) + "</li>");
     var lu = num(g(S, "state.last_update", null));
     if (lu && nowS() - lu > 300 && status.auto) items.push("<li>已经超过 5 分钟没有读到新画面，检查游戏窗口是否在前台</li>");
-    $("warnings").innerHTML = items.length ? '<ul class="warnlist">' + items.join("") + "</ul>" : empty("暂无提醒");
+    setHTML("warnings", items.length ? '<ul class="warnlist">' + items.join("") + "</ul>" : empty("暂无提醒"));
   }
 
   function renderAnswer() {
     var a = S.answer;
     var el = $("answer");
     if (lastAskTs && (!a || !num(a.ts) || a.ts < lastAskTs - 2)) {
-      el.innerHTML = '<div class="answer dim">Claude 思考中...</div>';
+      if (nowS() - lastAskTs > ASK_TIMEOUT_S) {
+        setHTML(el, '<div class="answer warn">等了 2 分钟还没有回答，可以再问一次，或看看下面的日志</div>');
+      } else {
+        setHTML(el, '<div class="answer dim">Claude 思考中...</div>');
+      }
       return;
     }
-    if (!a || typeof a !== "object" || !has(a.answer)) { el.innerHTML = ""; return; }
+    if (!a || typeof a !== "object" || !has(a.answer)) { setHTML(el, ""); return; }
     lastAskTs = 0;
-    el.innerHTML = '<div class="answer">' + (has(a.question) ? '<div class="q">问：' + esc(a.question) + "</div>" : "") + esc(a.answer) + "</div>";
+    setHTML(el, '<div class="answer">' + (has(a.question) ? '<div class="q">问：' + esc(a.question) + "</div>" : "") + esc(a.answer) + "</div>");
   }
 
   function renderLog() {
     var lg = arr(S.log).filter(function (x) { return x && typeof x === "object"; });
     $("log-sub").textContent = lg.length ? lg.length + " 条" : "";
-    if (!lg.length) { $("log").innerHTML = '<div class="faint">暂无日志</div>'; return; }
-    $("log").innerHTML = lg.slice(-60).reverse().map(function (x) {
+    if (!lg.length) { setHTML("log", '<div class="faint">暂无日志</div>'); return; }
+    setHTML("log", lg.slice(-60).reverse().map(function (x) {
       var lvl = x.level === "error" ? "error" : x.level === "warn" ? "warn" : "";
       return '<div class="' + lvl + '"><span class="t">' + fmtClock(x.ts) + "</span>" + esc(x.text) + "</div>";
-    }).join("");
+    }).join(""));
   }
 
   // ------------------------------------------------------------------ inputs
@@ -1028,15 +1064,14 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
       send({ cmd: cmd }, t.getAttribute("data-label") || cmd);
       return;
     }
-    var reqs = currentRequests();
     if (t.hasAttribute("data-req-scout")) {
-      var r = reqs[Number(t.getAttribute("data-req-scout"))] || {};
-      send({ cmd: "scout", player: r.target_player || null }, "记录 " + (r.target_player || "对手"));
+      var who = t.getAttribute("data-player") || "";
+      send({ cmd: "scout", player: who || null }, "记录 " + (who || "对手"));
       return;
     }
     if (t.hasAttribute("data-req-dismiss")) {
-      var r2 = reqs[Number(t.getAttribute("data-req-dismiss"))] || {};
-      if (r2.id) send({ cmd: "dismiss", id: String(r2.id) }, "忽略请求");
+      var rid = t.getAttribute("data-id") || "";
+      if (rid) send({ cmd: "dismiss", id: rid }, "忽略请求");
       return;
     }
     if (t.hasAttribute("data-scout-player")) {
@@ -1092,6 +1127,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   setInterval(function () {
     safe("headline-age", function () { if (S.advice) $("hl-age").textContent = fmtAge(S.advice.created_at); });
     safe("seen", renderSeen);
+    safe("answer", renderAnswer);
   }, 5000);
 
   // ------------------------------------------------------------------ boot

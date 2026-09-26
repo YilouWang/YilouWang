@@ -30,7 +30,7 @@ from typing import Any, Callable, Optional
 
 from .setdata import SetData
 
-STYLES = ("standard", "fast8", "reroll1", "reroll2", "reroll3")
+STYLES = ("standard", "fast8", "fast9", "reroll1", "reroll2", "reroll3")
 SAMPLE_SET_NUMBER = 99
 _BUNDLED_SAMPLE = "comps_sample.json"
 
@@ -41,6 +41,10 @@ _STYLE_ALIASES = {
     "运营": "standard",
     "标准": "standard",
     "fast8": "fast8",
+    "fast9": "fast9",
+    "fast 9": "fast9",
+    "速9": "fast9",
+    "速九": "fast9",
     "fast 8": "fast8",
     "fast_8": "fast8",
     "速8": "fast8",
@@ -64,9 +68,14 @@ class CompDef:
     carry: Optional[str] = None
     carry_items: list[str] = field(default_factory=list)
     traits: list[str] = field(default_factory=list)
-    style: str = "standard"  # standard | fast8 | reroll1 | reroll2 | reroll3
+    style: str = "standard"  # standard | fast8 | fast9 | reroll1 | reroll2 | reroll3
     tier: str = ""
     notes: str = ""
+    early: list[str] = field(default_factory=list)  # early-game units (display names)
+    item_holders: dict[str, list[str]] = field(default_factory=dict)  # unit -> recommended items
+    positions: dict[str, tuple[int, int]] = field(default_factory=dict)  # unit -> (row, col), row 0 = front
+    stars: dict[str, int] = field(default_factory=dict)  # units meant to be 3-star (reroll targets)
+    difficulty: str = ""
 
 
 def bundled_comps_path() -> Path:
@@ -102,6 +111,8 @@ def normalize_style(raw: Any, carry_cost: Optional[int] = None) -> str:
         if carry_cost in (1, 2, 3):
             return f"reroll{carry_cost}"
         return "reroll2"
+    if "9" in text or "九" in text:
+        return "fast9"
     if "8" in text or "八" in text:
         return "fast8"
     return "standard"
@@ -173,6 +184,42 @@ def _build_comp(entry: dict[str, Any], set_data: SetData, log: LogFn) -> Optiona
         trait = set_data.resolve_trait(raw)
         traits.append(trait.name if trait else raw)
 
+    def unit_name(raw: Any) -> Optional[str]:
+        champ = set_data.resolve_champion(str(raw))
+        return champ.name if champ else None
+
+    def item_name(raw: Any) -> str:
+        item = set_data.resolve_item(str(raw))
+        return item.name if item else str(raw)
+
+    early = [n for n in (unit_name(u) for u in _as_list(entry.get("early"))) if n]
+    item_holders: dict[str, list[str]] = {}
+    raw_holders = entry.get("item_holders")
+    if isinstance(raw_holders, dict):
+        for raw_unit, raw_items in raw_holders.items():
+            n = unit_name(raw_unit)
+            if n:
+                item_holders[n] = [item_name(x) for x in _as_list(raw_items)]
+    positions: dict[str, tuple[int, int]] = {}
+    raw_pos = entry.get("positions")
+    if isinstance(raw_pos, dict):
+        for raw_unit, rc in raw_pos.items():
+            n = unit_name(raw_unit)
+            if n and isinstance(rc, (list, tuple)) and len(rc) == 2:
+                try:
+                    r, c = int(rc[0]), int(rc[1])
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= r <= 3 and 0 <= c <= 6:
+                    positions[n] = (r, c)
+    stars: dict[str, int] = {}
+    raw_stars = entry.get("stars")
+    if isinstance(raw_stars, dict):
+        for raw_unit, st in raw_stars.items():
+            n = unit_name(raw_unit)
+            if n and isinstance(st, int) and 1 <= st <= 4:
+                stars[n] = st
+
     return CompDef(
         name=name,
         units=units,
@@ -182,16 +229,22 @@ def _build_comp(entry: dict[str, Any], set_data: SetData, log: LogFn) -> Optiona
         style=normalize_style(entry.get("style"), carry_cost),
         tier=str(entry.get("tier") or "").strip().upper(),
         notes=str(entry.get("notes") or "").strip(),
+        early=early,
+        item_holders=item_holders,
+        positions=positions,
+        stars=stars,
+        difficulty=str(entry.get("difficulty") or "").strip(),
     )
 
 
 def load_comps(path: Optional[str], set_data: SetData, log: Optional[LogFn] = None) -> list[CompDef]:
     """Load comps from ``path`` (JSON or TOML) and resolve names against ``set_data``.
 
-    With no path, the bundled sample comps are returned only for the synthetic
-    sample set (``set_number == 99``); otherwise an empty list (the engine then
-    falls back to trait-based auto comps). Problems are reported through
-    ``log`` and never raise.
+    With no path: the bundled comp library for the loaded set
+    (``data/bundled/comps_set<N>.json``, a meta snapshot shipped with the
+    tool), or the sample comps for the synthetic sample set (``set_number ==
+    99``); otherwise an empty list (the engine then falls back to trait-based
+    auto comps). Problems are reported through ``log`` and never raise.
     """
     emit: LogFn = log or (lambda _msg: None)
     if path:
@@ -202,7 +255,9 @@ def load_comps(path: Optional[str], set_data: SetData, log: Optional[LogFn] = No
     elif set_data.set_number == SAMPLE_SET_NUMBER:
         p = bundled_comps_path()
     else:
-        return []
+        p = Path(str(resources.files("tft_advisor.data").joinpath("bundled", f"comps_set{set_data.set_number}.json")))
+        if not p.is_file():
+            return []
 
     try:
         raw = _read_file(p)
@@ -226,3 +281,19 @@ def load_comps(path: Optional[str], set_data: SetData, log: Optional[LogFn] = No
         names.add(comp.name)
         comps.append(comp)
     return comps
+
+
+def comps_reference_text(comps: list[CompDef], limit: int = 45) -> str:
+    """Compact comp library for LLM prompts (deterministic, prompt-cache friendly)."""
+    if not comps:
+        return ""
+    lines = ["COMP LIBRARY (tier, style: units | carry: items | early units):"]
+    for c in comps[:limit]:
+        star = "".join(f" {u}*{n}" for u, n in c.stars.items())
+        head = f"- {c.name} [{c.tier or '-'}, {c.style}]: {', '.join(c.units)}"
+        if star:
+            head += f" (3-star:{star})"
+        carry = f" | carry {c.carry}: {', '.join(c.carry_items)}" if c.carry else ""
+        early = f" | early: {', '.join(c.early)}" if c.early else ""
+        lines.append(head + carry + early)
+    return "\n".join(lines)

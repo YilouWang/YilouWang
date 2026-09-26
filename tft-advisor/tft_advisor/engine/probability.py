@@ -62,7 +62,7 @@ def rolldown_probability(
     if remaining_unit < need or gold < mech.roll_cost + price:
         return 0.0
     slots = mech.shop_slots
-    roll = mech.roll_cost
+    roll = max(1, mech.roll_cost)  # a 0-cost override would never terminate
 
     @lru_cache(maxsize=None)
     def solve(bought: int, g: int) -> float:
@@ -105,7 +105,7 @@ def expected_gold_to_goal(
         hit = p_at_least_one(p, mech.shop_slots)
         if hit <= 1e-9:
             return None
-        total += mech.roll_cost / hit + cost
+        total += max(1, mech.roll_cost) / hit + cost
     return total
 
 
@@ -173,7 +173,7 @@ def compute_hit_odds(
     per_unit, per_cost = pool_remaining(set_data, mech, taken)
 
     wanted: list[str] = []
-    if targets:
+    if targets is not None:
         for t in targets:
             champ = set_data.champions.get(t) or set_data.resolve_champion(t)
             if champ and champ.api_name not in wanted:

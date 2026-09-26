@@ -223,7 +223,6 @@ def test_scouted_copies_lower_the_odds(mech, set_data):
     assert contested.p_goal_by_gold[40] < free.p_goal_by_gold[40]
 
 
-@pytest.mark.xfail(strict=False, reason="probability.compute_hit_odds checks `if targets:` so an explicit [] means 'all owned units'")
 def test_empty_target_list_means_no_targets(mech, set_data):
     st = make_state("3-2", board=["Graves"], level=6)
     assert compute_hit_odds(st, set_data, mech, {}, targets=[]) == []

@@ -144,6 +144,12 @@ def _join_names(names: Iterable[str]) -> str:
     return ", ".join(seen)
 
 
+def _quoted(value: object) -> Optional[str]:
+    """A hint value safe to put between double quotes (any type, e.g. a number sent by the dashboard)."""
+    name = clean_name(value)  # type: ignore[arg-type]
+    return name.replace('"', "'") if name else None
+
+
 def build_user_text(purpose: str, hint: Optional[PerceptionHint], image_labels: Sequence[str]) -> str:
     """Per-call instruction: what the images are, what to read, optional hints."""
     mode = normalize_purpose(purpose)
@@ -157,8 +163,8 @@ def build_user_text(purpose: str, hint: Optional[PerceptionHint], image_labels: 
         # Hint strings can come from the dashboard (typed on a phone) or from
         # earlier model output: single line, short, no quotes that could end
         # the quoted value early.
-        self_name = clean_name((hint.self_name or "").replace('"', "'"))
-        scouting = clean_name((hint.scouting_player or "").replace('"', "'"))
+        self_name = _quoted(hint.self_name)
+        scouting = _quoted(hint.scouting_player)
         expect = clean_name(hint.expect, max_len=80)
         hint_lines: list[str] = []
         if self_name:

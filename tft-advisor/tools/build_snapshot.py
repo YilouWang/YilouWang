@@ -86,6 +86,7 @@ def trim(full: dict[str, Any], set_number: int, keep_items: Optional[set[str]] =
             "traits": c.get("traits") or [],
             "role": c.get("role"),
             "squareIcon": c.get("squareIcon"),
+            "stats": {"range": (c.get("stats") or {}).get("range")},
         }
         for c in entry.get("champions", [])
         if isinstance(c.get("cost"), int) and 1 <= c["cost"] <= 5 and c.get("traits")

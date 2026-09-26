@@ -46,7 +46,7 @@ def clean_text(text: str) -> str:
     return out.replace(_EM_DASH, "-").replace(_HORIZONTAL_BAR, "-")
 
 
-def clean_name(text: Optional[str], max_len: int = 48) -> Optional[str]:
+def clean_name(text: Any, max_len: int = 48) -> Optional[str]:
     """A short single-line name for prompts / observations (e.g. a player name typed on a phone).
 
     Control and separator characters (line breaks, tabs, zero-width marks)

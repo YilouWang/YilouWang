@@ -1,8 +1,10 @@
 """Optional OCR fast path (RapidOCR, ONNX runtime, CPU): stage, gold, level, XP, shop names.
 
-About 100-300 ms per frame on a desktop CPU and free, so it is a good way to
-re-read the shop after every roll or to cross-check Claude's numbers. It only
-returns fields it read confidently; everything else stays ``None``.
+Free and local: a few hundred milliseconds per frame on a fast desktop CPU (up
+to a few seconds on a slow or busy one, it runs about 8 small OCR passes), so
+it is a good way to re-read the shop after every roll or to cross-check
+Claude's numbers. It only returns fields it read confidently; everything else
+stays ``None``.
 
 Install with ``pip install rapidocr-onnxruntime`` (``pip install tft-advisor[ocr]``).
 """
@@ -16,7 +18,7 @@ import unicodedata
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional
 
 from ..models import Observation, ScreenObservation, ScreenType, ShopSlot, StageRound
-from .base import FALLBACK_REGIONS, PerceptionError, PerceptionHint, _fallback_box, crop_region
+from .base import FALLBACK_REGIONS, PerceptionError, PerceptionHint, _fallback_box, crop_region, normalize_purpose
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from PIL import Image
@@ -80,19 +82,24 @@ def parse_stage_text(text: Optional[str]) -> Optional[str]:
 
 
 def parse_gold_text(text: Optional[str], max_gold: int = 300) -> Optional[int]:
-    """The gold counter: the first 1-3 digit number (OCR letter confusions fixed); ``None`` if implausible."""
+    """The gold counter: a single 1-3 digit number (OCR letter confusions fixed); ``None`` if implausible.
+
+    Two separate numbers in one box (gold and the streak counter next to it,
+    "12 3") are ambiguous and give ``None``: joining them would turn gold 12
+    into a plausible but wrong 123.
+    """
     t = _nfkc(text)
     if not t:
         return None
-    # Only fix letters when the text is essentially numeric (e.g. "4O", "l5").
-    compact = re.sub(r"\s+", "", t)
+    # Only fix letters when the token is essentially numeric (e.g. "4O", "l5").
+    compact = t.strip()
     if re.fullmatch(r"[0-9OoDQlIi|SsBZz]{1,3}", compact):
         compact = compact.translate(_DIGIT_FIX)
         return int(compact) if compact.isdigit() and int(compact) <= max_gold else None
-    m = re.search(r"(?<!\d)(\d{1,4})(?!\d)", t)
-    if not m:
+    numbers = re.findall(r"(?<!\d)(\d+)(?!\d)", t)
+    if len(numbers) != 1 or len(numbers[0]) > 4:
         return None
-    value = int(m.group(1))
+    value = int(numbers[0])
     return value if 0 <= value <= max_gold else None
 
 
@@ -244,9 +251,26 @@ def shop_card_boxes(size: tuple[int, int], placement: str = "standard") -> list[
     return boxes
 
 
+def _is_cjk(ch: str) -> bool:
+    return (
+        "\u4e00" <= ch <= "\u9fff"  # CJK unified ideographs
+        or "\u3400" <= ch <= "\u4dbf"  # extension A
+        or "\u3040" <= ch <= "\u30ff"  # kana
+        or "\uac00" <= ch <= "\ud7a3"  # hangul syllables
+    )
+
+
 def _is_meaningful(text: str) -> bool:
-    """At least 2 letters (Latin or CJK): cost digits / stray marks do not count as card text."""
-    return sum(1 for ch in _nfkc(text) if ch.isalpha()) >= 2
+    """Card text rather than a cost digit / stray mark: 2+ letters, or any CJK character.
+
+    Chinese champion names can be a single character (慎, 劫, 烬, 蔚), so one
+    CJK character counts; an unresolvable one makes the shop untrusted (the
+    caller falls back to Claude) instead of silently reporting an empty slot.
+    """
+    t = _nfkc(text)
+    if any(_is_cjk(ch) for ch in t):
+        return True
+    return sum(1 for ch in t if ch.isalpha()) >= 2
 
 
 # ---------------------------------------------------------------------------
@@ -274,14 +298,16 @@ class OcrPerceiver:
     # ---- engine -------------------------------------------------------------
     def _get_engine(self) -> OcrEngine:
         if self._engine is None:
-            try:
-                from rapidocr_onnxruntime import RapidOCR  # lazy optional dependency
-            except Exception as exc:
-                raise PerceptionError("OCR 不可用") from exc
-            try:
-                self._engine = RapidOCR()
-            except Exception as exc:
-                raise PerceptionError(f"OCR 不可用: {exc}") from exc
+            with self._lock:  # two threads must not both load the ONNX models
+                if self._engine is None:
+                    try:
+                        from rapidocr_onnxruntime import RapidOCR  # lazy optional dependency
+                    except Exception as exc:
+                        raise PerceptionError("OCR 不可用") from exc
+                    try:
+                        self._engine = RapidOCR()
+                    except Exception as exc:
+                        raise PerceptionError(f"OCR 不可用: {exc}") from exc
         return self._engine
 
     def read_lines(self, img: "Image.Image") -> list[OcrLine]:
@@ -363,12 +389,14 @@ class OcrPerceiver:
 
     def read_shop(self, frame: "Image.Image", notes: list[str]) -> Optional[list[ShopSlot]]:
         problem: Optional[str] = None
-        for placement in list(self._placements):
+        with self._lock:
+            order = list(self._placements)
+        for placement in order:
             slots, note = self._read_cards(frame, placement)
             if slots is not None:
-                if self._placements[0] != placement:
-                    self._placements.remove(placement)
-                    self._placements.insert(0, placement)
+                with self._lock:
+                    if self._placements[0] != placement:
+                        self._placements = [placement] + [x for x in self._placements if x != placement]
                 return slots
             problem = problem or note
         if problem:
@@ -377,6 +405,7 @@ class OcrPerceiver:
 
     # ---- main ---------------------------------------------------------------
     def read_screen(self, image: "Image.Image", purpose: str = "auto") -> ScreenObservation:
+        purpose = normalize_purpose(purpose)
         frame = image if image.mode == "RGB" else image.convert("RGB")
         notes: list[str] = []
         screen = ScreenObservation(notes=notes)
@@ -396,6 +425,7 @@ class OcrPerceiver:
     def perceive(self, image: "Image.Image", purpose: str = "auto", hint: Optional[PerceptionHint] = None) -> Observation:
         if image is None or not hasattr(image, "crop"):
             raise PerceptionError("没有可识别的截图")
+        purpose = normalize_purpose(purpose)
         self._get_engine()  # raise PerceptionError('OCR 不可用') early
         captured_at = time.time()
         started = time.monotonic()
@@ -414,7 +444,7 @@ class OcrPerceiver:
             screen=screen,
             captured_at=captured_at,
             source="ocr",
-            purpose=purpose or "auto",
+            purpose=purpose,
             latency_s=round(time.monotonic() - started, 3),
         )
 

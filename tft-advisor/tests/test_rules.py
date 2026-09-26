@@ -414,13 +414,13 @@ def test_upgrade_flag_counts_only_one_star_copies(advisor):
 
 
 def test_roll_recommended_without_budget_says_save(advisor, mech):
-    # economy.py can return ROLL with roll_budget 0 (medium HP, under 20 gold at a roll-down round).
+    # economy.py turns an unaffordable roll into SAVE itself (medium HP, 12 gold at a roll-down round).
     state = GameState(stage=StageRound.parse("4-1"), gold=12, level=7, xp_current=10, hp=50)
     econ = plan_economy(state, mech)
+    assert econ.recommendation == EconAction.SAVE and econ.roll_budget == 0
     adv = advisor.advise(state, Analysis(econ=econ))
     check_contract(adv)
-    assert adv.headline == "金币不够搜牌，先存钱"
-    assert "搜牌稳住" not in adv.headline
+    assert "搜牌" not in adv.headline
     assert ActionType.ROLL not in types(adv) and ActionType.SAVE in types(adv)
     slow = advisor.advise(state, Analysis(econ=EconPlan(recommendation=EconAction.SLOW_ROLL, roll_budget=1, reason="慢搜")))
     assert ActionType.ROLL not in types(slow) and slow.headline == "金币不够搜牌，先存钱"
@@ -456,7 +456,7 @@ def test_roll_target_skips_exhausted_pool(advisor):
         return HitOdds(
             unit=name, api_name=f"TFT99_{name}", cost=4, owned_copies=3, goal_copies=9, goal_star=3,
             seen_elsewhere=0, remaining_in_pool=remaining, level=8, p_per_slot=0.0, p_in_shop=0.0,
-            p_goal_by_gold={20: 0.0},
+            p_goal_by_gold={20: 0.3},
         )
 
     state = GameState(stage=StageRound.parse("4-2"), gold=60, level=8, hp=40)
@@ -529,3 +529,23 @@ def test_carousel_item_slam_waits_until_after(advisor):
     adv = advisor.advise(state, analysis)
     assert action(adv, ActionType.ITEM).priority == 2
     assert adv.actions[0].type == ActionType.CAROUSEL
+
+
+def test_roll_target_prefers_reachable_upgrades_over_hopeless_carry(advisor):
+    """At 3-2 a 4-cost carry at 0% is not the thing to roll for; cheap pairs are."""
+
+    def odds(name, cost, p40):
+        return HitOdds(
+            unit=name, api_name=f"TFT99_{name}", cost=cost, owned_copies=1, goal_copies=3, goal_star=2,
+            seen_elsewhere=0, remaining_in_pool=9, level=6, p_per_slot=0.01, p_in_shop=0.05,
+            p_goal_by_gold={20: p40 / 2, 40: p40},
+        )
+
+    state = GameState(stage=StageRound.parse("3-2"), gold=50, level=6, hp=55)
+    econ = EconPlan(recommendation=EconAction.ROLL, roll_budget=40)
+    comps = [CompSuggestion(name="X", score=0.8, carry="Draven", core_units=["Draven", "Garen"])]
+    adv = advisor.advise(state, Analysis(econ=econ, comps=comps, odds=[odds("Draven", 4, 0.01), odds("Garen", 1, 0.8), odds("Lucian", 2, 0.4)]))
+    text = action(adv, ActionType.ROLL).text
+    assert "Draven" not in text and text.index("Garen") < text.index("Lucian")
+    hopeless = advisor.advise(state, Analysis(econ=econ, odds=[odds("Draven", 4, 0.01)]))
+    assert action(hopeless, ActionType.ROLL).text.endswith("找对子升星")

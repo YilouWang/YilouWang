@@ -93,6 +93,12 @@ class Champion:
     traits_en: list[str] = field(default_factory=list)
     icon: Optional[str] = None
     variants: list[str] = field(default_factory=list)  # api names folded into this unit
+    attack_range: Optional[float] = None  # hexes; 1 = melee
+    role: Optional[str] = None  # CommunityDragon role tag, e.g. "ADCarry", "APTank"
+
+    @property
+    def is_melee(self) -> Optional[bool]:
+        return None if self.attack_range is None else self.attack_range <= 1.5
 
 
 @dataclass
@@ -140,19 +146,23 @@ class SetData:
         self.items = items
         self.source = source
         champion_aliases = champion_aliases or {}
+        # Tiered indexes: display names always beat api-name fragments and
+        # aliases of *other* entries ("Red Buff" must not resolve to the item
+        # whose api name is TFT_Item_RedBuff = Sunfire Cape).
         self._champ_index = self._build_index(
-            (
-                c.api_name,
-                [c.name, c.name_en, c.api_name, *_api_tail_names(c.api_name), *champion_aliases.get(c.api_name, [])],
-            )
-            for c in champions.values()
+            [(c.api_name, [c.name, c.name_en]) for c in champions.values()],
+            [(c.api_name, [c.api_name, *champion_aliases.get(c.api_name, [])]) for c in champions.values()],
+            [(c.api_name, _api_tail_names(c.api_name)) for c in champions.values()],
         )
         self._trait_index = self._build_index(
-            (t.api_name, [t.name, t.name_en, t.api_name, *_api_tail_names(t.api_name)]) for t in traits.values()
+            [(t.api_name, [t.name, t.name_en]) for t in traits.values()],
+            [(t.api_name, [t.api_name]) for t in traits.values()],
+            [(t.api_name, _api_tail_names(t.api_name)) for t in traits.values()],
         )
         self._item_index = self._build_index(
-            (i.api_name, [i.name, i.name_en, i.api_name, *_api_tail_names(i.api_name), *i.aliases])
-            for i in items.values()
+            [(i.api_name, [i.name, i.name_en]) for i in items.values()],
+            [(i.api_name, [i.api_name, *i.aliases]) for i in items.values()],
+            [(i.api_name, _api_tail_names(i.api_name)) for i in items.values()],
         )
         self._recipes: dict[tuple[str, str], str] = {}
         for it in items.values():
@@ -161,13 +171,15 @@ class SetData:
 
     # ---- indexes ---------------------------------------------------------------
     @staticmethod
-    def _build_index(entries: Iterable[tuple[str, list[str]]]) -> dict[str, str]:
+    def _build_index(*tiers: Iterable[tuple[str, list[str]]]) -> dict[str, str]:
+        """Earlier tiers win; within a tier the first entry wins."""
         index: dict[str, str] = {}
-        for api, names in entries:
-            for n in names:
-                key = normalize_name(n)
-                if key and key not in index:
-                    index[key] = api
+        for tier in tiers:
+            for api, names in tier:
+                for n in names:
+                    key = normalize_name(n)
+                    if key and key not in index:
+                        index[key] = api
         return index
 
     @staticmethod
@@ -311,6 +323,8 @@ class SetData:
                     traits=tr,
                     traits_en=[x for x in (ce.get("traits") or tr) if x],
                     icon=c.get("squareIcon") or c.get("tileIcon") or c.get("icon"),
+                    attack_range=_num((c.get("stats") or {}).get("range")),
+                    role=c.get("role") or None,
                 )
             )
         champions, aliases = _fold_variants(raw_champs)
@@ -333,6 +347,13 @@ class SetData:
             source=source,
             champion_aliases=aliases,
         )
+
+
+def _num(value: Any) -> Optional[float]:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _api_tail_names(api: str) -> list[str]:
@@ -477,10 +498,13 @@ def _parse_items(
         # Emblem recipes from other sets are noise unless the set list vouches for them.
         if emblem and not set_item_ids and not (api.startswith(set_prefixes) or api.startswith("TFT_Item_")):
             continue
+        # Only true duplicates (same English name, e.g. TFT_Item_X vs DA_X) become
+        # aliases; a different item sharing the recipe (an old set's artifact)
+        # must not resolve to this one.
         aliases = []
         for other in cands:
-            if other is not best:
-                aliases += [other["apiName"], other.get("name") or "", en_name(other["apiName"], other)]
+            if other is not best and en_name(other["apiName"], other) == en_name(api, best):
+                aliases += [other["apiName"], other.get("name") or ""]
         items[api] = Item(
             api_name=api,
             name=best.get("name") or api,

@@ -267,10 +267,11 @@ class RulesAdvisor:
         if sell:
             add(ActionType.SELL, sell, 1 if analysis.shop_picks else 2)
 
-        if can_position and carry is not None and carry.row is not None and carry.row != 3:
+        melee = self._carry_is_melee(carry)
+        if can_position and carry is not None and carry.row is not None and carry.row != 3 and melee is not True:
             move = f"把 {_unit_label(carry)} 移到后排角落"
             hedged = move + "（近战主C除外）"
-            add(ActionType.POSITION, hedged if len(hedged) <= ACTION_MAX else move, 2)
+            add(ActionType.POSITION, move if melee is False or len(hedged) > ACTION_MAX else hedged, 2)
 
         for i, req in enumerate(analysis.scout_requests[:2]):
             who = req.target_player or "对手"
@@ -443,7 +444,15 @@ class RulesAdvisor:
         return short if len(short) <= ACTION_MAX else base
 
     def _roll_targets(self, analysis: Analysis, with_odds: bool = True) -> str:
+        """Name the 1-2 units most worth rolling for with this budget.
+
+        Rolling for a unit that the budget cannot realistically upgrade (for
+        example a 4-cost at level 6) is bad advice, so units are ranked by the
+        probability of reaching their goal star with ``roll_budget`` gold; the
+        comp carry gets a bonus only when its own chance is meaningful.
+        """
         econ = analysis.econ
+        budget = econ.roll_budget
         # Units whose remaining pool cannot complete the goal are not worth rolling for.
         wanted = [
             o
@@ -452,18 +461,35 @@ class RulesAdvisor:
         ]
         if not wanted:
             return ""
+
+        def p_at(o) -> float:
+            options = sorted(g for g in o.p_goal_by_gold if g <= budget)
+            return o.p_goal_by_gold[options[-1]] if options else 0.0
+
         comp = analysis.comps[0] if analysis.comps else None
-        if comp and comp.carry:
-            key = _norm(comp.carry)
-            wanted.sort(key=lambda o: 0 if key in (_norm(o.unit), _norm(o.api_name)) else 1)
-        first = wanted[0]
-        text = f"，找 {first.unit}"
-        budget = econ.roll_budget
-        options = sorted(g for g in first.p_goal_by_gold if g <= budget)
-        if options and with_odds:
-            p = first.p_goal_by_gold[options[-1]]
-            text += f"（{first.goal_star}星概率 {round(p * 100)}%）"
-        return text
+        key = _norm(comp.carry) if comp and comp.carry else ""
+        core = {_norm(u) for u in (comp.core_units if comp else [])}
+
+        def score(o) -> float:
+            p = p_at(o)
+            bonus = 0.0
+            if key and key in (_norm(o.unit), _norm(o.api_name)) and p >= 0.1:
+                bonus += 0.25
+            if _norm(o.unit) in core:
+                bonus += 0.05
+            return p + bonus
+
+        ranked = sorted(wanted, key=score, reverse=True)
+        good = [o for o in ranked if p_at(o) >= 0.1][:2]
+        if not good:
+            return "，找对子升星"
+        if not with_odds:
+            return "，找 " + "、".join(o.unit for o in good)
+        parts = []
+        for o in good:
+            p = p_at(o)
+            parts.append(f"{o.unit}（{o.goal_star}星{round(p * 100)}%）" if p > 0 else o.unit)
+        return "，找 " + "、".join(parts)
 
     def _econ_actions(
         self, state: GameState, analysis: Analysis, carousel: bool
@@ -645,10 +671,22 @@ class RulesAdvisor:
             return clip(f"{who} 装备：{_join(comp.carry_items[:3])}", FIELD_MAX)
         return ""
 
+    def _carry_is_melee(self, carry: Optional[Unit]) -> Optional[bool]:
+        """True / False from the set data's attack range, None when unknown."""
+        if carry is None or self.set_data is None:
+            return None
+        champ = self.set_data.champions.get(carry.api_name) or self.set_data.resolve_champion(carry.name)
+        return None if champ is None else getattr(champ, "is_melee", None)
+
     def _positioning_text(self, carry: Optional[Unit], state: GameState) -> str:
         if not state.board:
             return ""
         if carry is not None:
+            melee = self._carry_is_melee(carry)
+            if melee is True:
+                return f"{_unit_label(carry)} 是近战主C：放前排侧翼，旁边放坦克分担伤害"
+            if melee is False:
+                return f"{_unit_label(carry)} 放后排角落，坦克放前排挡伤害，注意防刺客"
             return f"{_unit_label(carry)} 放后排角落（近战主C除外），坦克放前排挡伤害，注意防刺客"
         return "主C放后排角落，坦克放前排挡伤害"
 

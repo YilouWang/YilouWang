@@ -80,7 +80,7 @@ class Analyzer:
         ), [])
         analysis.comps = comps
         top = comps[0] if comps else None
-        style = self._guard("style", lambda: self._style_for(top), "standard")
+        style = self._guard("style", lambda: self._style_for(top, state), "standard")
 
         # Econ and odds need a level: an unread level would be treated as 1
         # ("buy XP to reach level 2" at stage 5), so estimate it instead.
@@ -124,7 +124,7 @@ class Analyzer:
             return None
         return next((c for c in self.comps if c.name == name), None)
 
-    def _style_for(self, top: Optional[CompSuggestion]) -> str:
+    def _style_for(self, top: Optional[CompSuggestion], state: Optional[GameState] = None) -> str:
         comp = self._comp_def(top.name if top else None)
         if comp is None or top is None or comp.style not in STYLES:
             return "standard"
@@ -133,9 +133,17 @@ class Analyzer:
             champs = [c for c in (self.set_data.resolve_champion(n) for n in comp.units) if c is not None]
             carry = self.set_data.resolve_champion(comp.carry) if comp.carry else None
             hinted = hint_boost(comp.name, champs, carry, self.comp_hint, self.set_data) > 0
-        if top.score >= STYLE_MIN_SCORE or hinted:
-            return comp.style
-        return "standard"
+        if top.score < STYLE_MIN_SCORE and not hinted:
+            return "standard"
+        # Staying low to slow roll is a commitment: players make it when they
+        # already hold a pair (or a 2-star) of the reroll carry, not because a
+        # few generic early units overlap with a reroll comp.
+        if comp.style.startswith("reroll") and not hinted and state is not None and comp.carry:
+            carry_api = self._resolve_api(comp.carry)
+            copies = sum(u.copies for u in state.all_units() if u.api_name == carry_api)
+            if copies < 2:
+                return "standard"
+        return comp.style
 
     def _resolve_api(self, name: Optional[str]) -> Optional[str]:
         if not name:

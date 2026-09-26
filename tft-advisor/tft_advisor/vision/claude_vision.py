@@ -14,6 +14,7 @@ from __future__ import annotations
 import io
 import re
 import time
+import unicodedata
 from typing import TYPE_CHECKING, Any, Optional
 
 from pydantic import ValidationError
@@ -21,7 +22,7 @@ from pydantic import ValidationError
 from ..config import AnthropicConfig
 from ..llm import LLM, LLMError, image_block, text_block
 from ..models import Observation, ScreenObservation, StageRound, UnitObs
-from .base import PerceptionError, PerceptionHint, clean_text, crop_region, normalize_purpose
+from .base import PerceptionError, PerceptionHint, clean_name, clean_text, crop_region, normalize_purpose
 from .prompts import build_user_text, build_vision_system
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -45,11 +46,31 @@ _MAX_IMAGE_BYTES = 3_500_000
 _SHOP_FIELDS = {"screen_type", "shop", "shop_locked", "gold", "level", "xp_current", "xp_needed", "streak", "notes"}
 
 _STAGE_STRICT = re.compile(r"^\d-\d$")
+# Hyphen look-alikes the model may copy from the HUD font ("3\u20132", "3 \uff0d 2").
+# A colon is NOT accepted: "2:05" style text is a timer, not a stage.
+_STAGE_LENIENT = re.compile(r"^\s*([1-9])\s*[-\u2010-\u2015\u2212\ufe63\uff0d]\s*([1-9])\s*$")
+
+# A TFT board has 4 x 7 hexes, the bench 9 slots, a lobby 8 players: more is a misreading.
+_MAX_BOARD_UNITS = 28
+_MAX_BENCH_UNITS = 9
+_MAX_PLAYERS = 8
+
+# Frames smaller than this (minimized window, bad crop) are not worth an API call.
+_MIN_FRAME_EDGE = 64
 
 
 # ---------------------------------------------------------------------------
 # image helpers
 # ---------------------------------------------------------------------------
+
+
+def _image_edge(configured: Any) -> int:
+    """Configured long-edge limit, clamped: <= 0 / garbage means the default, never above the API's 8000 px."""
+    try:
+        edge = int(configured)
+    except (TypeError, ValueError):
+        edge = 0
+    return min(edge, 8000) if edge > 0 else 1568
 
 
 def _to_rgb(img: "Image.Image") -> "Image.Image":
@@ -103,8 +124,29 @@ def encode_image(img: "Image.Image", optimize: bool = True) -> tuple[bytes, str]
 # ---------------------------------------------------------------------------
 
 
-def _norm(text: Optional[str]) -> str:
-    return "".join(ch for ch in (text or "").lower() if ch.isalnum())
+def _norm(text: object) -> str:
+    return "".join(ch for ch in str(text or "").lower() if ch.isalnum())
+
+
+def _short_error(exc: BaseException, limit: int = 160) -> str:
+    text = " ".join(str(exc).split())
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def check_frame(image: "Image.Image") -> None:
+    """Raise :class:`PerceptionError` for frames that cannot contain a readable HUD.
+
+    Tiny frames (minimized window) and single-color frames (black capture of an
+    exclusive-fullscreen game, a loading fade) would only waste an API call.
+    """
+    w, h = image.size
+    if w < _MIN_FRAME_EDGE or h < _MIN_FRAME_EDGE:
+        raise PerceptionError(f"截图尺寸异常 ({w}x{h})，游戏窗口可能被最小化")
+    extrema = image.getextrema()
+    if extrema and isinstance(extrema[0], (int, float)):  # single-band image
+        extrema = (extrema,)
+    if all(hi - lo <= 2 for lo, hi in extrema):
+        raise PerceptionError("截图是纯色画面 (可能是黑屏或正在加载)，已跳过识别")
 
 
 def _clean_units(units: Optional[list[UnitObs]], on_board: bool, notes: list[str]) -> Optional[list[UnitObs]]:
@@ -129,6 +171,10 @@ def _clean_units(units: Optional[list[UnitObs]], on_board: bool, notes: list[str
                 u.col = None
         u.items = [i for i in u.items if (i or "").strip()][:3]
         out.append(u)
+    limit = _MAX_BOARD_UNITS if on_board else _MAX_BENCH_UNITS
+    if len(out) > limit:
+        notes.append(f"{'棋盘' if on_board else '备战席'}读到 {len(out)} 个单位，超过上限，只保留前 {limit} 个")
+        out = out[:limit]
     return out
 
 
@@ -151,7 +197,8 @@ def sanitize_screen(
         s.level = None
     if s.stage is not None:
         raw = s.stage
-        parsed = StageRound.parse(raw)
+        m = _STAGE_LENIENT.match(unicodedata.normalize("NFKC", raw))
+        parsed = StageRound.parse(f"{m.group(1)}-{m.group(2)}") if m else None
         s.stage = f"{parsed.stage}-{parsed.round}" if parsed else None
         if s.stage is None or not _STAGE_STRICT.match(s.stage):
             s.stage = None
@@ -181,8 +228,17 @@ def sanitize_screen(
     s.board = _clean_units(s.board, on_board=True, notes=notes)
     s.bench = _clean_units(s.bench, on_board=False, notes=notes)
 
+    s.viewed_player_name = clean_name(s.viewed_player_name)
     if s.players is not None:
-        players = [p for p in s.players if (p.name or "").strip()]
+        players = []
+        for p in s.players:
+            name = clean_name(p.name)
+            if name:
+                p.name = name
+                players.append(p)
+        if len(players) > _MAX_PLAYERS:
+            notes.append(f"玩家列表读到 {len(players)} 行，只保留前 {_MAX_PLAYERS} 行")
+            players = players[:_MAX_PLAYERS]
         for p in players:
             if p.hp is not None and not 0 <= p.hp <= 200:
                 p.hp = None
@@ -212,8 +268,9 @@ def sanitize_screen(
     elif mode == "scout":
         if s.viewing_own_board is None:
             s.viewing_own_board = False
-        if s.viewed_player_name is None and hint is not None and hint.scouting_player:
-            s.viewed_player_name = hint.scouting_player
+        named = clean_name(hint.scouting_player) if hint is not None else None
+        if s.viewed_player_name is None and named:
+            s.viewed_player_name = named
             notes.append("对手名字来自玩家指定，画面中未读到")
 
     s.notes = [clean_text(n) for n in notes if (n or "").strip()][:12]
@@ -245,7 +302,7 @@ class ClaudeVisionPerceiver:
     def build_images(self, image: "Image.Image", purpose: str = "auto") -> list[tuple[str, "Image.Image"]]:
         """(label, image) pairs to send, in order. Labels do not include the ``IMAGE n:`` prefix."""
         mode = normalize_purpose(purpose)
-        max_edge = int(self.cfg.max_image_edge or 1568)
+        max_edge = _image_edge(self.cfg.max_image_edge)
         frame = _to_rgb(image)
         if mode == "shop":
             return [(_SHOP_LABEL, prepare_crop(crop_region(frame, "hud_bottom"), max_edge))]
@@ -285,9 +342,14 @@ class ClaudeVisionPerceiver:
         captured_at = time.time()
         started = time.monotonic()
         try:
-            content = self.build_content(image, mode, hint)
+            frame = _to_rgb(image)
+        except Exception as exc:  # exotic modes (I;16, F), corrupt image data
+            raise PerceptionError(f"截图处理失败: {_short_error(exc)}") from exc
+        check_frame(frame)
+        try:
+            content = self.build_content(frame, mode, hint)
         except Exception as exc:  # corrupt image, PIL errors
-            raise PerceptionError(f"截图处理失败: {exc}") from exc
+            raise PerceptionError(f"截图处理失败: {_short_error(exc)}") from exc
         try:
             screen = self.llm.parse(
                 model=self.cfg.vision_model,
@@ -300,7 +362,11 @@ class ClaudeVisionPerceiver:
         except LLMError as exc:
             raise PerceptionError(str(exc)) from exc
         except (ValidationError, ValueError) as exc:  # malformed structured output
-            raise PerceptionError(f"识别结果格式错误: {exc}") from exc
+            raise PerceptionError(f"识别结果格式错误: {_short_error(exc)}") from exc
+        except Exception as exc:  # SDK / transport surprises: callers only expect PerceptionError
+            raise PerceptionError(f"识别失败: {type(exc).__name__}: {_short_error(exc)}") from exc
+        if not isinstance(screen, ScreenObservation):
+            raise PerceptionError("识别结果格式错误: 不是 ScreenObservation")
         screen = sanitize_screen(screen, mode, hint)
         return Observation(
             screen=screen,
@@ -311,4 +377,4 @@ class ClaudeVisionPerceiver:
         )
 
 
-__all__ = ["ClaudeVisionPerceiver", "encode_image", "fit_long_edge", "prepare_crop", "sanitize_screen"]
+__all__ = ["ClaudeVisionPerceiver", "check_frame", "encode_image", "fit_long_edge", "prepare_crop", "sanitize_screen"]

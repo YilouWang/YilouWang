@@ -114,9 +114,9 @@ class AdvisorApp:
     ) -> None:
         from .advisor.rules import RulesAdvisor
         from .advisor.scouting import ScoutPlanner
-        from .data.comps import load_comps
+        from .data.comps import comps_reference_text, load_comps
         from .data.mechanics import load_mechanics
-        from .data.setdata import load_set_data
+        from .data.setdata import load_set_data, set_notes
         from .engine.analyzer import Analyzer
         from .engine.tracker import GameTracker
         from .llm import LLM, has_credentials
@@ -127,11 +127,11 @@ class AdvisorApp:
         self.clock = clock
         self.set_data = set_data or load_set_data(cfg.data, offline=offline_data, log=self.info)
         self.mech = mech or load_mechanics(cfg.data.mechanics_file or None)
-        self.comps = load_comps(cfg.data.comps_file or None, self.set_data)
+        self.comps = load_comps(cfg.data.comps_file or None, self.set_data, log=self.warn)
         self.tracker = GameTracker(self.set_data, self.mech)
         self.analyzer = Analyzer(self.set_data, self.mech, self.comps, cfg.advisor.comp_hint)
-        self.rules = RulesAdvisor(cfg.hotkeys)
-        self.scout_planner = ScoutPlanner(cfg.advisor.max_scout_requests_per_stage, cfg.hotkeys.scout)
+        self.rules = RulesAdvisor(cfg.hotkeys, mech=self.mech, set_data=self.set_data)
+        self.scout_planner = ScoutPlanner(cfg.advisor.max_scout_requests_per_stage, cfg.hotkeys.scout, mech=self.mech)
         self.game_log = GameLogger(cfg.cache_dir / "logs")
 
         if use_llm is None:
@@ -145,7 +145,10 @@ class AdvisorApp:
         elif self.llm is not None and cfg.advisor.llm_strategy:
             from .advisor.strategist import ClaudeStrategist
 
-            self.strategist = ClaudeStrategist(self.llm, cfg.anthropic, self.set_data)
+            reference = "\n\n".join(
+                x for x in (set_notes(self.set_data.set_number), comps_reference_text(self.comps)) if x
+            )
+            self.strategist = ClaudeStrategist(self.llm, cfg.anthropic, self.set_data, extra_reference=reference)
         else:
             self.strategist = None
 

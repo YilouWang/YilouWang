@@ -44,12 +44,22 @@ def _loopback_insecure_context() -> ssl.SSLContext:
     return ctx
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """The Live Client API never redirects. Following a redirect would carry the
+    unverified TLS context (meant for 127.0.0.1 only) to another host, so any 3xx
+    becomes an error (and ``fetch`` returns None)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401, ANN001
+        return None
+
+
 def _player_display_name(p: dict[str, Any]) -> Optional[str]:
     for key in ("riotIdGameName", "riotId", "summonerName"):
         val = p.get(key)
         if isinstance(val, str) and val.strip():
             name = val.strip()
-            if key == "riotId" and "#" in name:
+            # Since Riot IDs, summonerName is often "GameName#TAG" too; the HUD shows only GameName.
+            if "#" in name:
                 name = name.split("#", 1)[0].strip()
             if name:
                 return name
@@ -95,7 +105,7 @@ class LiveClient:
         self.trust_gold = trust_gold
         self.name = name
         parsed = urllib.parse.urlsplit(self.base)
-        handlers: list[Any] = [urllib.request.ProxyHandler({})]  # never route localhost through a proxy
+        handlers: list[Any] = [urllib.request.ProxyHandler({}), _NoRedirect()]  # never route localhost through a proxy
         if parsed.scheme == "https" and parsed.hostname == "127.0.0.1":
             handlers.append(urllib.request.HTTPSHandler(context=_loopback_insecure_context()))
         self._opener = urllib.request.build_opener(*handlers)

@@ -7,6 +7,9 @@ Rules (see :func:`merge_observations`):
   not ``None``: fast exact sources (OCR digits, the Live Client API) win for
   numbers such as gold / level / stage.
 * ``screen_type`` "other" means "unknown" and is filled from the secondary.
+* ``xp_current`` / ``xp_needed`` belong to one level: when ``level`` is taken
+  from the secondary and differs, the XP pair comes from the secondary too
+  (``None`` there means "unknown for that level", not "keep the other level's").
 * Notes are concatenated (deduplicated), plus a short note for each overridden
   value that actually differed.
 """
@@ -15,7 +18,7 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
-from ..models import Observation, ScreenObservation, ScreenType
+from ..models import Observation, PlayerObs, ScreenObservation, ScreenType, ShopSlot, UnitObs
 from .base import clean_text
 
 DEFAULT_PREFER_SECONDARY: frozenset[str] = frozenset({"gold", "level", "stage"})
@@ -38,8 +41,27 @@ def _norm(text: Optional[str]) -> str:
     return "".join(ch for ch in (text or "").lower() if ch.isalnum())
 
 
+def _describe(value: object) -> str:
+    """Short readable form of a field value for a player-facing note."""
+    if isinstance(value, list):
+        parts: list[str] = []
+        for v in value:
+            if isinstance(v, ShopSlot):
+                parts.append(v.name or "空")
+            elif isinstance(v, (UnitObs, PlayerObs)):
+                parts.append(v.name)
+            else:
+                parts.append(str(v))
+        return "/".join(parts) if parts else "空"
+    if isinstance(value, bool):
+        return "是" if value else "否"
+    if isinstance(value, ScreenType):
+        return value.value
+    return str(value)
+
+
 def _short(value: object) -> str:
-    text = str(value)
+    text = _describe(value)
     return text if len(text) <= 24 else text[:21] + "..."
 
 
@@ -72,6 +94,15 @@ def merge_observations(
             setattr(out, field, s_val)
             label = _FIELD_LABELS.get(field, field)
             override_notes.append(f"{label}: {_short(p_val)} 改为 {_short(s_val)} (以更精确的来源为准)")
+
+    # The XP pair is only meaningful together with the level it was read at.
+    if (
+        primary.level is not None
+        and sec.level is not None
+        and out.level == sec.level != primary.level
+        and (out.xp_current, out.xp_needed) != (sec.xp_current, sec.xp_needed)
+    ):
+        out.xp_current, out.xp_needed = sec.xp_current, sec.xp_needed
 
     # Player list: keep the primary rows but learn "who am I" from the secondary.
     if out.players and sec.players and not any(p.is_self for p in out.players):

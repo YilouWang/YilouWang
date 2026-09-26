@@ -85,6 +85,15 @@ NO_BOARD_SCREENS = (ScreenType.CAROUSEL, ScreenType.LOADING)
 DUPLICATE_OVERLAP = 0.7  # share of copies two unit lists must have in common to be "the same board"
 
 
+
+WISP_PREFIXES = ("wisp", "精灵", "灵火")
+
+
+def is_wisp_name(name: Optional[str]) -> bool:
+    """Shop slots holding a Set 18 Wisp are reported as 'Wisp: <name>' by the vision layer."""
+    n = (name or "").strip().lower()
+    return n.startswith(WISP_PREFIXES)
+
 def _overlap(a: dict[str, int], b: dict[str, int]) -> float:
     """Shared copies / copies of the larger list (0..1)."""
     size = max(sum(a.values()), sum(b.values()))
@@ -619,6 +628,11 @@ class GameTracker:
                 cost = None
             if name is None:
                 shop.append(ShopSlot(name=None, cost=cost))
+                units.append(None)
+                continue
+            if is_wisp_name(name):
+                # Set 18 Wisp consumable in the shop: not a champion, not a misread.
+                shop.append(ShopSlot(name=name, cost=cost))
                 units.append(None)
                 continue
             champ = self._resolve_champion(name, cost)

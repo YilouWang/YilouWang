@@ -7,6 +7,9 @@ Routes::
     GET  /api/snapshot     JSON of ``bus.snapshot()`` (latest payload per topic + log)
     GET  /api/events       text/event-stream: first ``event: snapshot``, then every bus
                            event as ``event: <topic>``, keepalive comments every 15 s
+                           (each followed by a tiny ``event: ping`` for the page's
+                           dead-stream watchdog). A client too slow to keep up gets a
+                           fresh ``snapshot`` instead of the events it would lose.
     POST /api/command      {"cmd": "...", ...} -> ``bus.command(cmd, **args)``
 
 Security model:
@@ -23,6 +26,7 @@ The server only reads the bus and publishes commands; it never touches the game.
 from __future__ import annotations
 
 import dataclasses
+import errno
 import json
 import math
 import queue
@@ -54,6 +58,11 @@ LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 _MAX_STR = 500  # longest free-text argument (questions)
 _MAX_SHORT_STR = 200
 _MAX_EXTRA_ARGS = 8
+_MAX_ABS_NUMBER = 10**9  # manual corrections are small numbers; bigger ones are garbage
+# Keyword names that ``EventBus.command(self, cmd, **kwargs)`` cannot take as extras.
+_RESERVED_ARGS = frozenset({"cmd", "token", "self"})
+# errno values meaning "this address does not exist here" (retrying other ports is pointless).
+_ADDR_NOT_AVAILABLE = frozenset({errno.EADDRNOTAVAIL, 10049})
 
 _FALLBACK_HTML = (
     "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><title>TFT 实时助手</title></head>"
@@ -113,6 +122,14 @@ def jsonable(obj: Any, _depth: int = 0) -> Any:
         return str(obj)
     if isinstance(obj, (bytes, bytearray, memoryview)):
         return f"<{len(obj)} bytes>"
+    # numpy scalars (np.int64, np.bool_, ...) and arrays, without importing numpy.
+    if type(obj).__module__ == "numpy":
+        try:
+            if hasattr(obj, "tolist"):
+                return jsonable(obj.tolist(), _depth + 1)
+            return jsonable(obj.item(), _depth + 1)
+        except Exception:
+            return str(obj)
     return str(obj)
 
 
@@ -139,9 +156,11 @@ class CommandError(ValueError):
 
 
 def _is_scalar(v: Any) -> bool:
-    if isinstance(v, float):
-        return math.isfinite(v)
-    return v is None or isinstance(v, (str, int, bool))
+    if isinstance(v, bool) or v is None or isinstance(v, str):
+        return True
+    if isinstance(v, (int, float)):
+        return math.isfinite(v) and abs(v) <= _MAX_ABS_NUMBER
+    return False
 
 
 def _opt_str(payload: dict[str, Any], key: str, limit: int = _MAX_SHORT_STR) -> Optional[str]:
@@ -191,7 +210,7 @@ def validate_command(payload: Any) -> tuple[str, dict[str, Any]]:
         args["comp"] = _opt_str(payload, "comp", _MAX_SHORT_STR) or ""
     extras = 0
     for key, value in payload.items():
-        if key in ("cmd", "token") or key in args:
+        if key in _RESERVED_ARGS or key in args:
             continue
         if not isinstance(key, str) or not key.isidentifier() or len(key) > 32 or key.startswith("_"):
             continue
@@ -463,7 +482,7 @@ class _Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length) if length else b""
         try:
             payload = json.loads(raw.decode("utf-8")) if raw else None
-        except (UnicodeDecodeError, json.JSONDecodeError):
+        except (ValueError, RecursionError):  # bad UTF-8 / JSON, huge numbers, deep nesting
             self._error(400, "JSON 格式错误")
             return
         try:
@@ -509,11 +528,22 @@ class _Handler(BaseHTTPRequestHandler):
             self._write(_sse_frame("snapshot", dash.bus.snapshot()))
             last_write = time.monotonic()
             while not dash.stopping:
+                if q.full():
+                    # The bus drops events for a full queue (slow client, e.g. a
+                    # sleeping phone). Newer payloads may be lost, so throw the
+                    # backlog away and resend the whole current state instead.
+                    _drain(q)
+                    self._write(_sse_frame("snapshot", dash.bus.snapshot()))
+                    last_write = time.monotonic()
+                    continue
                 try:
                     topic, payload = q.get(timeout=min(0.5, dash.keepalive_s))
                 except queue.Empty:
                     if time.monotonic() - last_write >= dash.keepalive_s:
-                        self._write(": keepalive\n\n")
+                        # The comment keeps proxies / NAT from closing the idle stream;
+                        # the "ping" event lets the page notice a dead stream (EventSource
+                        # hides comments from JavaScript).
+                        self._write(": keepalive\n\n" + _sse_frame("ping", {"ts": time.time()}))
                         last_write = time.monotonic()
                     continue
                 self._write(_sse_frame(topic, payload))
@@ -528,6 +558,14 @@ class _Handler(BaseHTTPRequestHandler):
     def _write(self, text: str) -> None:
         self.wfile.write(text.encode("utf-8"))
         self.wfile.flush()
+
+
+def _drain(q: "queue.Queue[Any]") -> None:
+    while True:
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            return
 
 
 def _sse_topic(topic: Any) -> str:
@@ -599,9 +637,17 @@ class DashboardServer:
                 break
             except OSError as exc:
                 last_exc = exc
+                if isinstance(exc, socket.gaierror) or exc.errno in _ADDR_NOT_AVAILABLE:
+                    break  # the host itself is wrong: other ports will not help
         if httpd is None:
+            if last_exc is not None and (isinstance(last_exc, socket.gaierror) or last_exc.errno in _ADDR_NOT_AVAILABLE):
+                raise OSError(
+                    f"看板无法监听地址 {host or '0.0.0.0'}（{last_exc}），请检查配置 [ui] host，"
+                    "本机用 127.0.0.1，手机访问用 0.0.0.0"
+                ) from last_exc
             raise OSError(
-                f"看板端口 {base_port} 到 {ports[-1] if ports else base_port} 都被占用，请在配置里换一个端口 ([ui] port)"
+                f"看板端口 {base_port} 到 {ports[-1] if ports else base_port} 都无法使用（{last_exc}），"
+                "请在配置里换一个端口 ([ui] port)"
             ) from last_exc
         httpd.dashboard = self
         self._stopping.clear()

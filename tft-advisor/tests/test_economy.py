@@ -232,21 +232,18 @@ def test_reasons_never_use_em_dash(mech):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=False, reason="economy.py cheap-level branch does not check that the XP buy is affordable")
 def test_cheap_level_must_be_affordable(mech):
     need = mech.xp_to_level[6]
     plan = plan_economy(gs("3-3", gold=mech.buy_xp_cost - 2, level=6, xp=need - 2, hp=90), mech)
     assert plan.recommendation != EconAction.LEVEL
 
 
-@pytest.mark.xfail(strict=False, reason="economy.py only prices a jump straight to the standard level when 2+ levels behind")
 def test_two_levels_behind_buys_the_level_it_can_afford(mech):
     one = mech.gold_to_reach(5, 0, 6)
     plan = plan_economy(gs("4-1", gold=one + 25, level=5, hp=80), mech)
     assert plan.recommendation in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL) and plan.target_level == 6
 
 
-@pytest.mark.xfail(strict=False, reason="economy.py treats an unread level (None) as level 1")
 def test_unknown_level_is_not_level_one(mech):
     plan = plan_economy(GameState(stage=StageRound.parse("5-1"), gold=0, hp=80), mech)
     assert plan.target_level != 2

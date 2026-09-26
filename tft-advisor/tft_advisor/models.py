@@ -260,6 +260,8 @@ class EconPlan(BaseModel):
     recommendation: EconAction = EconAction.HOLD
     roll_budget: int = 0  # gold that can be spent on rolls now under the plan
     target_level: Optional[int] = None
+    style: str = "standard"  # standard | fast8 | fast9 | reroll1 | reroll2 | reroll3
+    level_estimated: bool = False  # level was not read, a guess was used
     reason: str = ""
 
 
