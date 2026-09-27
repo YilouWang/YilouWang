@@ -941,3 +941,78 @@ def test_require_foreground_can_be_disabled(cfg, sample):
     assert app._game_frame_ok() is False
     cfg.capture.require_foreground = False
     assert app._game_frame_ok() is True
+
+
+def test_live_threads_auto_mode_end_to_end(cfg, sample):
+    """Capture thread -> RoundWatcher -> auto job -> Claude vision (fake API)
+    -> tracker -> rules -> Claude strategy thread -> bus, all on real threads."""
+    import threading
+
+    from PIL import Image, ImageDraw
+
+    from tft_advisor.advisor.strategist import ClaudeStrategist
+    from tft_advisor.llm import LLM
+    from tft_advisor.vision.claude_vision import ClaudeVisionPerceiver
+
+    def frame(stage: str) -> Image.Image:
+        img = Image.new("RGB", (1920, 1080), (20, 24, 32))
+        d = ImageDraw.Draw(img)
+        d.rectangle((0, 820, 1920, 1080), fill=(40, 40, 50))  # static bottom HUD
+        for i, ch in enumerate(stage):  # big blocky digits in the stage region
+            x = 760 + i * 40
+            if ch == "-":
+                d.rectangle((x + 8, 18, x + 28, 22), fill=(240, 230, 200))
+            else:
+                n = int(ch)
+                d.rectangle((x, 4, x + 30, 36), outline=(240, 230, 200), width=4)
+                for k in range(n):
+                    d.rectangle((x + 5 + 4 * k, 10, x + 7 + 4 * k, 30), fill=(240, 230, 200))
+        return img
+
+    frames = [frame("3-1")] * 6 + [frame("3-2")] * 400
+    lock = threading.Lock()
+
+    class Cap:
+        last_source = None  # not a window capturer: no foreground gating
+
+        def grab(self):
+            with lock:
+                return frames.pop(0) if len(frames) > 1 else frames[0]
+
+        def close(self):
+            pass
+
+    cfg.capture.poll_interval_s = 0.2
+    cfg.capture.settle_delay_s = 0.1
+    cfg.advisor.auto = True
+    cfg.advisor.shop_watch = False
+    with FakeAnthropic() as fake:
+        llm = LLM(cfg.anthropic, client=fake.client())
+        fake.queue_json_wire(
+            ScreenObservation(
+                screen_type=ScreenType.PLANNING, viewing_own_board=True, stage="3-2", gold=34, level=5,
+                xp_current=12, xp_needed=20, hp=62, board=[{"name": "Garen", "star": 2, "row": 0, "col": 3}], bench=[],
+                shop=[{"name": "Garen", "cost": 1}, {"name": "Vayne", "cost": 1}, {}, {}, {}],
+            )
+        )
+        fake.queue_json({"headline": "升到6级，搜到20", "actions": [{"type": "level", "text": "买经验升6级", "priority": 1}], "plan": "3-2 稳血", "confidence": 0.6})
+        app = AdvisorApp(
+            cfg, set_data=sample, capturer=Cap(), perceiver=ClaudeVisionPerceiver(llm, cfg.anthropic, sample),
+            fast_perceiver=None, llm=llm, strategist=ClaudeStrategist(llm, cfg.anthropic, sample), console=False,
+        )
+        app.start(dashboard=False, hotkeys=False, voice=False, capture=True)
+        try:
+            deadline = time.time() + 20
+            while time.time() < deadline:
+                adv = app.bus.latest("advice")
+                if adv and adv.get("source") == "llm":
+                    break
+                time.sleep(0.05)
+            adv = app.bus.latest("advice")
+            assert adv and adv["source"] == "llm" and adv["headline"] == "升到6级，搜到20", (adv, app.last_error)
+            st = app.tracker.state
+            assert str(st.stage) == "3-2" and st.gold == 34 and st.level == 5
+            purposes = [r["body"]["messages"][0]["content"][-1]["text"] for r in fake.requests[:1]]
+            assert "automatic capture" in purposes[0]
+        finally:
+            app.stop()
