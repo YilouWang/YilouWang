@@ -57,7 +57,7 @@
 ## 快速开始
 
 ```powershell
-tft-advisor doctor          # 检查依赖、API Key、截图、数据
+tft-advisor doctor          # 检查依赖、API Key、截图、数据（加 --api 会真实调用一次 Claude）
 tft-advisor demo            # 用一局预先写好的 S18 对局演示整个流程（不需要游戏和 Key）
 tft-advisor calibrate --delay 5   # 5 秒后截图并画出识别区域，检查是否对齐
 tft-advisor run             # 正式开始，自动打开看板
@@ -66,7 +66,7 @@ tft-advisor run             # 正式开始，自动打开看板
 ### 第一次正式用之前
 
 1. `tft-advisor data update`：提前下载最新赛季数据（第一次启动时下载，网络慢会等很久；失败会用内置的 18.3 快照）。
-2. `tft-advisor doctor`：确认 API Key、截图、数据都是 OK。
+2. `tft-advisor doctor --api`：确认 API Key、截图、数据都是 OK，并真实调用一次 Claude 识别和策略（约 0.1 美元），提前发现 Key 无效、模型不可用或请求被拒这类问题。
 3. 进一局普通模式，`tft-advisor calibrate --delay 5` 后切回游戏，打开生成的 `~/.tft_advisor/calibrate.png` 看框是否对齐。
 4. `tft-advisor run`，在准备阶段按一次 F6，看看识别出的金币、等级、商店是否正确（识别错了可以在看板里手动修正）。
 5. 打完第一局看一眼看板上的费用估算，再决定要不要换更便宜的模型或关掉自动读商店。

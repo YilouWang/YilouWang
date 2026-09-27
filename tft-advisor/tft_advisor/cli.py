@@ -342,7 +342,69 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         _check("Riot Live Client API", data is not None, "游戏中可用" if data else "未连接（不在对局中时正常）")
     except Exception as exc:
         _check("Riot Live Client API", False, str(exc))
+    if getattr(args, "api", False):
+        return _doctor_api(cfg, offline=args.offline)
     return 0
+
+
+def _doctor_api(cfg: Config, offline: bool = False) -> int:
+    """Two real, cheap Claude calls with the exact production prompts and schemas.
+
+    Catches a wrong key, an unavailable model, or a request the API rejects
+    (for example a structured-output schema that is too complex) before a game.
+    """
+    from PIL import Image, ImageDraw
+
+    from .advisor.strategist import ClaudeStrategist
+    from .data.comps import comps_reference_text, load_comps
+    from .data.setdata import load_set_data, set_notes
+    from .llm import LLM, has_credentials
+    from .models import Advice, Analysis, GameState
+    from .vision.base import PerceptionError
+    from .vision.claude_vision import ClaudeVisionPerceiver
+
+    print("Claude 实际调用测试（约 0.1 美元）:")
+    if not has_credentials():
+        _check("API 调用", False, "没有 API Key，跳过")
+        return 1
+    sd = load_set_data(cfg.data, offline=offline, log=lambda *_: None)
+    llm = LLM(cfg.anthropic)
+    ok = True
+
+    # Vision: the cheapest purpose (shop crop only) on a synthetic frame.
+    frame = Image.new("RGB", (1920, 1080), (18, 22, 30))
+    draw = ImageDraw.Draw(frame)
+    draw.text((780, 12), "3-2", fill=(230, 220, 190))
+    draw.text((1024, 890), "42", fill=(250, 210, 90))
+    perceiver = ClaudeVisionPerceiver(llm, cfg.anthropic, sd)
+    started = time.monotonic()
+    try:
+        obs = perceiver.perceive(frame, purpose="shop")
+        _check("视觉识别", True, f"{cfg.anthropic.vision_model}，{time.monotonic() - started:.1f} 秒，识别为 {obs.screen.screen_type.value}")
+    except PerceptionError as exc:
+        ok = False
+        _check("视觉识别", False, str(exc))
+
+    # Strategy: the real system prompt (set data + comp library) on an empty game.
+    comps = load_comps(cfg.data.comps_file or None, sd)
+    reference = "\n\n".join(x for x in (set_notes(sd.set_number), comps_reference_text(comps)) if x)
+    strategist = ClaudeStrategist(llm, cfg.anthropic, sd, extra_reference=reference)
+    started = time.monotonic()
+    baseline = Advice(headline="测试", source="rules")
+    advice = strategist.advise(GameState(), Analysis(), baseline)
+    if advice is baseline or strategist.last_error:
+        ok = False
+        _check("策略建议", False, strategist.last_error or "没有得到 Claude 的建议")
+    else:
+        _check("策略建议", True, f"{cfg.anthropic.strategy_model}，{time.monotonic() - started:.1f} 秒：{advice.headline}")
+
+    stats = llm.stats.as_dict()
+    print(
+        f"  用量: 输入 {stats.get('input_tokens', 0)} / 缓存读 {stats.get('cache_read_tokens', 0)} / "
+        f"缓存写 {stats.get('cache_write_tokens', 0)} / 输出 {stats.get('output_tokens', 0)} token，"
+        f"估算 {stats.get('cost_usd', 0):.3f} 美元"
+    )
+    return 0 if ok else 1
 
 
 # ------------------------------------------------------------------- calibrate
@@ -521,6 +583,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     doc = sub.add_parser("doctor", help="检查环境")
     doc.add_argument("--offline", action="store_true")
+    doc.add_argument("--api", action="store_true", help="真实调用一次 Claude 识别和策略（约 0.1 美元），确认 Key、模型和请求格式都没问题")
     doc.set_defaults(func=cmd_doctor)
 
     c = sub.add_parser("calibrate", help="截图并画出识别区域，检查分辨率适配")

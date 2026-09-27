@@ -462,3 +462,33 @@ def test_llm_review_sanitizes_and_sends_summary():
         assert body["model"] == "m"
         assert body["system"][0]["text"] == REVIEW_SYSTEM
         assert llm.stats.by_purpose == {"review": 1}
+
+
+def test_doctor_api_makes_one_vision_and_one_strategy_call(home, offline_data, monkeypatch, capsys):
+    from tft_advisor.models import ScreenObservation, ScreenType
+
+    with FakeAnthropic() as fake:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", fake.base_url)
+        fake.queue_json_wire(ScreenObservation(screen_type=ScreenType.OTHER))
+        fake.queue_json({"headline": "进入对局后按 F6", "actions": [{"type": "other", "text": "开始对局", "priority": 1}], "plan": "", "confidence": 0.3})
+        rc = cli.main(["doctor", "--offline", "--api"])
+        out = capsys.readouterr().out
+        assert rc == 0, out
+        assert "视觉识别" in out and "策略建议" in out and "估算" in out
+        assert len(fake.requests) == 2
+        vision, strategy = (r["body"] for r in fake.requests)
+        assert vision["output_config"]["format"]["type"] == "json_schema"
+        assert any(b["type"] == "image" for b in vision["messages"][0]["content"])
+        assert "COMP LIBRARY" in strategy["system"][0]["text"]
+
+
+def test_doctor_api_reports_rejected_request(home, offline_data, monkeypatch, capsys):
+    with FakeAnthropic() as fake:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", fake.base_url)
+        fake.queue_error(400, "Schema is too complex for compilation")
+        fake.queue_error(400, "Schema is too complex for compilation")
+        rc = cli.main(["doctor", "--offline", "--api"])
+        out = capsys.readouterr().out
+        assert rc == 1 and "!!" in out
