@@ -51,8 +51,12 @@ best-in-slot items for the carry; emblems only when they complete a strong break
 or hooks when the snapshot of an opponent shows them.
 - Augments: when augment_choices is non-empty, the augment field must name one of the choices as the best pick \
 with one short reason (economy vs combat power, fit with the current board and items, stage of the game).
-- Unknown augments and Wisps: this set may be newer than what you know. If you do not know an augment or Wisp, \
-judge it from its name and category, write 不确定 in the reason and lower confidence; never invent numbers or effects.
+- augment_info (when present) gives each offered or owned augment's effect text, rarity, category and tier \
+("S" = rated S by a public tier list when this tool was built: a static hint, not live data). Use the effect \
+text; still judge the fit with the board, items, HP and stage.
+- Unknown augments and Wisps: this set may be newer than what you know. If an augment or Wisp has no \
+augment_info and you do not know it, judge it from its name and category, write 不确定 in the reason and lower \
+confidence; never invent numbers or effects.
 - Carousel: the component (or unit) that completes the carry's items.
 - Pivots: if the top comp is contested (contested_by) or the key units are drained from the pool, suggest the \
 best alternative from comps.
@@ -265,6 +269,7 @@ def _state_dict(
     odds_detail: bool,
     scouting: bool = True,
     hotkeys: Optional[HotkeyConfig] = None,
+    augments: Any = None,
 ) -> dict[str, Any]:
     xp = None
     if state.xp_current is not None or state.xp_needed is not None:
@@ -410,6 +415,7 @@ def _state_dict(
         ],
         "augments": list(state.augments),
         "augment_choices": list(state.augment_choices),
+        "augment_info": _augment_info(augments, [*state.augment_choices, *state.augments]),
         "players": players,
         "opponents": opponents,
         "econ": econ_d,
@@ -433,6 +439,27 @@ def _dumps(obj: Any) -> str:
     return json.dumps(_prune(obj), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _augment_info(augments: Any, names: list[str]) -> Optional[list[dict[str, Any]]]:
+    """Effect text, rarity, category and tier snapshot for offered / owned augments."""
+    if not augments or not names:
+        return None
+    out: list[dict[str, Any]] = []
+    for raw in dict.fromkeys(n for n in names if n):
+        a = augments.lookup(raw)
+        if a is None:
+            continue
+        out.append(
+            {
+                "name": raw,
+                "effect": a.desc_en or a.desc,
+                "rarity": a.rarity or None,
+                "category": a.category or None,
+                "tier": a.meta_tier or None,
+            }
+        )
+    return out or None
+
+
 def build_state_message(
     state: GameState,
     analysis: Analysis,
@@ -441,6 +468,7 @@ def build_state_message(
     recent_history: Optional[Iterable[Any]] = None,
     scouting: bool = True,
     hotkeys: Optional[HotkeyConfig] = None,
+    augments: Any = None,
 ) -> str:
     """Compact, deterministic user message for the strategist.
 
@@ -458,7 +486,7 @@ def build_state_message(
         lambda: lim.update(opponents=4, opp_units=10, comps=2),
         lambda: lim.update(history=0, opponents=0, odds=3),
     ]
-    payload = _dumps(_state_dict(state, analysis, rules_advice, history_list, lim, opp_bench, odds_detail, scouting, hotkeys))
+    payload = _dumps(_state_dict(state, analysis, rules_advice, history_list, lim, opp_bench, odds_detail, scouting, hotkeys, augments))
     step = 0
     while len(payload) > MAX_STATE_CHARS and step < len(reducers):
         reducers[step]()
@@ -467,7 +495,7 @@ def build_state_message(
         if step == 3:
             odds_detail = False
         step += 1
-        payload = _dumps(_state_dict(state, analysis, rules_advice, history_list, lim, opp_bench, odds_detail, scouting, hotkeys))
+        payload = _dumps(_state_dict(state, analysis, rules_advice, history_list, lim, opp_bench, odds_detail, scouting, hotkeys, augments))
 
     q = (question or "").strip()
     tail = f"PLAYER QUESTION: {q}" if q else DEFAULT_QUESTION

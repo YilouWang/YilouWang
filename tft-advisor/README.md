@@ -168,6 +168,7 @@ voice = false                      # 语音播报
 
   把文件放在 `config.toml` 旁边，在配置里写 `[data] comps_file = '我的阵容.json'`（相对路径按配置文件所在的文件夹算）。名字中英文都可以。文件找不到、格式错误或者一套阵容都读不出来时，启动会提示原因并改用内置阵容库。
 
+- **海克斯强化**：内置 `augments_set18.json`（249 个 S18 强化的中英文名、效果、品级、类别，以及 2026-09-26 MetaTFT 高分段 S 级名单的静态快照）。选强化时规则引擎会给出推荐和效果说明，Claude 也会拿到这几个选项的效果文字。重新生成：`python tools/build_augments.py --ddragon <Data Dragon 数据目录> --metatft <MetaTFT lookup.json>`。
 - 重新生成内置快照：`python tools/build_snapshot.py --en en_us.json --zh zh_cn.json`。
 
 ## 其他命令

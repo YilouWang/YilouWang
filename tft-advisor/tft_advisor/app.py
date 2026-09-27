@@ -208,6 +208,10 @@ class AdvisorApp:
         self.tracker = GameTracker(self.set_data, self.mech)
         self.analyzer = Analyzer(self.set_data, self.mech, self.comps, cfg.advisor.comp_hint)
         self.rules = RulesAdvisor(cfg.hotkeys, mech=self.mech, set_data=self.set_data)
+        from .data.augments import AugmentData
+
+        self.augments = AugmentData.load(self.set_data.set_number)
+        self.rules.augments = self.augments or None
         self.scout_planner = ScoutPlanner(cfg.advisor.max_scout_requests_per_stage, cfg.hotkeys.scout, mech=self.mech)
         self.game_log = GameLogger(cfg.cache_dir / "logs", keep=cfg.data.keep_game_logs)
 
@@ -237,6 +241,8 @@ class AdvisorApp:
                 hotkeys=cfg.hotkeys,
                 scout_enabled=cfg.advisor.scout_prompts,
             )
+            if hasattr(self.strategist, "augments"):
+                self.strategist.augments = self.augments or None
         else:
             self.strategist = None
         # The rules text points to the Claude advice only when a strategist exists.

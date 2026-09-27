@@ -285,6 +285,20 @@ class RulesAdvisor:
         self.claude_enabled = claude_enabled
         # Keys that could not be registered as global hotkeys (set by the app).
         self.unavailable_keys: set[str] = set()
+        # Static augment reference of the set (names, effects, tier snapshot).
+        self.augments = None  # Optional[AugmentData], set by the app
+
+    def _augment_pick(self, state: GameState, analysis: Analysis) -> Optional[tuple[str, str]]:
+        """Best offered augment by the static reference, or None."""
+        choices = [c for c in state.augment_choices if c]
+        if not choices or not self.augments:
+            return None
+        from ..data.augments import pick_augment
+
+        comp = analysis.comps[0] if analysis.comps else None
+        traits = [t.split(" ", 1)[-1] for t in (getattr(comp, "traits", None) or [])] if comp else []
+        traits += [t.name for t in state.traits if t.active]
+        return pick_augment(choices, self.augments, state.stage.stage if state.stage else None, state.hp, traits)
 
     _BUTTONS = {"analyze": "点看板「分析」", "scout": "点看板「记录对手」", "shop": "点看板「读商店」"}
 
@@ -316,7 +330,8 @@ class RulesAdvisor:
                 actions.append(AdviceAction(type=kind, text=text, priority=max(1, min(3, priority))))
 
         if augment:
-            add(ActionType.AUGMENT, AUGMENT_GENERIC, 1)
+            pick = self._augment_pick(state, analysis)
+            add(ActionType.AUGMENT, f"海克斯选 {pick[0]}（{pick[1]}）" if pick else AUGMENT_GENERIC, 1)
         if carousel:
             add(ActionType.CAROUSEL, self._carousel_text(carousel_pick, carry_full), 1)
 
@@ -366,7 +381,7 @@ class RulesAdvisor:
             comp=self._comp_text(comp) or None,
             items=self._items_text(analysis, comp, carry, state) or None,
             positioning=clip(self._positioning_text(carry, state), FIELD_MAX) or None,
-            augment=self._augment_text(state) if augment else None,
+            augment=self._augment_text(state, analysis) if augment else None,
             scout_request=sanitize(analysis.scout_requests[0].text) if analysis.scout_requests else None,
             confidence=0.3 if sr is None else 0.55,
             source="rules",
@@ -415,7 +430,8 @@ class RulesAdvisor:
         rec = econ.recommendation
         pick = analysis.shop_picks[0] if analysis.shop_picks else None
         if augment:
-            return AUGMENT_HEADLINE
+            pick_aug = self._augment_pick(state, analysis)
+            return f"海克斯选 {pick_aug[0]}" if pick_aug else AUGMENT_HEADLINE
         if carousel:
             if carousel_pick:
                 return f"选秀：拿{carousel_pick[0]}"
@@ -940,10 +956,19 @@ class RulesAdvisor:
             return f"{_unit_label(carry)} 放后排角落（近战主C除外），坦克放前排挡伤害，注意防刺客"
         return "主C放后排角落，坦克放前排挡伤害"
 
-    def _augment_text(self, state: GameState) -> str:
+    def _augment_text(self, state: GameState, analysis: Optional[Analysis] = None) -> str:
         # Point to Claude only when a strategist will actually answer.
         more = AUGMENT_MORE if self.claude_enabled else ""
         choices = [c for c in state.augment_choices if c]
+        if choices and self.augments:
+            known = [(c, self.augments.lookup(c)) for c in choices]
+            pick = self._augment_pick(state, analysis or Analysis())
+            if pick is not None:
+                aug = self.augments.lookup(pick[0])
+                effect = f"：{aug.desc}" if aug and aug.desc else ""
+                return clip(f"推荐 {pick[0]}（{pick[1]}）{effect}{more}", FIELD_MAX)
+            if any(a for _, a in known):
+                return clip(f"可选：{_join(choices)}。{AUGMENT_HINT}{more}", FIELD_MAX)
         if choices:
             return clip(f"可选：{_join(choices)}。{AUGMENT_HINT}{more}", FIELD_MAX)
         return f"{AUGMENT_GENERIC}{more}"

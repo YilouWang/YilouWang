@@ -72,11 +72,13 @@ class ClaudeStrategist:
         extra_reference: str = "",
         hotkeys: Optional[HotkeyConfig] = None,
         scout_enabled: bool = True,
+        augments: Any = None,
     ) -> None:
         self.llm: LLM = llm if _looks_like_llm(llm) else LLM(cfg, client=llm)
         self.cfg = cfg
         self.set_data = set_data
         self.extra_reference = extra_reference
+        self.augments = augments  # Optional[AugmentData]: effect text for offered augments
         # [hotkeys] (keys named in the advice) and [advisor] scout_prompts
         # (False: never ask the player to open another board).
         self.hotkeys = hotkeys or HotkeyConfig()
@@ -113,7 +115,8 @@ class ClaudeStrategist:
     ) -> Advice:
         try:
             message = build_state_message(
-                state, analysis, rules_advice, question, recent_history, scouting=self.scout_enabled, hotkeys=self.hotkeys
+                state, analysis, rules_advice, question, recent_history, scouting=self.scout_enabled, hotkeys=self.hotkeys,
+                augments=self.augments,
             )
             out = self.llm.parse(
                 model=self.cfg.strategy_model,
@@ -222,7 +225,8 @@ class ClaudeStrategist:
             return "请输入要问的问题"
         try:
             message = build_state_message(
-                state, analysis, rules_advice, question=q, scouting=self.scout_enabled, hotkeys=self.hotkeys
+                state, analysis, rules_advice, question=q, scouting=self.scout_enabled, hotkeys=self.hotkeys,
+                augments=self.augments,
             )
             text = self.llm.text(
                 model=self.cfg.strategy_model,

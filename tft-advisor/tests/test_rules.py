@@ -838,3 +838,36 @@ def test_raw_api_ids_never_reach_the_items_text(advisor):
     only_raw = comp.model_copy(update={"carry_items": ["DA_18_EmblemFloraFatalisAugment"]})
     assert advisor.advise(state, Analysis(comps=[only_raw])).items is None
     assert is_display_name("Warmogs Armor") and is_display_name("无尽之刃") and not is_display_name("TFT_Item_Foo")
+
+
+def test_augment_pick_uses_the_bundled_reference():
+    from tft_advisor.data.augments import AugmentData
+    from tft_advisor.data.setdata import SetData, bundled_snapshot
+
+    sd = SetData.from_cdragon(bundled_snapshot("zh_cn"), bundled_snapshot("en_us"))
+    adv = RulesAdvisor(set_data=sd)
+    adv.augments = AugmentData.load(18)
+    state = GameState(
+        stage=StageRound.parse("2-1"), gold=10, level=4, hp=100,
+        augment_choices=["高级贷款", "休眠锻炉", "不认识的符文"],
+    )
+    out = adv.advise(state, Analysis())
+    aug = [a for a in out.actions if a.type == ActionType.AUGMENT]
+    assert aug and "休眠锻炉" in aug[0].text
+    assert "休眠锻炉" in out.headline and out.augment and "推荐 休眠锻炉" in out.augment
+    # Without reference data the generic hint stays.
+    plain = RulesAdvisor(set_data=sd).advise(state, Analysis())
+    assert "休眠锻炉" not in plain.headline
+
+
+def test_strategist_message_carries_augment_effects():
+    import json as _json
+
+    from tft_advisor.advisor.prompts import build_state_message
+    from tft_advisor.data.augments import AugmentData
+
+    state = GameState(stage=StageRound.parse("3-2"), augment_choices=["Latent Forge", "Mystery Thing"])
+    msg = build_state_message(state, Analysis(), None, augments=AugmentData.load(18))
+    payload = _json.loads(msg[msg.index("{"): msg.rindex("}") + 1])
+    info = payload["augment_info"]
+    assert [x["name"] for x in info] == ["Latent Forge"] and info[0]["tier"] == "S" and info[0]["effect"]
