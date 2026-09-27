@@ -909,3 +909,35 @@ def test_console_log_escapes_terminal_sequences(cfg, sample, capsys):
     out = capsys.readouterr().out
     assert "\x1b" not in out and "\x07" not in out
     assert "\\x1b[2J" in out
+
+
+def test_shop_reads_are_throttled_and_keep_a_call_reserve(cfg, sample):
+    from tft_advisor.llm import LLM, RateLimiter
+
+    now = [100.0]
+    cfg.anthropic.max_calls_per_minute = 5
+    cfg.advisor.shop_reserve_calls = 3
+    app = make_app(cfg, sample, [], llm=LLM(cfg.anthropic, client=object(), limiter=RateLimiter(5, clock=lambda: now[0])))
+    app.fast_perceiver = None
+    assert app._shop_read_allowed()
+    app.llm.limiter.try_acquire()
+    app.llm.limiter.try_acquire()
+    assert not app._shop_read_allowed()  # only 3 calls left: keep them for round analysis
+    now[0] += 61
+    assert app._shop_read_allowed()
+
+
+def test_require_foreground_can_be_disabled(cfg, sample):
+    class Cap:
+        last_source = "window"
+
+        def game_foreground(self):
+            return False
+
+        def grab(self):
+            return None
+
+    app = make_app(cfg, sample, [], capturer=Cap())
+    assert app._game_frame_ok() is False
+    cfg.capture.require_foreground = False
+    assert app._game_frame_ok() is True

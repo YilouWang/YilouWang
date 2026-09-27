@@ -137,6 +137,14 @@ class RateLimiter:
         self._calls: deque[float] = deque()
         self._lock = threading.Lock()
 
+    def remaining(self) -> int:
+        """Calls still allowed in the current window (without taking one)."""
+        with self._lock:
+            now = self._clock()
+            while self._calls and now - self._calls[0] >= self.window_s:
+                self._calls.popleft()
+            return max(0, self.max_calls - len(self._calls))
+
     def try_acquire(self) -> bool:
         with self._lock:
             now = self._clock()

@@ -671,3 +671,14 @@ def test_wisp_in_shop_gets_a_short_hint(advisor):
     long = early.model_copy(update={"shop": shop[:4] + [ShopSlot(name="Wisp: An Extremely Long Wisp Name Here", cost=12)]})
     text = next(a.text for a in advisor.advise(long, Analysis()).actions if "精灵" in a.text)
     assert text == "第5格是精灵（12金币）：前期经济或经验类值得买"
+
+
+def test_plan_milestones_follow_the_line(advisor):
+    base = dict(stage=StageRound.parse("4-1"), gold=40, level=7, xp_current=0, hp=80)
+    std = advisor.advise(GameState(**base), Analysis(econ=EconPlan(recommendation=EconAction.SAVE, style="standard")))
+    assert "4-5 升 8" in std.plan
+    fast8 = advisor.advise(GameState(**base), Analysis(econ=EconPlan(recommendation=EconAction.SAVE, style="fast8")))
+    assert "4-2 升 8" in fast8.plan and "4-5 升 8" not in fast8.plan
+    late = dict(base, stage=StageRound.parse("4-6"), level=8)
+    fast9 = advisor.advise(GameState(**late), Analysis(econ=EconPlan(recommendation=EconAction.SAVE, style="fast9")))
+    assert "5-2 升 9" in fast9.plan and "5-5" not in fast9.plan

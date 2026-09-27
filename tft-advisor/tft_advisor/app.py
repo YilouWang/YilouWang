@@ -235,6 +235,7 @@ class AdvisorApp:
         self._last_advice: Optional[Advice] = None
         self._pending_auto_at: Optional[float] = None
         self._pending_shop_at: Optional[float] = None
+        self._last_shop_request = float("-inf")
         self._hotkeys: Any = None
         self._server: Any = None
         # cli `run --new-token`: rotate the saved LAN dashboard token.
@@ -432,7 +433,7 @@ class AdvisorApp:
         if source != "window" and not (source == "monitor" and not self.cfg.capture.use_window):
             return False  # window not found / minimized: the monitor shows something else
         foreground = getattr(cap, "game_foreground", None)
-        if callable(foreground):
+        if callable(foreground) and self.cfg.capture.require_foreground:
             try:
                 if foreground() is False:  # None = unknown (not Windows)
                     return False
@@ -754,6 +755,16 @@ class AdvisorApp:
             if job is not None:
                 self._run_strategy(job.extra)
 
+    def _shop_read_allowed(self) -> bool:
+        """Automatic shop reads through Claude must not starve the round analysis."""
+        if self.fast_perceiver is not None or self.llm is None:
+            return True  # local OCR is free
+        limiter = getattr(self.llm, "limiter", None)
+        remaining = getattr(limiter, "remaining", None)
+        if not callable(remaining):
+            return True
+        return remaining() > max(0, self.cfg.advisor.shop_reserve_calls)
+
     def _capture_loop(self) -> None:
         from .capture.change import RoundWatcher
 
@@ -791,8 +802,11 @@ class AdvisorApp:
                 self._pending_auto_at = now + self.cfg.capture.settle_delay_s
                 self._pending_shop_at = None
             elif "shop_changed" in events and self.cfg.advisor.shop_watch and self._pending_auto_at is None:
-                if self.tracker.state.screen_type in (ScreenType.PLANNING, ScreenType.OTHER):
-                    self._pending_shop_at = now + 0.4
+                if self.tracker.state.screen_type in (ScreenType.PLANNING, ScreenType.OTHER) and self._shop_read_allowed():
+                    # Coalesce rapid rerolls: one read at most every shop_min_interval_s.
+                    earliest = self._last_shop_request + max(0.0, self.cfg.advisor.shop_min_interval_s)
+                    self._pending_shop_at = max(now + 0.4, earliest)
+                    self._last_shop_request = self._pending_shop_at
 
     def _scout_hotkey(self) -> None:
         # With exactly one open request, the player is almost surely looking at

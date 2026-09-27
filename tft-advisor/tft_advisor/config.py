@@ -39,6 +39,7 @@ class CaptureConfig:
     monitor: int = 1  # mss monitor index (1 = primary)
     window_title: str = "Teamfight Tactics"  # also matched by process name (TFT.exe / TFTClient-Win64-Shipping.exe)
     use_window: bool = True  # crop to the game window if it can be found (Windows)
+    require_foreground: bool = True  # auto mode only reads frames while the game window has focus
     poll_interval_s: float = 1.0
     settle_delay_s: float = 1.2  # wait after a round change before analysing
     change_threshold: float = 0.08  # mean abs diff (0..1) that counts as a change
@@ -54,7 +55,9 @@ class AdvisorConfig:
     scout_prompts: bool = True  # ask the human to show other boards
     shop_watch: bool = True  # re-read the shop when it changes (rolls)
     max_scout_requests_per_stage: int = 2
-    ocr_crosscheck: bool = False  # also run OCR on every frame to double-check gold / stage (slower)
+    ocr_crosscheck: bool = False
+    shop_min_interval_s: float = 3.0  # automatic shop reads at most this often (roll-downs reroll fast)
+    shop_reserve_calls: int = 3  # skip automatic Claude shop reads when fewer calls/min remain  # also run OCR on every frame to double-check gold / stage (slower)
     comp_hint: str = ""  # optional: the comp you want to play, free text
 
 

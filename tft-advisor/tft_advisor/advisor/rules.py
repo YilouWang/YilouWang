@@ -703,8 +703,17 @@ class RulesAdvisor:
                 level = max(level, econ.target_level)
             elif std is not None and level and level < std:
                 parts.append(f"尽快补到 {std} 级")
+            # Level milestones for the line being played (fast 8 / fast 9
+            # level earlier than the standard curve, matching economy.py).
+            milestones = dict(self.mech.standard_levels)
+            if econ.style in ("fast8", "fast9"):
+                milestones.pop("4-5", None)
+                milestones["4-2"] = 8
+            if econ.style == "fast9":
+                milestones.pop("5-5", None)
+                milestones["5-2"] = 9
             upcoming: list[tuple[StageRound, int]] = []
-            for key, lvl in self.mech.standard_levels.items():
+            for key, lvl in milestones.items():
                 r = StageRound.parse(key)
                 if r is not None and r.key > sr.key and lvl > max(level, std or 0):
                     upcoming.append((r, lvl))

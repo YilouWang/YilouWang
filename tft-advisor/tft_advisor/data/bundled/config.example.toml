@@ -22,6 +22,7 @@ max_image_edge = 1568
 monitor = 1                                   # 第几个显示器 (1 = 主显示器)
 window_title = "Teamfight Tactics"            # 游戏窗口标题（也会按进程名 TFT.exe 查找），找到就只截游戏窗口
 use_window = true
+require_foreground = true                     # 自动分析只在游戏窗口在前台时截图（双屏看板可改 false）
 poll_interval_s = 1.0                         # 自动模式下多久看一次画面
 settle_delay_s = 1.2                          # 回合切换后等多久再分析（等动画结束）
 change_threshold = 0.08
@@ -35,7 +36,9 @@ min_seconds_between_llm = 8.0
 scout_prompts = true         # 让助手提醒你去看别人的棋盘
 shop_watch = true            # 刷新商店时自动读商店、提示买什么
 max_scout_requests_per_stage = 2
-ocr_crosscheck = false       # 每次分析都再用 OCR 核对金币/回合（需要装 OCR，会慢几秒）
+ocr_crosscheck = false
+shop_min_interval_s = 3.0    # 自动读商店的最短间隔（搜牌连续刷新时省调用次数）
+shop_reserve_calls = 3       # 每分钟剩余调用少于这个数时，不再自动用 Claude 读商店，留给回合分析       # 每次分析都再用 OCR 核对金币/回合（需要装 OCR，会慢几秒）
 comp_hint = ""               # 你想玩的阵容，比如 "法师" 或 "阿狸"，留空 = 自动
 
 [data]
