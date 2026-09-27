@@ -20,15 +20,15 @@ comps. Real sets change every few months, so we never ship stale real comps.
 
 from __future__ import annotations
 
-import json
 import os
-import tomllib
+import re
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .setdata import SetData
+from .textio import read_user_data
 
 STYLES = ("standard", "fast8", "fast9", "reroll1", "reroll2", "reroll3")
 SAMPLE_SET_NUMBER = 99
@@ -126,11 +126,7 @@ def normalize_style(raw: Any, carry_cost: Optional[int] = None) -> str:
 
 
 def _read_file(path: Path) -> Any:
-    if path.suffix.lower() == ".toml":
-        with open(path, "rb") as fh:
-            return tomllib.load(fh)
-    with open(path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
+    return read_user_data(path, "阵容文件")
 
 
 def _entries(raw: Any) -> list[dict[str, Any]]:
@@ -183,8 +179,7 @@ def _build_comp(entry: dict[str, Any], set_data: SetData, log: LogFn) -> Optiona
 
     carry_items: list[str] = []
     for raw in _as_list(entry.get("carry_items") or entry.get("items")):
-        item = set_data.resolve_item(raw)
-        carry_items.append(item.name if item else raw)
+        carry_items.append(item_display_name(raw, set_data, log, name))
 
     traits: list[str] = []
     for raw in _as_list(entry.get("traits")):
@@ -196,8 +191,7 @@ def _build_comp(entry: dict[str, Any], set_data: SetData, log: LogFn) -> Optiona
         return champ.name if champ else None
 
     def item_name(raw: Any) -> str:
-        item = set_data.resolve_item(str(raw))
-        return item.name if item else str(raw)
+        return item_display_name(str(raw), set_data, log, name)
 
     early = [n for n in (unit_name(u) for u in _as_list(entry.get("early"))) if n]
     item_holders: dict[str, list[str]] = {}
@@ -245,6 +239,46 @@ def _build_comp(entry: dict[str, Any], set_data: SetData, log: LogFn) -> Optiona
         reroll_units=_reroll_units(entry, style, units, stars, set_data),
         name_en=name,
     )
+
+
+# Items the set data may not list (artifacts, augment emblems are trimmed from
+# the snapshot): normalized api id tail -> (English, Chinese) display name.
+ITEM_ALIASES = {
+    "navoriflickerblade": ("Navori Flickerblade", "纳沃利迅刃"),
+}
+_API_PREFIX = re.compile(r"^(?:DA_|TFT\d*_)?(?:\d+_)?(?:Item_)?(?:Artifact_|Ornn_|Radiant_)?", re.I)
+_EMBLEM_API = re.compile(r"Emblem([A-Za-z]+?)(?:Augment|Item)?$")
+_CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])")
+_API_LIKE = re.compile(r"^[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+$")
+
+
+def item_display_name(raw: str, set_data: SetData, log: Optional[LogFn] = None, comp: str = "") -> str:
+    """Display name of a comp item. Raw API ids the set data does not know
+    (an artifact, an augment emblem) never reach the player or the prompt:
+    known aliases, "<trait> emblem" from the set's traits, or a humanized
+    English name (with a warning)."""
+    raw = str(raw).strip()
+    item = set_data.resolve_item(raw)
+    if item is not None:
+        return item.name
+    if not _API_LIKE.match(raw):
+        return raw  # already a readable name
+    zh = _set_is_chinese(set_data)
+    tail = _API_PREFIX.sub("", raw)
+    alias = ITEM_ALIASES.get(tail.replace("_", "").lower())
+    if alias:
+        return alias[1] if zh else alias[0]
+    m = _EMBLEM_API.search(raw)
+    if m:
+        words = _CAMEL.sub(" ", m.group(1))
+        trait = set_data.resolve_trait(words) or set_data.resolve_trait(m.group(1))
+        if trait is not None:
+            return f"{trait.name}纹章" if zh else f"{trait.name_en or trait.name} Emblem"
+        tail = f"{words} Emblem"
+    human = _CAMEL.sub(" ", tail.replace("_", " ")).strip() or raw
+    if log is not None:
+        log(f"阵容 {comp}：装备 {raw} 不在赛季数据里，按 {human} 显示")
+    return human
 
 
 REROLL_COST = {"reroll1": 1, "reroll2": 2, "reroll3": 3}
@@ -305,15 +339,25 @@ def load_comps(path: Optional[str], set_data: SetData, log: Optional[LogFn] = No
     if path:
         p = Path(os.path.expanduser(str(path)))
         if not p.is_file():
-            emit(f"找不到阵容文件：{p}")
-            return []
-    elif set_data.set_number == SAMPLE_SET_NUMBER:
+            emit(f"找不到阵容文件：{p}，改用内置阵容库")
+            return load_comps(None, set_data, log)
+        comps = _load_file(p, set_data, emit)
+        if not comps:
+            # A broken or empty custom file must not leave the advisor with
+            # no comp library at all.
+            emit(f"阵容文件 {p.name} 没有可用的阵容，改用内置阵容库")
+            return load_comps(None, set_data, log)
+        return comps
+    if set_data.set_number == SAMPLE_SET_NUMBER:
         p = bundled_comps_path()
     else:
         p = Path(str(resources.files("tft_advisor.data").joinpath("bundled", f"comps_set{set_data.set_number}.json")))
         if not p.is_file():
             return []
+    return _load_file(p, set_data, emit)
 
+
+def _load_file(p: Path, set_data: SetData, emit: LogFn) -> list[CompDef]:
     try:
         raw = _read_file(p)
     except Exception as exc:  # OSError, bad JSON / TOML, absurd nesting: never kill startup

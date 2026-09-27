@@ -72,6 +72,31 @@ def test_no_fallbacks_when_disabled():
         assert FALLBACK_BETA not in fake.requests[0]["headers"].get("anthropic-beta", "")
 
 
+def test_rejected_fallback_beta_is_dropped_and_the_request_retried():
+    # An account or model without the server-side fallback beta answers 400:
+    # the call is sent again without it, and later calls skip it.
+    with FakeAnthropic() as fake:
+        fake.queue_error(400, "fallbacks: this beta is not available for your organization")
+        fake.queue_json({"headline": "x", "score": 1})
+        fake.queue_json({"headline": "y", "score": 2})
+        llm = make_llm(fake)
+        assert llm.parse(model="m", effort="low", system="s", content=[text_block("t")], schema=Pick).score == 1
+        assert llm.parse(model="m", effort="low", system="s", content=[text_block("t")], schema=Pick).score == 2
+        assert llm.fallbacks_rejected
+        assert [("fallbacks" in r["body"]) for r in fake.requests] == [True, False, False]
+        assert FALLBACK_BETA not in fake.requests[2]["headers"].get("anthropic-beta", "")
+        assert llm.stats.calls == 2
+
+
+def test_other_bad_requests_are_not_retried():
+    with FakeAnthropic() as fake:
+        fake.queue_error(400, "messages: image too large")
+        llm = make_llm(fake)
+        with pytest.raises(LLMError):
+            llm.parse(model="m", effort="low", system="s", content=[text_block("t")], schema=Pick)
+        assert len(fake.requests) == 1 and not llm.fallbacks_rejected
+
+
 def test_text_call():
     with FakeAnthropic() as fake:
         fake.queue_text("你好")
@@ -273,3 +298,73 @@ def test_timeout_is_reported_as_a_timeout_not_a_network_problem():
     with pytest.raises(LLMError, match="超时") as info:
         llm.text(model="m", effort="low", system="s", content=[text_block("t")])
     assert "30" in str(info.value) and llm.stats.last_error == "timeout"
+
+
+def test_system_prompt_cache_uses_1h_ttl_once_calls_are_more_than_5_minutes_apart():
+    # auto = false: the player presses F6 at key rounds (2-1, 3-2, 4-1), often
+    # more than 5 minutes apart. A 5 minute entry would be rewritten every time.
+    now = [1000.0]
+    with FakeAnthropic() as fake:
+        llm = LLM(AnthropicConfig(max_calls_per_minute=100), client=fake.client(), clock=lambda: now[0])
+
+        def call(system="BIG SET PROMPT", model="claude-opus-5"):
+            fake.queue_text("好")
+            llm.text(model=model, effort="low", system=system, content=[text_block("t")])
+            return fake.requests[-1]["body"]["system"][0]["cache_control"]
+
+        assert call() == {"type": "ephemeral"}  # first call: 5 minute TTL
+        now[0] += 60
+        assert call() == {"type": "ephemeral"}  # auto mode cadence: the 5m entry is read and refreshed
+        now[0] += 420  # 7 minutes idle: the 5m entry expired, this call writes anyway
+        assert call() == {"type": "ephemeral", "ttl": "1h"}
+        now[0] += 900
+        assert call() == {"type": "ephemeral", "ttl": "1h"}  # the 1h entry is alive: keep reading it
+        now[0] += 60
+        assert call() == {"type": "ephemeral", "ttl": "1h"}
+        # Other prompts (vision vs strategy) and other models are tracked separately.
+        assert call(system="VISION PROMPT") == {"type": "ephemeral"}
+        assert call(model="claude-sonnet-5") == {"type": "ephemeral"}
+        now[0] += 2 * 3600  # idle for hours: nothing survives, the cheaper 5m write
+        assert call() == {"type": "ephemeral"}
+        # A call stopped by the local rate limit never reached the API: it neither
+        # refreshed the entry nor counts as the last use of the prompt.
+        llm.limiter = RateLimiter(1)
+        assert llm.limiter.try_acquire()
+        now[0] += 200
+        with pytest.raises(LLMRateLimited):
+            llm.text(model="claude-opus-5", effort="low", system="BIG SET PROMPT", content=[text_block("t")])
+        llm.limiter = RateLimiter(100)
+        now[0] += 200  # 400 s after the last call that reached the API
+        assert call() == {"type": "ephemeral", "ttl": "1h"}
+
+
+def test_one_hour_cache_writes_are_priced_at_2x_input():
+    with FakeAnthropic() as fake:
+        msg = fake._message_text("好")
+        msg["usage"] = {
+            "input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 9000,
+            "cache_creation": {"ephemeral_1h_input_tokens": 8000, "ephemeral_5m_input_tokens": 1000},
+        }
+        fake._replies.append((200, msg))
+        llm = make_llm(fake)
+        llm.text(model="claude-opus-5", effort="low", system="s", content=[text_block("t")])
+        assert llm.stats.cache_write_tokens == 9000
+        assert llm.stats.cost_usd == pytest.approx((100 * 5 + 1000 * 5 * 1.25 + 8000 * 5 * 2 + 50 * 25) / 1e6)
+
+
+def test_one_hour_write_without_breakdown_uses_the_requested_ttl():
+    now = [0.0]
+    with FakeAnthropic() as fake:
+        llm = LLM(AnthropicConfig(), client=fake.client(), clock=lambda: now[0])
+        fake.queue_text("a")
+        llm.text(model="claude-opus-5", effort="low", system="s", content=[text_block("t")])
+        now[0] += 600
+        msg = fake._message_text("b")
+        msg["usage"] = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 1000}
+        fake._replies.append((200, msg))
+        before = llm.stats.cost_usd
+        llm.text(model="claude-opus-5", effort="low", system="s", content=[text_block("t")])
+        assert fake.requests[-1]["body"]["system"][0]["cache_control"]["ttl"] == "1h"
+        assert llm.stats.cost_usd - before == pytest.approx(1000 * 5 * 2 / 1e6)

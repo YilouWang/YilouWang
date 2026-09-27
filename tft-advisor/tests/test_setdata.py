@@ -189,3 +189,178 @@ def test_load_set_data_offline_without_cache(tmp_path):
     assert logs  # tells the player which fallback is used
     if sd.source == "bundled-sample":
         assert sd.set_number == 99
+
+
+# ---------------------------------------------------------------------------
+# CommunityDragon download: gzip, conditional requests, deadline, backoff
+# ---------------------------------------------------------------------------
+
+
+class _Server:
+    """Loopback HTTP server: ``mode`` = "ok" (gzip JSON + ETag, 304 on a
+    matching If-None-Match), "stall" (accepts, never answers) or "drip"
+    (answers one byte at a time)."""
+
+    def __init__(self, mode: str = "ok") -> None:
+        import gzip
+        import http.server
+        import socket
+        import threading
+
+        self.mode = mode
+        self.requests: list[dict] = []
+        self.body = gzip.compress(json.dumps(bundled_sample()).encode("utf-8"))
+        outer = self
+        if mode == "stall":
+            self.sock = socket.socket()
+            self.sock.bind(("127.0.0.1", 0))
+            self.sock.listen(8)
+            self.port = self.sock.getsockname()[1]
+            self.conns: list = []
+
+            def accept() -> None:
+                while True:
+                    try:
+                        conn, _ = self.sock.accept()
+                    except OSError:
+                        return
+                    outer.requests.append({})
+                    self.conns.append(conn)
+
+            threading.Thread(target=accept, daemon=True).start()
+            return
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a) -> None:
+                pass
+
+            def do_GET(self) -> None:
+                outer.requests.append(dict(self.headers))
+                if outer.mode == "ok" and self.headers.get("If-None-Match") == '"v1"':
+                    self.send_response(304)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Encoding", "gzip")
+                self.send_header("ETag", '"v1"')
+                self.send_header("Content-Length", str(len(outer.body)))
+                self.end_headers()
+                import time as _t
+
+                for i in range(0, len(outer.body), 1 if outer.mode == "drip" else 65536):
+                    try:
+                        self.wfile.write(outer.body[i : i + (1 if outer.mode == "drip" else 65536)])
+                        self.wfile.flush()
+                    except OSError:
+                        return
+                    if outer.mode == "drip":
+                        _t.sleep(0.05)
+
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.httpd.daemon_threads = True
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    @property
+    def base(self) -> str:
+        return f"http://127.0.0.1:{self.port}"
+
+    def close(self) -> None:
+        if self.mode == "stall":
+            for c in self.conns:
+                c.close()
+            self.sock.close()
+        else:
+            self.httpd.shutdown()
+            self.httpd.server_close()
+
+
+def test_download_uses_gzip_and_conditional_requests(tmp_path):
+    import os
+    import time
+
+    srv = _Server("ok")
+    try:
+        cfg = DataConfig(cache_dir=str(tmp_path), locale="en_us", cdragon_base=srv.base)
+        logs: list[str] = []
+        sd = load_set_data(cfg, log=logs.append)
+        assert sd.set_number == 99 and srv.requests[0].get("Accept-Encoding") == "gzip"
+        cached = tmp_path / "cdragon_tft_en_us.json"
+        assert json.loads(cached.read_text(encoding="utf-8"))["setData"]  # stored decompressed
+        old = time.time() - 3 * 86400
+        os.utime(cached, (old, old))
+        load_set_data(cfg, log=logs.append)  # stale: conditional request, 304
+        assert srv.requests[-1].get("If-None-Match") == '"v1"'
+        assert time.time() - cached.stat().st_mtime < 60  # the refresh clock restarted
+        assert len(srv.requests) == 2
+    finally:
+        srv.close()
+
+
+def test_stalled_network_fails_fast_and_backs_off(tmp_path, monkeypatch):
+    import time
+
+    import tft_advisor.data.setdata as setdata
+
+    monkeypatch.setattr(setdata, "SOCKET_TIMEOUT_S", 0.3)
+    srv = _Server("stall")
+    try:
+        cfg = DataConfig(cache_dir=str(tmp_path), cdragon_base=srv.base)
+        logs: list[str] = []
+        t0 = time.monotonic()
+        sd = load_set_data(cfg, log=logs.append)
+        assert time.monotonic() - t0 < 5
+        assert sd.champions and sd.source != str(tmp_path / "cdragon_tft_zh_cn.json")
+        assert len(srv.requests) == 1  # the second locale is not tried after a failure
+        assert (tmp_path / setdata.ATTEMPT_STAMP).is_file()
+        assert any("不再自动重试" in x for x in logs)
+        # The next launch does not wait again.
+        logs.clear()
+        load_set_data(cfg, log=logs.append)
+        assert len(srv.requests) == 1 and any("暂不重试" in x for x in logs)
+    finally:
+        srv.close()
+
+
+def test_download_deadline_leaves_no_partial_cache(tmp_path, monkeypatch):
+    import tft_advisor.data.setdata as setdata
+
+    srv = _Server("drip")
+    try:
+        with pytest.raises(TimeoutError):
+            setdata._download(f"{srv.base}/en_us.json", tmp_path / "x.json", deadline_s=0.3)
+        assert not (tmp_path / "x.json").exists()
+    finally:
+        srv.close()
+
+
+def test_background_refresh_does_not_block(tmp_path):
+    import time
+
+    srv = _Server("ok")
+    try:
+        cfg = DataConfig(cache_dir=str(tmp_path), locale="en_us", cdragon_base=srv.base)
+        logs: list[str] = []
+        sd = load_set_data(cfg, log=logs.append, background=True)
+        assert sd.champions  # the bundled snapshot right away
+        assert any("后台下载" in x for x in logs) and not any("data update" in x for x in logs)
+        cached = tmp_path / "cdragon_tft_en_us.json"
+        for _ in range(100):
+            if cached.is_file():
+                break
+            time.sleep(0.05)
+        assert cached.is_file()  # used on the next start
+    finally:
+        srv.close()
+
+
+def test_config_example_comments_sit_on_their_own_key():
+    from importlib import resources
+
+    text = resources.files("tft_advisor.data").joinpath("bundled", "config.example.toml").read_text(encoding="utf-8")
+    for line in text.splitlines():
+        assert line.count("#") <= 1 or line.lstrip().startswith("#"), line
+    ocr = next(line for line in text.splitlines() if line.startswith("ocr_crosscheck"))
+    assert "OCR" in ocr.split("#", 1)[1]
+    reserve = next(line for line in text.splitlines() if line.startswith("shop_reserve_calls"))
+    assert "OCR" not in reserve

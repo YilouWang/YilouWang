@@ -19,10 +19,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ocr = ["rapidocr-onnxruntime>=1.3"]
+# rapidocr-onnxruntime (1.3+) only supports Python < 3.13; newer Pythons get its
+# maintained successor `rapidocr` 3.x, which needs onnxruntime listed explicitly.
+ocr = [
+    "rapidocr-onnxruntime>=1.3; python_version < '3.13'",
+    "rapidocr>=3.4; python_version >= '3.13'",
+    "onnxruntime>=1.17; python_version >= '3.13'",
+]
 voice = ["pyttsx3>=2.90"]
 dev = ["pytest>=8.0"]
-all = ["rapidocr-onnxruntime>=1.3", "pyttsx3>=2.90", "pytest>=8.0"]
+all = [
+    "rapidocr-onnxruntime>=1.3; python_version < '3.13'",
+    "rapidocr>=3.4; python_version >= '3.13'",
+    "onnxruntime>=1.17; python_version >= '3.13'",
+    "pyttsx3>=2.90",
+    "pytest>=8.0",
+]
 
 [project.scripts]
 tft-advisor = "tft_advisor.cli:main"

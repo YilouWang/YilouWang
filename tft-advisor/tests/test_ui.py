@@ -1003,6 +1003,197 @@ def test_overlay_windows_helpers_never_raise_off_windows(monkeypatch: pytest.Mon
     # ctypes.WinDLL does not exist here: both helpers must degrade, not crash run()
     assert overlay_mod._make_non_activating(root) is False
     assert overlay_mod._screen_bounds(root) == (0, 0, 1600, 900)
+    assert overlay_mod._exclude_from_capture(root) is False
+
+
+# ---------------------------------------------------------------------------
+# overlay vs screen capture: mss grabs with CAPTUREBLT, so a topmost layered
+# window is in every frame sent to Claude unless it is excluded from capture
+# ---------------------------------------------------------------------------
+
+
+class _FakeUser32:
+    def __init__(self, set_ok: int = 1, reported: Optional[int] = None) -> None:
+        self.set_calls: list[tuple[int, int]] = []
+        self.set_ok = set_ok
+        self.reported = reported
+
+        def get_parent(hwnd: int) -> int:
+            return 5000 + hwnd  # Tk's top-level wrapper around its child window
+
+        def set_affinity(hwnd: int, flag: int) -> int:
+            self.set_calls.append((hwnd, flag))
+            return self.set_ok
+
+        def get_affinity(_hwnd: int, ref: Any) -> int:
+            ref._obj.value = self.reported if self.reported is not None else self.set_calls[-1][1]
+            return 1
+
+        self.GetParent, self.SetWindowDisplayAffinity, self.GetWindowDisplayAffinity = get_parent, set_affinity, get_affinity
+
+
+class _IdRoot(_FakeRoot):
+    def winfo_id(self) -> int:
+        return 7
+
+
+def test_overlay_is_excluded_from_capture_on_windows_2004_and_later(monkeypatch: pytest.MonkeyPatch) -> None:
+    import tft_advisor.ui.overlay as overlay_mod
+
+    user32 = _FakeUser32()
+    monkeypatch.setattr(overlay_mod.sys, "platform", "win32")
+    monkeypatch.setattr(overlay_mod, "_user32", lambda: user32)
+    monkeypatch.setattr(overlay_mod, "_windows_build", lambda: 22631)
+    assert overlay_mod._exclude_from_capture(_IdRoot()) is True
+    # the top-level wrapper, not Tk's child window, with WDA_EXCLUDEFROMCAPTURE
+    assert user32.set_calls == [(5007, 0x11)]
+
+    # before Windows 10 2004 the flag acts as WDA_MONITOR (a black box on the board): not used
+    user32.set_calls.clear()
+    monkeypatch.setattr(overlay_mod, "_windows_build", lambda: 18363)
+    assert overlay_mod._exclude_from_capture(_IdRoot()) is False
+    assert user32.set_calls == []
+
+    monkeypatch.setattr(overlay_mod, "_windows_build", lambda: 19041)
+    assert overlay_mod._exclude_from_capture(_IdRoot()) is True
+    assert overlay_mod._exclude_from_capture(_IdRoot()) is True
+    monkeypatch.setattr(overlay_mod, "_user32", lambda: _FakeUser32(set_ok=0))
+    assert overlay_mod._exclude_from_capture(_IdRoot()) is False
+    monkeypatch.setattr(overlay_mod, "_user32", lambda: _FakeUser32(reported=1))
+    assert overlay_mod._exclude_from_capture(_IdRoot()) is False
+
+    def no_user32() -> Any:
+        raise OSError("no user32")
+
+    monkeypatch.setattr(overlay_mod, "_user32", no_user32)
+    assert overlay_mod._exclude_from_capture(_IdRoot()) is False
+    monkeypatch.setattr(overlay_mod.sys, "platform", "linux")
+    monkeypatch.setattr(overlay_mod, "_user32", lambda: _FakeUser32())
+    assert overlay_mod._exclude_from_capture(_IdRoot()) is False
+
+
+def _build_overlay(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    supported: bool,
+    excluded: bool,
+    saved: Optional[tuple[int, int]] = None,
+) -> tuple[Overlay, Any, list[str]]:
+    """Run Overlay._build against a fake tkinter at 1920x1080, 150 % scaling."""
+    import tft_advisor.ui.overlay as overlay_mod
+
+    class Widget:
+        def __init__(self, *_a: Any, **_kw: Any) -> None:
+            pass
+
+        def __getattr__(self, _name: str) -> Any:
+            return lambda *_a, **_kw: None
+
+    class Root(Widget):
+        def __init__(self) -> None:
+            self.geometries: list[str] = []
+
+        def geometry(self, spec: str) -> None:
+            self.geometries.append(spec)
+
+        def winfo_fpixels(self, _spec: str) -> float:
+            return 144.0
+
+        def winfo_screenwidth(self) -> int:
+            return 1920
+
+        def winfo_screenheight(self) -> int:
+            return 1080
+
+    pos = tmp_path / "overlay_pos.json"
+    if saved is not None:
+        pos.write_text(json.dumps({"x": saved[0], "y": saved[1]}), encoding="utf-8")
+    monkeypatch.setattr(overlay_mod, "_pos_file", lambda: pos)
+    monkeypatch.setattr(overlay_mod, "_make_non_activating", lambda _root: False)
+    monkeypatch.setattr(overlay_mod, "_capture_exclusion_supported", lambda: supported)
+    monkeypatch.setattr(overlay_mod, "_exclude_from_capture", lambda _root: excluded)
+    tk = types.SimpleNamespace(Frame=Widget, Label=Widget)
+    tkfont = types.SimpleNamespace(families=lambda _root=None: [])
+    logs: list[str] = []
+    ov = Overlay(EventBus(), UIConfig(overlay=True), log=logs.append)
+    root = Root()
+    ov._build(root, tk, tkfont)
+    return ov, root, logs
+
+
+def test_overlay_hidden_from_capture_keeps_its_place_on_the_right(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    ov, root, logs = _build_overlay(monkeypatch, tmp_path, supported=True, excluded=True)
+    assert ov.capture_hidden
+    assert root.geometries == ["570x330+960+129"]
+    assert not any("截图" in line for line in logs)
+
+
+def test_overlay_visible_to_capture_moves_off_the_board_and_warns(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Windows 10 2004+ but the call failed: move after the window was created
+    ov, root, logs = _build_overlay(monkeypatch, tmp_path, supported=True, excluded=False)
+    assert not ov.capture_hidden
+    assert root.geometries[-1] == "+86+0"
+    assert len(logs) == 1 and "截图" in logs[0] and "左上角" in logs[0] and "棋盘" in logs[0]
+    assert not any(d in logs[0] for d in EM_DASHES)
+
+    # older Windows / other OS: created in the safe corner, height capped above the board
+    ov, root, logs = _build_overlay(monkeypatch, tmp_path, supported=False, excluded=False)
+    assert not ov.capture_hidden
+    assert root.geometries[0] == "570x270+86+0"
+    assert "截图" in logs[0]
+
+    # a position the player chose is kept (only the warning)
+    ov, root, logs = _build_overlay(monkeypatch, tmp_path, supported=False, excluded=False, saved=(300, 600))
+    assert root.geometries == ["570x270+300+600"]
+    assert "截图" in logs[0] and "左上角" not in logs[0]
+
+
+@pytest.mark.parametrize(
+    ("size", "scale"),
+    [((1920, 1080), 1.0), ((1920, 1080), 1.25), ((1920, 1080), 1.5), ((2560, 1440), 1.5), ((3840, 2160), 1.5), ((3840, 2160), 2.0)],
+)
+def test_capture_visible_overlay_stays_off_what_vision_reads(size: tuple[int, int], scale: float) -> None:
+    from tft_advisor.capture.regions import region_box
+
+    class Root:
+        def winfo_screenwidth(self) -> int:
+            return size[0]
+
+        def winfo_screenheight(self) -> int:
+            return size[1]
+
+    ov = Overlay(EventBus(), UIConfig(overlay=True), log=quiet)
+    ov._scale, ov._screen_size, ov._bounds = scale, size, (0, 0, *size)
+
+    def hits(rect: tuple[int, int, int, int], region: str) -> bool:
+        rx0, ry0, rx1, ry1 = region_box(size, region, layout="inscribed")
+        return rect[0] < rx1 and rx0 < rect[2] and rect[1] < ry1 and ry0 < rect[3]
+
+    ov._capture_hidden = False
+    x, y = ov._default_position(Root(), capture_safe=True)
+    rect = (x, y, x + ov._px(ov.width), y + ov._max_height())
+    for region in ("board", "bench", "shop", "hud_bottom", "gold", "level", "stage", "players", "items"):
+        assert not hits(rect, region), (region, rect)
+    assert ov._max_height() >= int(size[1] * 0.2)  # still room for the advice
+
+    if size == (1920, 1080) and scale == 1.5:
+        # the finding: the old default spot covers the board's front row in every frame
+        ov._capture_hidden = True
+        x, y = ov._default_position(Root())
+        assert hits((x, y, x + ov._px(ov.width), y + ov._max_height()), "board")
+
+
+def test_overlay_height_is_capped_above_the_board_only_when_visible_to_capture(bus: EventBus) -> None:
+    ov = _fake_overlay(bus, [])
+    tall = _FakeWidget()
+    tall.winfo_reqheight = lambda: 900  # type: ignore[method-assign]
+    ov._frame = tall
+    ov._fit_height()
+    assert ov._root.geometries[-1] == "570x270+100+50"  # 0.25 of 1080: the board starts at 0.26
+    ov._capture_hidden = True
+    ov._fit_height()
+    assert ov._root.geometries[-1] == "570x486+100+50"
 
 
 # ---------------------------------------------------------------------------

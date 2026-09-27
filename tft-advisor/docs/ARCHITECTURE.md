@@ -86,10 +86,21 @@ class SetData:
     def summary_text(self) -> str                              # compact text for LLM prompts
     @classmethod
     def from_cdragon(cls, data: dict, data_en: dict | None = None, set_number: int = 0) -> "SetData"
-def load_set_data(cfg: DataConfig, offline: bool = False, log=print) -> SetData
+def load_set_data(cfg: DataConfig, offline: bool = False, log=print, background: bool = False) -> SetData
 ```
 Runtime source: CommunityDragon `…/cdragon/tft/{zh_cn,en_us}.json`, cached in
-`~/.tft_advisor/`. Falls back to cache, then to `data/bundled/sample_set.json`.
+`~/.tft_advisor/`. Falls back to cache, then to the bundled real snapshot
+(`data/bundled/snapshot_{locale}.json`), then to `data/bundled/sample_set.json`.
+Downloads use gzip, conditional requests, a 15 s socket timeout and a 45 s
+whole-file deadline; after a failure they are not retried for 6 hours
+(`data update` forces one). `background=True` (used by `AdvisorApp`): when a
+cache or the bundled snapshot can be used right away, a stale export is
+refreshed in a daemon thread and applies on the next start.
+
+### `tft_advisor/data/textio.py`
+`read_user_text(path, what)` / `read_user_data(path, what, fmt=None)`: the
+player's own comps / mechanics files, UTF-8 with or without BOM, JSON or
+TOML; errors name the file in Chinese.
 
 ### `tft_advisor/data/comps.py`
 ```python
@@ -101,6 +112,8 @@ class CompDef: name: str; units: list[str]; carry: str | None; carry_items: list
                name_en: str             # name as written in the file; `name` is name_zh when the set data is Chinese
 def load_comps(path: str | None, set_data: SetData, log=None) -> list[CompDef]
 ```
+A missing, broken or empty custom comps file falls back to the bundled
+library (with a warning); unresolved API ids get readable names.
 
 ### `tft_advisor/engine/`
 * `probability.py`: pool model + rolldown Markov chain.
@@ -108,8 +121,9 @@ def load_comps(path: str | None, set_data: SetData, log=None) -> list[CompDef]
   (`level`: odds at the level after a planned level up; `shop`: `ShopModel` with the Wisp / Inferno
   shop shape, default from `shop_model(state, set_data, mech)`),
   `rolldown_probability(..., shop=None)`, `p_shop_shows(...)`, `p_unit_per_slot(...)`.
-* `economy.py`: `plan_economy(state, mech, style="standard", key_star=None) -> EconPlan`
-  (`key_star`: star level of the reroll target / carry; a reroll line levels normally once it is 3-star).
+* `economy.py`: `plan_economy(state, mech, style="standard", key_star=None, carry_cost=None) -> EconPlan`
+  (`key_star`: star level of the reroll target / carry; a reroll line levels normally once it is 3-star;
+  `carry_cost`: cost of the line's carry, a 5-cost carry turns a fast 8 into a fast 9).
 * `items.py`: `plan_items(state, set_data, comp=None, hp_bucket="unknown", profile_hints=None) -> list[ItemSuggestion]`
   (`profile_hints`: unit -> "ad" / "ap" / "tank" from the comp library's item plans).
 * `comps_engine.py`: `suggest_comps(state, set_data, comps, taken_by_player, top_n=3, hint="") -> list[CompSuggestion]`
@@ -117,6 +131,11 @@ def load_comps(path: str | None, set_data: SetData, log=None) -> list[CompDef]
 * `tracker.py`: `GameTracker(set_data, mech).ingest(obs) -> GameState`, `.state`,
   `.taken_copies()`, `.taken_by_player()`, `.set_field(name, value)`, `.reset()`.
 * `analyzer.py`: `Analyzer(set_data, mech, comps).analyze(state, taken) -> Analysis`.
+  Shop picks are paid from the roll budget (`Analysis.shop_picks_cost`), and the
+  odds count the copies they buy. `CompSuggestion` carries the library's `style`,
+  `tier`, `positions` (unit -> [row, col]) and `item_holders`.
+* The tracker takes an opponent's level only from `ScreenObservation.viewed_player_level`
+  (or the note "对手等级 N"), never from the local HUD `level`.
 
 ### `tft_advisor/vision/`
 * `base.py`: `Perceiver` protocol `perceive(image, purpose="auto", hint=None) -> Observation`,
@@ -125,13 +144,19 @@ def load_comps(path: str | None, set_data: SetData, log=None) -> list[CompDef]
   output schema is `models.ScreenObservationWire` (every field required, no unions, an
   `unreadable` list instead of nulls) because `ScreenObservation` is over the API's schema
   complexity limits (24 optional / 16 union parameters); `.to_screen()` converts back.
-* `ocr.py`: optional RapidOCR fast path for stage / gold / level / shop names.
+* `ocr.py`: optional RapidOCR fast path for stage / gold / level / shop names
+  (`rapidocr_onnxruntime` on Python < 3.13, `rapidocr` 3.x + `onnxruntime` from 3.13).
+  Item icons vision cannot name are sent as `"?"` (`base.UNKNOWN_ITEM`): the slot
+  counts as used, but the item is never guessed.
 * `mock.py`: `MockPerceiver` replays `ScreenObservation` JSON files.
 * `liveclient.py`: optional poller for `https://127.0.0.1:2999/liveclientdata/*`.
 
 ### `tft_advisor/llm.py` (shared Claude access, already implemented)
-`LLM(cfg: AnthropicConfig, client=None)` with `.parse(model=, effort=, system=, content=, schema=, purpose=)`
+`LLM(cfg: AnthropicConfig, client=None, limiter=None, clock=time.monotonic)` with `.parse(model=, effort=, system=, content=, schema=, purpose=)`
 (structured output, adaptive thinking, fallbacks, cached system prompt) and `.text(...)`.
+The system prompt uses the default 5 minute cache while calls come less than 5
+minutes apart; once a prompt sat idle past that, the next write asks for the 1 hour
+TTL (priced at 2x input in the cost estimate) and keeps it while the entry lives.
 Errors: `LLMError` (base), `LLMUnavailable`, `LLMRefusal`, `LLMRateLimited`.
 Helpers `image_block(png_bytes)`, `text_block(text)`, `has_credentials()`.
 Tests use `tests/fakeapi.py` (`FakeAnthropic`), a real local HTTP server that
@@ -149,14 +174,19 @@ records requests and returns scripted replies, so the real SDK path runs offline
 
 ### `tft_advisor/advisor/`
 * `rules.py`: `RulesAdvisor().advise(state, analysis) -> Advice` (Chinese, offline).
-* `strategist.py`: `ClaudeStrategist(client, cfg, set_data).advise(state, analysis, rules_advice, question=None) -> Advice`
-  and `.ask(question, state, analysis) -> str`.
+* `strategist.py`: `ClaudeStrategist(client, cfg, set_data, extra_reference="", hotkeys=None, scout_enabled=True)`
+  `.advise(state, analysis, rules_advice, question=None) -> Advice` and `.ask(question, state, analysis) -> str`.
+  `AdvisorApp` passes `[hotkeys]` (reported as "off" when no global hotkey could be
+  registered) and `[advisor] scout_prompts` (False: scout requests are dropped).
 * `scouting.py`: `ScoutPlanner(max_per_stage).plan(state, analysis) -> list[ScoutRequest]`.
 
 ### `tft_advisor/ui/`
 * `server.py`: `DashboardServer(bus, cfg: UIConfig)`: static page, `/api/snapshot`,
   `/api/events` (Server-Sent Events), `POST /api/command`.
-* `overlay.py`: optional tkinter always-on-top overlay.
+* `overlay.py`: optional tkinter always-on-top overlay. On Windows 10 2004+ it is
+  excluded from screen capture (`SetWindowDisplayAffinity`, WDA_EXCLUDEFROMCAPTURE),
+  so it never reaches the frames sent to Claude (nor OBS / Discord). When that is not
+  possible it starts in the top-left corner, above the board, and logs a warning.
 * `voice.py`: optional TTS (pyttsx3).
 
 ### `tft_advisor/app.py` / `cli.py` / `config.py` / `review.py`
@@ -164,21 +194,40 @@ records requests and returns scripted replies, so the real SDK path runs offline
 strategy worker, hotkeys, dashboard). `GameLogger` writes one
 `~/.tft_advisor/logs/game-<start>.jsonl` per game (rotated when the tracker
 sees a new game or on 新对局; the newest `[data] keep_game_logs` are kept).
+`perceiver` / `fast_perceiver` default to `app.AUTO` (detect Claude vision /
+local OCR); `None` means none, so demo, `replay --mock` and tests never pick
+up an installed OCR by accident.
 `cli.py` exposes `run`, `demo`, `replay`, `odds`, `data`, `doctor`,
 `calibrate`, `review`, `init`; `--config` is accepted before or after the
 command. Config / input errors print one Chinese line (`错误: ...`, exit 2);
-`TFT_ADVISOR_DEBUG=1` shows the traceback.
+`TFT_ADVISOR_DEBUG=1` shows the traceback. stdout / stderr are UTF-8 on a
+terminal; when redirected on Windows they use the console code page (when it
+can hold Chinese) so PowerShell pipes do not garble the text. `doctor` shows
+why an optional module failed to import (a "DLL load failed" gets the VC++
+runtime link) and checks OCR as `rapidocr_onnxruntime` or `rapidocr`. `run`
+prints the phone URL (`手机访问: ...`) in LAN mode.
 
 `config.py`: lookup order `--config`, `$TFT_ADVISOR_CONFIG` (must exist when
 set), `~/.tft_advisor/config.toml`; the current directory is never searched.
 `load_config` accepts UTF-8 with or without BOM, checks types (bool / number /
 string), ranges (`Config.validate()`), hotkey names, `https://` for
 `cdragon_base` and rejects network paths for `cache_dir` / `screenshot_dir`.
+Relative `comps_file` / `mechanics_file` / `cache_dir` / `screenshot_dir`
+values are resolved against the config file's directory. A TOML error caused
+by a Windows path in double quotes gets a Chinese hint (single quotes or `/`),
+and path values holding control characters (`"D:\tft\new.json"` parsed as
+TAB / LF) are rejected with the corrected single-quoted line.
 
 `review.py`: `latest_log`, `load_records` (skips broken / non-object lines),
-`summarize_log` (last game in the file only, one row per round; advice-only
-`purpose="strategy"` records update that round's advice), `format_summary`,
-`llm_review` (em dashes removed).
+`summarize_log` (last game in the file only, one row per round with HP,
+gold, level, streak, board with items, target comp, econ style and call,
+advice; advice-only `purpose="strategy"` records update that round's
+advice; `level_timing` with `standard_round` / `rounds_late` (a lower bound
+backed by logged rounds, None when a log gap hides it);
+`interest_short_on_save_rounds` counts only stage 3+ rounds where the
+assistant said save; `augments` with the round first seen;
+`final_item_bench`), `format_summary`, `llm_review` (`REVIEW_SYSTEM` explains
+every field and asks to skip categories without data; em dashes removed).
 
 ## Threading model
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Iterable, Optional, Sequence
 
-from .base import PerceptionHint, clean_name, normalize_purpose
+from .base import PerceptionHint, clean_name, is_unknown_item, normalize_purpose
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..data.setdata import SetData
@@ -45,13 +45,14 @@ HUD LAYOUT (16:9)
   * Board: the hex grid in the middle, 4 rows of 7 hexes. row 0 = front row, nearest the center line of the arena (farthest from the bench); row 3 = back row, nearest the bench. col 0 = leftmost hex of that row as seen on screen, up to col 6.
   * Bench: the row of 9 slots between the board and the shop. For bench units row = -1 and col = slot index 0-8 from the left (-1 if unsure).
   * Star level: the 1-3 small stars above a unit's health bar (1 bronze star, 2 silver stars, 3 gold stars). If unclear use 1 and add a note.
-  * Items: small square icons just under a unit's health bar. Name each one if you recognize it from the item list; otherwise leave that unit's items empty and add a note such as "某单位有 2 件无法识别的装备".
+  * Items: small square icons just under a unit's health bar, at most 3 per unit. Name each icon you recognize from the item list and write "?" for each icon you can see but cannot name, so a unit showing 3 icons always has 3 entries (for example ["<item name>", "?", "?"]). items is [] only when the unit holds no item. For "?" icons add a note such as "某单位有 2 件无法识别的装备".
   * item_bench: unequipped components / items lying on the left side of the arena next to the tactician area.
   * Traits: vertical panel on the left edge: trait name, number of unique units, breakpoints such as "2 / 4 / 6". Active traits have a colored hexagon (bronze, silver, gold, prismatic), inactive ones are gray. next_breakpoint = the next breakpoint above the current count, 0 at the maximum or when unreadable.
 - Player list: right edge, up to 8 rows ordered top to bottom as shown, each with a name (or only a portrait) and an HP number. The local player's row is highlighted (lighter background or distinct frame): mark it is_self = true. Players with 0 HP or grayed out are eliminated (hp 0). A row whose HP you cannot read: hp -1.
 - hp (top level): the HP of the player whose board is shown. For the local player read it from the highlighted row of the player list.
 - viewing_own_board: true when the camera shows the local player's own arena; false when it shows another player's arena (scouting: a banner with another player's name near the top, another tactician, a different board); when unclear, list viewing_own_board in unreadable.
 - viewed_player_name: the owner of the board shown, from the top banner or the selected row of the player list, when readable; otherwise "" and list it in unreadable.
+- viewed_player_level: when the camera shows another player's arena, the level on the plate above that arena; 0 on the local player's own arena or when the plate is not readable. The top level "level" field is always the local player's HUD level.
 - Augments: augment_choices = the names on the offered cards, left to right (augment_select screen only). augments = augments the player already owns, only when their names are readable; otherwise list augments in unreadable. Outside the augment_select screen augment_choices is [].
 - During carousel, combat or loading still fill every HUD field that is visible (stage, gold, level, player list).
 """
@@ -136,7 +137,8 @@ _PURPOSE_TEXT = {
         "Set viewing_own_board = false unless the local player's own board is clearly shown, and read "
         "viewed_player_name from the top banner (or the selected row of the player list). "
         "gold, level, XP, streak, shop and shop_locked still come from the bottom HUD and belong to the "
-        "LOCAL player. If the viewed player's level is visible, add a note \"对手等级 N\"."
+        "LOCAL player. Put the viewed player's level from the plate above their arena in viewed_player_level "
+        "(0 when it is not shown)."
     ),
     "shop": (
         "TASK: SHOP ONLY. Only the bottom HUD is provided. Fill shop (exactly 5 slots, left to right), "
@@ -157,6 +159,8 @@ def _join_names(names: Iterable[str]) -> str:
     seen: list[str] = []
     for raw in names:
         n = clean_name(raw)
+        if n and is_unknown_item(n):
+            continue  # "?" placeholders from earlier frames name nothing
         if n and n not in seen:
             seen.append(n)
             if len(seen) > _MAX_HINT_NAMES:

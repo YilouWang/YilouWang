@@ -367,6 +367,10 @@ def score_comp(
         carry_items=[_item_display(n, set_data) for n in comp.carry_items],
         contested_by=contested,
         reason="，".join(parts),
+        style=comp.style,
+        tier=comp.tier or None,
+        positions={u: [int(rc[0]), int(rc[1])] for u, rc in comp.positions.items()},
+        item_holders={u: [_item_display(n, set_data) for n in items] for u, items in comp.item_holders.items()},
     )
 
 

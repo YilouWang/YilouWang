@@ -61,6 +61,24 @@ def clean_name(text: Any, max_len: int = 48) -> Optional[str]:
     return clean_text(out) or None
 
 
+# An item icon under a unit that the reader could see but not name. Kept as
+# one placeholder per icon (never dropped) so the 3-item limit per unit still
+# counts it: the item planner must not slam more items onto a full unit.
+UNKNOWN_ITEM = "?"
+_UNKNOWN_ITEM_WORDS = frozenset(
+    {"unknown", "unknownitem", "unreadable", "unrecognized", "未知", "未知装备", "无法识别", "未识别", "不明"}
+)
+
+
+def is_unknown_item(name: Any) -> bool:
+    """True for "?" and the other ways a reader writes an unreadable item ("？", "unknown", "未知装备")."""
+    text = unicodedata.normalize("NFKC", str(name or "")).strip().lower()
+    compact = "".join(text.split())
+    if compact and set(compact) <= {"?"}:
+        return True
+    return "".join(ch for ch in compact if ch.isalnum()) in _UNKNOWN_ITEM_WORDS
+
+
 @dataclass
 class PerceptionHint:
     """Context the tracker gives the perceiver to improve recognition.
@@ -174,9 +192,11 @@ __all__ = [
     "PerceptionError",
     "PerceptionHint",
     "Perceiver",
+    "UNKNOWN_ITEM",
     "clean_name",
     "clean_text",
     "crop_region",
+    "is_unknown_item",
     "normalize_purpose",
     "region_box",
 ]

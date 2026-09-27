@@ -37,6 +37,10 @@ DEFAULT_ROLE = ("flex", 2)
 MAX_ITEMS_PER_UNIT = 3
 MAX_COMPONENTS = 10
 MIN_PAIR_VALUE = 0.5
+EMBLEM_NO_SYNERGY = 0.3  # an emblem for a trait nobody plays: below MIN_PAIR_VALUE, never made
+# HP buckets that can wait for a carry item instead of slamming its component
+# into something else (medium HP and below need the tempo).
+HOLD_BUCKETS = ("healthy", "unknown")
 SLAM_STAGE = (2, 5)
 
 # Trait keywords (English + Chinese) hinting at a unit's damage profile.
@@ -248,6 +252,7 @@ class _Ctx:
     carry_profile: Optional[str] = None
     comp_item_apis: set[str] = field(default_factory=set)
     comp_apis: set[str] = field(default_factory=set)
+    comp_traits: set[str] = field(default_factory=set)  # traits of the target comp's units
     trait_counts: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -309,6 +314,10 @@ def _build_ctx(
             champ = set_data.resolve_champion(name)
             if champ is not None:
                 ctx.comp_apis.add(champ.api_name)
+        for name in [*comp.core_units, *comp.have_units, *comp.missing_units, comp.carry]:
+            champ = set_data.resolve_champion(name) if name else None
+            if champ is not None:
+                ctx.comp_traits.update(champ.traits)
         for name in comp.carry_items:
             item = set_data.resolve_item(name)
             if item is not None:
@@ -347,6 +356,10 @@ def _item_value(item: Item, ctx: _Ctx) -> float:
         trait = ctx.set_data.resolve_trait(trait_name) if trait_name else None
         if trait is not None:
             count = ctx.trait_counts.get(trait.name, 0)
+            if not count and trait.name not in ctx.comp_traits and item.api_name not in ctx.comp_item_apis:
+                # Nobody on the board or in the target comp has this trait: an
+                # emblem for it only burns two components.
+                return EMBLEM_NO_SYNERGY
             if count and any(bp == count + 1 for bp in trait.breakpoints):
                 value += 2.0
             elif count:
@@ -571,8 +584,10 @@ def plan_items(
             where = f"，装给{holder.name}"
         elif thief and ctx.units:
             where = "，只能给没有装备的场上英雄，先留着"
+        elif ctx.units and not any(ctx.free(u) for u in ctx.units):
+            where = "，英雄的装备格都满了，先留着"
         elif ctx.units:
-            where = "，英雄的装备格都满了，换下一件差的再装"
+            where = "，现在的阵容没人适合用，先留着"
         else:
             where = "，先上场一个英雄再装备"
         text = f"{item.name} 已经合成好了还放在备战席{where}"
@@ -589,6 +604,22 @@ def plan_items(
                 value_of[it.api_name] = _item_value(it, ctx)
     _score, pairs = _best_matching(components, set_data, value_of)
     pairs = sorted(pairs, key=lambda p: (-value_of[p[2].api_name], p[2].name))
+    # Components the comp's carry items still need (not held by a unit, not
+    # made by another pair) beyond the ones left unpaired: at healthy HP a
+    # pair that eats one of them waits for the carry item.
+    held_names = {normalize_name(x) for u in ctx.units for x in u.items}
+    made = {p[2].api_name for p in pairs}
+    reserve: dict[str, list[str]] = {}
+    for api in sorted(ctx.comp_item_apis):
+        target = set_data.items.get(api)
+        if target is None or api in made or normalize_name(target.name) in held_names or target.kind != "completed":
+            continue
+        for part in target.composition:
+            reserve.setdefault(part, []).append(target.name)
+    paired = {k for i, j, _it in pairs for k in (i, j)}
+    for k, c in enumerate(components):
+        if k not in paired and reserve.get(c.api_name):
+            reserve[c.api_name].pop()  # a spare copy already covers it
     used_idx: set[int] = set()
     planned: set[str] = set()
     for i, j, item in pairs:
@@ -605,6 +636,13 @@ def plan_items(
         now = slam or early_slam(item, role, tier, holder)
         if role in ("ad", "ap") and holder is None and ctx.units and hp_bucket not in ("low", "critical"):
             now = False  # nobody on this team uses it: keep the components
+        saved_for: Optional[str] = None
+        if not comp_item and hp_bucket in HOLD_BUCKETS:
+            for c in (components[i], components[j]):
+                if reserve.get(c.api_name):
+                    saved_for = reserve[c.api_name].pop()
+                    now = False
+                    break
         prio = 1 if now else 2
         out.append(
             (
@@ -615,13 +653,16 @@ def plan_items(
                     components=[components[i].name, components[j].name],
                     holder=holder.name if holder else None,
                     priority=prio,
-                    reason=_reason(components[i].name, components[j].name, item, role, holder, comp_item, now),
+                    reason=_reason(components[i].name, components[j].name, item, role, holder, comp_item, now)
+                    + (f"（散件留着做主C的{saved_for}）" if saved_for else ""),
                 ),
             )
         )
 
-    # Leftover components that are half of a carry item: say what is missing.
-    if ctx.comp_item_apis:
+    # Leftover components that are half of a carry item: say what is missing
+    # (not when the carry's three slots are already taken or planned).
+    carry_full = ctx.carry_unit is not None and not ctx.free(ctx.carry_unit)
+    if ctx.comp_item_apis and not carry_full:
         held = {normalize_name(x) for u in ctx.units for x in u.items}
         for k, comp_item in enumerate(components):
             if k in used_idx:

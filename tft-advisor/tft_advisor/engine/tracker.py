@@ -26,9 +26,25 @@ Merge rules (every field of a ``ScreenObservation`` is optional):
   worse than a slightly stale one). The board owner is the named opponent
   when the banner names a known opponent; a scout frame that the vision marks
   ``viewing_own_board=True`` without another player's name, or whose board
-  is identical to ours with no known opponent named, is our own board.
+  is identical to ours with no known opponent named, is our own board. The
+  opponent's level comes from ``viewed_player_level`` (or the older note
+  "对手等级 N"), never from ``level`` (the local HUD). Without a scout request
+  and without a readable owner, ``viewing_own_board=False`` is filed under an
+  opponent only when the board is clearly not ours (no HP-match guess).
+* ``viewing_own_board=None`` (unsure whose arena it is) on an auto / manual
+  frame: the bottom HUD (level, XP, streak) applies; the arena fields (board,
+  bench, traits, item bench, top level HP) only when the board looks like
+  ours or no own board is known yet.
+* Gold, shop and augment cards are local UI and apply on every frame. An
+  empty shop list means the shop was not seen (a visible shop has slots).
+  The streak only changes with the round: a 0 read within the round a known
+  streak was read in (the placeholder of an unread streak) is ignored. A level
+  change without an XP reading drops the old level's XP.
 * Carousel and loading frames never carry our board, bench, traits or item
-  bench (the carousel ring is not a board): those fields are ignored.
+  bench (the carousel ring is not a board): those fields are ignored, and
+  ``viewing_own_board=False`` there is not scouting. On the augment screen
+  the cards cover the arena: an empty or much smaller board / bench read is
+  ignored when ours is known.
 * Eliminated players (HP 0 in the player list) do not count in
   ``taken_copies`` because their units go back to the pool.
 
@@ -39,6 +55,7 @@ from the injected ``clock`` so tests are deterministic.
 from __future__ import annotations
 
 import difflib
+import re
 import threading
 import time
 from collections import Counter
@@ -87,6 +104,7 @@ DUPLICATE_OVERLAP = 0.7  # share of copies two unit lists must have in common to
 
 
 WISP_PREFIXES = ("wisp", "精灵", "灵火")
+_OPP_LEVEL_NOTE = re.compile(r"对手等级\s*[:：]?\s*(\d{1,2})")
 
 
 def is_wisp_name(name: Optional[str]) -> bool:
@@ -133,6 +151,7 @@ class GameTracker:
         self._pending_lower: Optional[tuple[int, int]] = None
         self._pending_jump: Optional[int] = None  # stage number of an unconfirmed big jump
         self._game_over = False  # a post-game screen was seen: the next lower stage is a new game
+        self._streak_stage: Optional[tuple[int, int]] = None  # round the streak was last read in
         self._games = 0
         self._state = GameState(game_id=self._new_game_id())
 
@@ -152,6 +171,7 @@ class GameTracker:
             self._pending_lower = None
             self._pending_jump = None
             self._game_over = False
+            self._streak_stage = None
             return self._state.model_copy(deep=True)
 
     def ingest(self, obs: Observation) -> GameState:
@@ -176,22 +196,27 @@ class GameTracker:
             if scr.screen_type in NO_BOARD_SCREENS:
                 # The carousel ring / loading screen is not anyone's board.
                 scr = scr.model_copy(update={"board": None, "bench": None, "traits": None, "item_bench": None})
+            elif scr.screen_type == ScreenType.AUGMENT_SELECT:
+                scr = self._drop_covered_board(scr)
 
             scouting = self._is_scouting(obs)
             if scouting:
-                key = self._opponent_key(scr)
+                key = self._opponent_key(scr, obs.purpose)
                 if key is None:  # the "scouted" board is our own board
                     scouting = False
                 else:
                     self._store_opponent(key, scr, now)
 
-            # Gold and shop always belong to the local player.
+            # Gold, shop and the augment cards always belong to the local player.
             self._set_int("gold", scr.gold, GOLD_RANGE, now)
-            if scr.shop is not None:
+            if scr.shop:  # a visible shop has its slots: [] means it was not seen
                 self._merge_shop(scr.shop, now)
+            if scr.augment_choices is not None:
+                st.augment_choices = [a.strip() for a in scr.augment_choices if a and a.strip()]
+                st.field_age["augment_choices"] = now
 
             if not scouting:
-                self._merge_own(scr, now)
+                self._merge_own(scr, now, certain=scr.viewing_own_board is True)
 
             if stage_changed:
                 st.augment_choices = [] if scr.augment_choices is None else st.augment_choices
@@ -274,8 +299,13 @@ class GameTracker:
                 lo, hi = self._range_for(name)
                 if not lo <= num <= hi:
                     raise ValueError(f"{FIELD_ZH[name]} {num} 不合理（范围 {lo} 到 {hi}）")
+                old_level = st.level
                 setattr(st, name, num)
                 st.field_age[name] = now
+                if name == "level" and num != old_level:
+                    self._reset_xp(False, False)
+                if name == "streak":
+                    self._streak_stage = st.stage.key if st.stage is not None else None
                 if name == "hp" and st.self_name:
                     for p in st.players:
                         if p.name == st.self_name:
@@ -497,9 +527,13 @@ class GameTracker:
     # ---- scouting -------------------------------------------------------------
     @staticmethod
     def _is_scouting(obs: Observation) -> bool:
-        return obs.purpose == "scout" or obs.screen.viewing_own_board is False
+        if obs.purpose == "scout":
+            return True
+        # False on a carousel / loading frame is the "no arena" answer (or the
+        # false placeholder), not a scouted board: the HUD there is ours.
+        return obs.screen.viewing_own_board is False and obs.screen.screen_type not in NO_BOARD_SCREENS
 
-    def _opponent_key(self, scr: ScreenObservation) -> Optional[str]:
+    def _opponent_key(self, scr: ScreenObservation, purpose: str = "scout") -> Optional[str]:
         """Snapshot key for a scouted board, or None when it is our own board.
 
         Order matters: a readable banner naming a known opponent wins over the
@@ -522,6 +556,13 @@ class GameTracker:
             return None  # identical to our board: the camera never left home
         if name:
             return name
+        if purpose != "scout":
+            # viewing_own_board=False without a scout request or a readable
+            # owner: a false placeholder on our own frame is far more likely
+            # than a scouted board, unless the board is clearly someone else's.
+            if st.board and scr.board is not None and self._board_is_ours(scr):
+                return None
+            return UNKNOWN_PLAYER
         # Fallback: a unique opponent with the HP shown on the board.
         hp = _to_int(scr.hp)
         if hp is not None:
@@ -550,8 +591,9 @@ class GameTracker:
             snap.hp = hp
         elif (listed := self._player_hp(key)) is not None:
             snap.hp = listed
-        lvl = _to_int(scr.level)
-        if lvl is not None and 1 <= lvl <= self._mech.max_level:
+        # ``scr.level`` is the local player's HUD level, never the opponent's.
+        lvl = self._viewed_level(scr)
+        if lvl is not None:
             snap.level = lvl
         if scr.board is not None:
             snap.board = self._resolve_units(scr.board, on_board=True)
@@ -563,17 +605,41 @@ class GameTracker:
             snap.items = [self._item_name(x) for x in scr.item_bench if x and x.strip()]
         st.opponents[key] = snap
 
+    def _viewed_level(self, scr: ScreenObservation) -> Optional[int]:
+        """The viewed player's level: the dedicated field, or the older
+        free-text note "对手等级 N"."""
+        lvl = _to_int(scr.viewed_player_level)
+        if lvl is None:
+            for note in scr.notes:
+                m = _OPP_LEVEL_NOTE.search(note or "")
+                if m:
+                    lvl = int(m.group(1))
+                    break
+        if lvl is not None and 1 <= lvl <= self._mech.max_level:
+            return lvl
+        return None
+
     # ---- own board ------------------------------------------------------------
-    def _merge_own(self, scr: ScreenObservation, now: float) -> None:
+    def _merge_own(self, scr: ScreenObservation, now: float, certain: bool = True) -> None:
+        """Apply a frame of our own screen. ``certain``: the vision said the
+        arena is ours. Otherwise only the bottom HUD (level, XP, streak) is
+        applied, plus the arena fields (board, bench, traits, item bench and
+        the top level HP, which belongs to the viewed player) when the board
+        looks like ours or none is known yet."""
         st = self._state
-        self._set_int("level", scr.level, (1, self._mech.max_level), now)
-        self._set_int("xp_current", scr.xp_current, (0, XP_MAX), now)
-        self._set_int("xp_needed", scr.xp_needed, (0, XP_MAX), now)
+        old_level = st.level
+        level_set = self._set_int("level", scr.level, (1, self._mech.max_level), now)
+        xp_set = self._set_int("xp_current", scr.xp_current, (0, XP_MAX), now)
+        need_set = self._set_int("xp_needed", scr.xp_needed, (0, XP_MAX), now)
+        if level_set and st.level != old_level:
+            self._reset_xp(xp_set, need_set)
+        self._merge_streak(scr.streak, now)
+        if not certain and not self._board_is_ours(scr):
+            return
         if self._set_int("hp", scr.hp, HP_RANGE, now) and st.self_name:
             for p in st.players:
                 if p.name == st.self_name:
                     p.hp = st.hp
-        self._set_int("streak", scr.streak, STREAK_RANGE, now)
         if st.self_name is None and scr.viewing_own_board is True and scr.viewed_player_name:
             name = scr.viewed_player_name.strip()
             if name:
@@ -592,12 +658,58 @@ class GameTracker:
         if scr.traits is not None:
             st.traits = self._resolve_traits(scr.traits)
             st.field_age["traits"] = now
-        if scr.augments is not None:
+        if scr.augments is not None and certain:
             st.augments = [a.strip() for a in scr.augments if a and a.strip()]
             st.field_age["augments"] = now
-        if scr.augment_choices is not None:
-            st.augment_choices = [a.strip() for a in scr.augment_choices if a and a.strip()]
-            st.field_age["augment_choices"] = now
+
+    def _reset_xp(self, xp_set: bool, need_set: bool) -> None:
+        """The level changed: an XP pair read at the old level means nothing now."""
+        st = self._state
+        if not xp_set:
+            st.xp_current = None
+            st.field_age.pop("xp_current", None)
+        if not need_set:
+            st.xp_needed = self._mech.xp_to_level.get(st.level) if st.level is not None else None
+
+    def _merge_streak(self, value: Optional[int], now: float) -> None:
+        """The streak only changes with a combat result, i.e. with the round: a
+        0 read within the round a known streak was read in is the placeholder
+        of an unread streak, not a reset (a real value still replaces a 0)."""
+        st = self._state
+        num = _to_int(value)
+        if num is None or not STREAK_RANGE[0] <= num <= STREAK_RANGE[1]:
+            return
+        key = st.stage.key if st.stage is not None else None
+        if num == 0 and st.streak and key is not None and key == self._streak_stage:
+            return
+        st.streak = num
+        st.field_age["streak"] = now
+        self._streak_stage = key
+
+    def _board_is_ours(self, scr: ScreenObservation) -> bool:
+        """Does the board on an uncertain frame look like our own?"""
+        st = self._state
+        if not st.board:
+            return True  # nothing known yet to protect
+        if scr.board is None:
+            return False
+        if self._same_units(scr.board, st.board):
+            return True
+        seen = self._unit_counts(self._resolve_units(scr.board, on_board=True))
+        return _overlap(seen, self._unit_counts(st.board)) >= DUPLICATE_OVERLAP
+
+    def _drop_covered_board(self, scr: ScreenObservation) -> ScreenObservation:
+        """Augment cards cover the arena: an empty or much smaller board / bench
+        read there is the cards, not a sold board."""
+        st = self._state
+        update: dict[str, Any] = {}
+        for field, own in (("board", st.board), ("bench", st.bench)):
+            seen = getattr(scr, field)
+            if seen is not None and own and len([u for u in seen if u.name and u.name.strip()]) * 2 < len(own):
+                update[field] = None
+        if scr.traits is not None and not scr.traits and st.traits:
+            update["traits"] = None
+        return scr.model_copy(update=update) if update else scr
 
     @staticmethod
     def _keep_positions(new: list[Unit], old: list[Unit]) -> list[Unit]:

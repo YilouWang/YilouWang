@@ -125,6 +125,10 @@ class ScreenObservation(BaseModel):
         default=None, description="False when the camera shows another player's board (scouting)"
     )
     viewed_player_name: Optional[str] = Field(default=None, description="Owner of the board shown, if readable")
+    viewed_player_level: Optional[int] = Field(
+        default=None,
+        description="Level on the plate above the viewed player's arena while scouting (``level`` is always the local HUD)",
+    )
     stage: Optional[str] = Field(default=None, description="Round indicator like '3-2'")
     gold: Optional[int] = None
     level: Optional[int] = None
@@ -159,6 +163,7 @@ class ScreenObservation(BaseModel):
 WireField = Literal[
     "viewing_own_board",
     "viewed_player_name",
+    "viewed_player_level",
     "stage",
     "gold",
     "level",
@@ -182,7 +187,9 @@ WIRE_FIELDS: tuple[str, ...] = WireField.__args__  # type: ignore[attr-defined]
 class UnitObsWire(BaseModel):
     name: str = Field(description="Champion name exactly as displayed / recognized")
     star: int = Field(description="Star level 1-3 (4 only for special cases)")
-    items: list[str] = Field(description="Item names held by the unit, [] when none")
+    items: list[str] = Field(
+        description="Item names held by the unit; \"?\" for each icon that cannot be named; [] when the unit holds no item"
+    )
     row: int = Field(description="Board row 0=front .. 3=back; -1 on the bench")
     col: int = Field(description="Board column 0=left .. 6=right; bench slot 0-8 on the bench; -1 unknown")
 
@@ -228,13 +235,14 @@ class TraitObsWire(BaseModel):
         )
 
 
+# Structured-output schema for Claude vision (see the comment above). Every
+# field is required. A field listed in ``unreadable`` becomes ``None`` in the
+# ScreenObservation whatever placeholder value it carries; an empty list NOT
+# listed there means "visible and empty". The class docstring and the field
+# descriptions are sent to the model: keep them model-facing and in line with
+# rule 2 of the vision system prompt.
 class ScreenObservationWire(BaseModel):
-    """Structured-output schema for Claude vision (see the comment above).
-
-    Every field is required. A field listed in ``unreadable`` becomes ``None``
-    in the ScreenObservation whatever placeholder value it carries; an empty
-    list NOT listed there means "visible and empty".
-    """
+    """What one TFT screenshot shows. Fill every field. List every top-level field that is not visible or not readable in "unreadable" (its value is then ignored). An empty list that is not listed in "unreadable" means "visible and empty"."""
 
     screen_type: ScreenType
     unreadable: list[WireField] = Field(
@@ -242,13 +250,19 @@ class ScreenObservationWire(BaseModel):
     )
     viewing_own_board: bool = Field(description="False when the camera shows another player's board (scouting)")
     viewed_player_name: str = Field(description="Owner of the board shown; empty string if unreadable")
+    viewed_player_level: int = Field(
+        description="Level on the plate above the viewed player's arena when it is another player's; "
+        "0 when not shown (the top level field is always the local player's HUD level)"
+    )
     stage: str = Field(description="Round indicator like '3-2'; empty string if unreadable")
-    gold: int
-    level: int
-    xp_current: int
-    xp_needed: int
-    hp: int = Field(description="HP of the player whose board is shown")
-    streak: int = Field(description="+N win streak, -N loss streak, 0 for none")
+    gold: int = Field(description="Local player's gold (bottom HUD); -1 when unreadable (also list it in unreadable)")
+    level: int = Field(description="Local player's level (bottom HUD); 0 when unreadable (also list it in unreadable)")
+    xp_current: int = Field(description="XP bar value x of 'x/y'; -1 when unreadable (also list it in unreadable)")
+    xp_needed: int = Field(description="XP bar value y of 'x/y'; 0 when unreadable (also list it in unreadable)")
+    hp: int = Field(description="HP of the player whose board is shown; -1 when unreadable (also list it in unreadable)")
+    streak: int = Field(
+        description="+N win streak, -N loss streak, 0 for none; 0 and listed in unreadable when the gold area is not visible"
+    )
     shop: list[ShopSlotWire] = Field(description="5 shop slots left to right")
     shop_locked: bool
     board: list[UnitObsWire]
@@ -281,6 +295,7 @@ class ScreenObservationWire(BaseModel):
             unreadable=unreadable,  # type: ignore[arg-type]
             viewing_own_board=bool(s.viewing_own_board),
             viewed_player_name=s.viewed_player_name or "",
+            viewed_player_level=s.viewed_player_level or 0,
             stage=s.stage or "",
             gold=-1 if s.gold is None else s.gold,
             level=0 if s.level is None else s.level,
@@ -315,6 +330,9 @@ class ScreenObservationWire(BaseModel):
             screen_type=self.screen_type,
             viewing_own_board=val("viewing_own_board", self.viewing_own_board),
             viewed_player_name=val("viewed_player_name", name or None),
+            viewed_player_level=val(
+                "viewed_player_level", self.viewed_player_level if self.viewed_player_level > 0 else None
+            ),
             stage=val("stage", stage or None),
             gold=val("gold", self.gold if self.gold >= 0 else None),
             level=val("level", self.level if self.level > 0 else None),
@@ -494,6 +512,11 @@ class CompSuggestion(BaseModel):
     carry_items: list[str] = Field(default_factory=list)
     contested_by: list[str] = Field(default_factory=list)  # player names playing similar units
     reason: str = ""
+    # From the comp library (None / empty for auto comps built from traits):
+    style: Optional[str] = None  # standard | fast8 | fast9 | reroll1 | reroll2 | reroll3
+    tier: Optional[str] = None
+    positions: dict[str, list[int]] = Field(default_factory=dict)  # unit -> [row, col], row 0 = front (as the board)
+    item_holders: dict[str, list[str]] = Field(default_factory=dict)  # unit -> recommended items (tanks included)
 
 
 class ScoutRequest(BaseModel):
@@ -514,6 +537,7 @@ class Analysis(BaseModel):
     items: list[ItemSuggestion] = Field(default_factory=list)
     comps: list[CompSuggestion] = Field(default_factory=list)
     shop_picks: list[str] = Field(default_factory=list)  # shop units worth buying, in priority order
+    shop_picks_cost: int = 0  # gold the shop picks cost (already taken out of econ.roll_budget)
     sell_candidates: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     scout_requests: list[ScoutRequest] = Field(default_factory=list)
@@ -567,11 +591,14 @@ class StrategistAdvice(BaseModel):
     headline: str = Field(description="One-line summary in Chinese, <= 30 chars")
     actions: list[AdviceAction] = Field(description="1-6 concrete actions ordered by priority")
     plan: str = Field(description="Plan for the next 2-3 rounds, Chinese, <= 120 chars")
-    comp: Optional[str] = Field(default=None, description="Target comp direction, Chinese")
-    items: Optional[str] = Field(default=None, description="Item plan, Chinese")
-    positioning: Optional[str] = Field(default=None, description="Positioning tip, Chinese")
-    augment: Optional[str] = Field(default=None, description="Augment pick advice if choices visible")
+    comp: Optional[str] = Field(default=None, description="Target comp direction, Chinese, one sentence, <= 60 chars")
+    items: Optional[str] = Field(default=None, description="Item plan, Chinese, one sentence, <= 60 chars")
+    positioning: Optional[str] = Field(default=None, description="Positioning tip, Chinese, one sentence, <= 60 chars")
+    augment: Optional[str] = Field(
+        default=None, description="Augment pick advice if choices visible, Chinese, one sentence, <= 60 chars"
+    )
     scout_request: Optional[str] = Field(
-        default=None, description="If more info is needed, ask the player to open a specific board"
+        default=None,
+        description="If more info is needed, ask the player to open a specific board, Chinese, one sentence, <= 60 chars",
     )
     confidence: float = Field(description="0..1 confidence in this advice")

@@ -158,6 +158,28 @@ def test_llm_strategist_upgrades_advice(cfg, sample):
         assert app.bus.latest("advice")["source"] == "llm"
 
 
+def test_app_strategist_follows_scout_and_hotkey_settings(cfg, sample):
+    # [advisor] scout_prompts = false must reach Claude, and so must the real keys
+    # (or "off" when no global hotkey is registered, e.g. off Windows).
+    from tft_advisor.llm import LLM
+
+    cfg.advisor.scout_prompts = False
+    cfg.hotkeys.enabled = True
+    cfg.hotkeys.scout = "F10"
+    with FakeAnthropic() as fake:
+        app = AdvisorApp(
+            cfg, set_data=sample, perceiver=None, fast_perceiver=None, llm=LLM(cfg.anthropic, client=fake.client()), console=False
+        )
+        assert app.strategist is not None
+        assert app.strategist.scout_enabled is False
+        assert app.strategist.hotkeys.scout == "F10" and app.strategist.hotkeys.enabled
+        app.start(dashboard=False, hotkeys=False, capture=False)
+        try:
+            assert app.strategist.hotkeys.enabled is False  # nothing registered: point to the buttons
+        finally:
+            app.stop()
+
+
 def test_llm_failure_keeps_rules_advice(cfg, sample):
     from tft_advisor.advisor.strategist import ClaudeStrategist
     from tft_advisor.llm import LLM
@@ -1016,3 +1038,44 @@ def test_live_threads_auto_mode_end_to_end(cfg, sample):
             assert "automatic capture" in purposes[0]
         finally:
             app.stop()
+
+
+@pytest.fixture()
+def installed_ocr(monkeypatch):
+    """Pretend a local OCR engine is installed (as after `pip install -e ".[all]"`)."""
+    import tft_advisor.vision.ocr as ocr_mod
+
+    made: list = []
+
+    class FakeOcr(RecordingPerceiver):
+        def __init__(self, set_data):
+            super().__init__("ocr")
+            made.append(self)
+
+    monkeypatch.setattr(ocr_mod, "ocr_available", lambda: True)
+    monkeypatch.setattr(ocr_mod, "OcrPerceiver", FakeOcr)
+    return made
+
+
+def test_none_perceivers_mean_none_even_with_ocr_installed(cfg, sample, installed_ocr):
+    # Regression: None used to mean "auto-detect", so with OCR installed the
+    # shop job of a test / demo / replay --mock went to the real OCR engine.
+    main = RecordingPerceiver("vision")
+    app = app_with(cfg, sample, main)  # fast_perceiver=None
+    assert app.fast_perceiver is None and installed_ocr == []
+    assert app.run_job(Job(1, "shop")) is not None
+    assert main.calls == ["shop"]
+    bare = AdvisorApp(cfg, set_data=sample, perceiver=None, fast_perceiver=None, use_llm=False, console=False)
+    assert bare.perceiver is None and bare.fast_perceiver is None and bare.perception_mode() == "manual"
+    assert installed_ocr == []
+
+
+def test_default_perceivers_still_auto_detect_ocr(cfg, sample, installed_ocr):
+    app = AdvisorApp(cfg, set_data=sample, use_llm=False, console=False)
+    assert app.fast_perceiver is installed_ocr[-1]
+    assert app.perceiver is installed_ocr[0]  # no Claude: OCR is the main perceiver too
+    main = RecordingPerceiver("vision")
+    app = AdvisorApp(cfg, set_data=sample, perceiver=main, use_llm=False, console=False)
+    assert app.perceiver is main and app.fast_perceiver is installed_ocr[-1]
+    assert app.run_job(Job(1, "shop")) is not None
+    assert installed_ocr[-1].calls == ["shop"] and main.calls == []

@@ -38,7 +38,14 @@ PRIORITY = {"scout": 4, "manual": 4, "auto": 3, "reanalyze": 2, "shop": 1}
 #: Jobs whose frame is grabbed at trigger time (the player is looking at it now).
 TRIGGER_GRAB = ("manual", "scout", "shop")
 
-NO_PERCEIVER_MSG = "没有可用的识别方式：请设置 ANTHROPIC_API_KEY 或安装 OCR (pip install rapidocr-onnxruntime)，现在只能用「手动修正」"
+NO_PERCEIVER_MSG = (
+    "没有可用的识别方式：请设置 ANTHROPIC_API_KEY，或在 tft-advisor 目录运行 "
+    'pip install -e ".[ocr]" 安装 OCR，现在只能用「手动修正」'
+)
+
+#: Default for ``AdvisorApp(perceiver=..., fast_perceiver=...)``: detect what is
+#: available (Claude vision, local OCR). ``None`` means "none", not "detect".
+AUTO: Any = type("_Auto", (), {"__repr__": lambda self: "AUTO"})()
 AUTO_PAUSED_MSG = "没找到游戏窗口或游戏不在前台，自动分析暂停"
 
 
@@ -170,8 +177,8 @@ class AdvisorApp:
         set_data: Any = None,
         mech: Any = None,
         capturer: Any = None,
-        perceiver: Any = None,
-        fast_perceiver: Any = None,
+        perceiver: Any = AUTO,
+        fast_perceiver: Any = AUTO,
         llm: Any = None,
         strategist: Any = None,
         use_llm: Optional[bool] = None,
@@ -193,7 +200,9 @@ class AdvisorApp:
         self.bus = bus or EventBus()
         self.console = console
         self.clock = clock
-        self.set_data = set_data or load_set_data(cfg.data, offline=offline_data, log=self.info)
+        # A cache or the bundled snapshot starts the game right away; a stale
+        # export is refreshed in the background and applies on the next start.
+        self.set_data = set_data or load_set_data(cfg.data, offline=offline_data, log=self.info, background=True)
         self.mech = mech or load_mechanics(cfg.data.mechanics_file or None)
         self.comps = load_comps(cfg.data.comps_file or None, self.set_data, log=self.warn)
         self.tracker = GameTracker(self.set_data, self.mech)
@@ -206,8 +215,12 @@ class AdvisorApp:
             use_llm = llm is not None or has_credentials()
         self.llm = llm if llm is not None else (LLM(cfg.anthropic) if use_llm else None)
 
-        self.perceiver = perceiver if perceiver is not None else self._default_perceiver()
-        self.fast_perceiver = fast_perceiver if fast_perceiver is not None else self._default_fast_perceiver()
+        # Only AUTO auto-detects: None / False mean "no perceiver" (demo, replay
+        # --mock and tests must not silently pick up a locally installed OCR).
+        self.perceiver = self._default_perceiver() if perceiver is AUTO else (None if perceiver is False else perceiver)
+        self.fast_perceiver = (
+            self._default_fast_perceiver() if fast_perceiver is AUTO else (None if fast_perceiver is False else fast_perceiver)
+        )
         if strategist is not None:
             self.strategist = strategist
         elif self.llm is not None and cfg.advisor.llm_strategy:
@@ -216,7 +229,14 @@ class AdvisorApp:
             reference = "\n\n".join(
                 x for x in (set_notes(self.set_data.set_number), comps_reference_text(self.comps)) if x
             )
-            self.strategist = ClaudeStrategist(self.llm, cfg.anthropic, self.set_data, extra_reference=reference)
+            self.strategist = ClaudeStrategist(
+                self.llm,
+                cfg.anthropic,
+                self.set_data,
+                extra_reference=reference,
+                hotkeys=cfg.hotkeys,
+                scout_enabled=cfg.advisor.scout_prompts,
+            )
         else:
             self.strategist = None
         # The rules text points to the Claude advice only when a strategist exists.
@@ -875,6 +895,14 @@ class AdvisorApp:
                     self.info(f"部分热键不可用（{'、'.join(failed)}），其余热键正常；不可用的请用网页上的按钮")
                 else:
                     self.info("全局热键不可用：请用网页上的按钮")
+        # Claude must not name keys that do nothing: without any registered
+        # hotkey it points the player to the dashboard buttons instead.
+        if self.strategist is not None and hasattr(self.strategist, "hotkeys"):
+            live = self._hotkeys is not None and bool(getattr(self._hotkeys, "registered", None))
+            if self.cfg.hotkeys.enabled and not live:
+                from dataclasses import replace as _replace
+
+                self.strategist.hotkeys = _replace(self.cfg.hotkeys, enabled=False)
         if voice if voice is not None else self.cfg.ui.voice:
             from .ui.voice import Speaker
 

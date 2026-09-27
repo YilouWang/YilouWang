@@ -54,7 +54,9 @@ def offline_data(monkeypatch):
     import tft_advisor.data.setdata as setdata
 
     real = setdata.load_set_data
-    monkeypatch.setattr(setdata, "load_set_data", lambda cfg, offline=False, log=print: real(cfg, offline=True, log=log))
+    monkeypatch.setattr(
+        setdata, "load_set_data", lambda cfg, offline=False, log=print, background=False: real(cfg, offline=True, log=log)
+    )
 
 
 def write(path: Path, text: str, encoding: str = "utf-8") -> Path:
@@ -492,3 +494,370 @@ def test_doctor_api_reports_rejected_request(home, offline_data, monkeypatch, ca
         rc = cli.main(["doctor", "--offline", "--api"])
         out = capsys.readouterr().out
         assert rc == 1 and "!!" in out
+
+
+# ---------------------------------------------------------------------------
+# Windows new-user fixes
+# ---------------------------------------------------------------------------
+
+
+def _extra_reqs(extra: str, python_version: str) -> dict[str, str]:
+    import tomllib
+
+    from packaging.requirements import Requirement
+
+    data = tomllib.loads((Path(__file__).parent.parent / "pyproject.toml").read_text(encoding="utf-8"))
+    env = {"python_version": python_version, "python_full_version": python_version + ".0", "extra": extra}
+    out = {}
+    for text in data["project"]["optional-dependencies"][extra]:
+        req = Requirement(text)
+        if req.marker is None or req.marker.evaluate(env):
+            out[req.name] = str(req.specifier)
+    return out
+
+
+@pytest.mark.parametrize("extra", ["ocr", "all"])
+def test_ocr_extra_installs_on_every_supported_python(extra):
+    # rapidocr-onnxruntime >= 1.3 declares Requires-Python < 3.13: listing it
+    # unconditionally made `pip install -e ".[all]"` fail on 3.13 / 3.14.
+    for py in ("3.11", "3.12"):
+        reqs = _extra_reqs(extra, py)
+        assert "rapidocr-onnxruntime" in reqs and "rapidocr" not in reqs
+    for py in ("3.13", "3.14"):
+        reqs = _extra_reqs(extra, py)
+        assert "rapidocr-onnxruntime" not in reqs
+        assert "rapidocr" in reqs and "onnxruntime" in reqs  # rapidocr 3 does not pull onnxruntime itself
+
+
+def _fake_imports(monkeypatch, failures: dict[str, BaseException]):
+    import importlib as real_importlib
+    import types
+
+    def import_module(name, *a, **k):
+        if name in failures:
+            raise failures[name]
+        return real_importlib.import_module(name, *a, **k)
+
+    monkeypatch.setattr(cli, "importlib", types.SimpleNamespace(import_module=import_module))
+
+
+def test_doctor_explains_missing_vc_runtime_for_ocr(home, monkeypatch, capsys):
+    dll = ImportError("DLL load failed while importing onnxruntime_pybind11_state: 找不到指定的模块。")
+    _fake_imports(monkeypatch, {"rapidocr_onnxruntime": dll, "rapidocr": ModuleNotFoundError("No module named 'rapidocr'", name="rapidocr")})
+    assert cli.main(["doctor", "--offline"]) == 0
+    out = capsys.readouterr().out
+    line = next(x for x in out.splitlines() if "OCR" in x)
+    assert "[!!]" in line and "VC++" in line and cli.VC_REDIST_URL in line and "未安装" not in line
+    assert no_dashes(out)
+
+
+def test_doctor_ocr_not_installed_and_broken_optional_module(home, monkeypatch, capsys):
+    missing = {m: ModuleNotFoundError(f"No module named '{m}'", name=m) for m in cli.OCR_MODULES}
+    missing["pyttsx3"] = ModuleNotFoundError("No module named 'comtypes'", name="comtypes")
+    _fake_imports(monkeypatch, missing)
+    assert cli.main(["doctor", "--offline"]) == 0
+    out = capsys.readouterr().out
+    ocr = next(x for x in out.splitlines() if "OCR" in x)
+    assert "[OK]" in ocr and "未安装" in ocr and '.[ocr]' in ocr
+    tts = next(x for x in out.splitlines() if "pyttsx3" in x)
+    assert "[!!]" in tts and "comtypes" in tts  # installed, a dependency is missing: reinstalling pyttsx3 alone will not help
+
+
+def test_doctor_ocr_accepts_the_rapidocr_successor(home, monkeypatch, capsys):
+    import types
+
+    import tft_advisor.vision.ocr as ocr_mod
+
+    fake = types.SimpleNamespace(__version__="3.9.2")
+    import importlib as real_importlib
+
+    def import_module(name, *a, **k):
+        if name == "rapidocr_onnxruntime":
+            raise ModuleNotFoundError("No module named 'rapidocr_onnxruntime'", name="rapidocr_onnxruntime")
+        if name == "rapidocr":
+            return fake
+        return real_importlib.import_module(name, *a, **k)
+
+    monkeypatch.setattr(cli, "importlib", types.SimpleNamespace(import_module=import_module))
+    monkeypatch.setattr(ocr_mod, "ocr_available", lambda: True)
+    assert cli.main(["doctor", "--offline"]) == 0
+    line = next(x for x in capsys.readouterr().out.splitlines() if "OCR" in x)
+    assert "[OK]" in line and "rapidocr 3.9.2" in line
+    # Installed but the vision module cannot use it: flagged, not reported as fine.
+    monkeypatch.setattr(ocr_mod, "ocr_available", lambda: False)
+    assert cli.main(["doctor", "--offline"]) == 0
+    line = next(x for x in capsys.readouterr().out.splitlines() if "OCR" in x)
+    assert "[!!]" in line
+
+
+def test_no_perceiver_message_names_the_ocr_extra():
+    from tft_advisor.app import NO_PERCEIVER_MSG
+
+    assert '.[ocr]' in NO_PERCEIVER_MSG and "rapidocr-onnxruntime" not in NO_PERCEIVER_MSG and no_dashes(NO_PERCEIVER_MSG)
+
+
+class _Stream:
+    def __init__(self, tty: bool):
+        self.tty = tty
+        self.calls: list[dict] = []
+
+    def isatty(self):
+        return self.tty
+
+    def reconfigure(self, **kw):
+        self.calls.append(kw)
+
+
+def test_redirected_output_uses_the_console_code_page_on_windows(monkeypatch):
+    import io
+
+    monkeypatch.delenv("MSYSTEM", raising=False)
+    monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+
+    enc = cli._stream_encoding
+    assert enc(_Stream(True), windows=True, console_cp=936) == "utf-8"  # console: WriteConsoleW anyway
+    assert enc(_Stream(False), windows=True, console_cp=936) == "cp936"  # `doctor > x.txt` / `| Select-String`
+    assert enc(_Stream(False), windows=True, console_cp=65001) == "utf-8"
+    assert enc(_Stream(False), windows=True, console_cp=437) == "utf-8"  # cannot hold Chinese: keep bytes intact
+    assert enc(_Stream(False), windows=True, console_cp=0) == "utf-8"  # no console at all
+    assert enc(_Stream(False), windows=False, console_cp=0) == "utf-8"
+    monkeypatch.setenv("MSYSTEM", "MINGW64")  # Git Bash: a pipe that renders UTF-8
+    assert enc(_Stream(False), windows=True, console_cp=936) == "utf-8"
+    monkeypatch.delenv("MSYSTEM")
+    monkeypatch.setenv("PYTHONIOENCODING", "utf-8")
+    assert enc(_Stream(False), windows=True, console_cp=936) is None
+    monkeypatch.delenv("PYTHONIOENCODING")
+    fake = _Stream(False)
+    cli._utf8_console(streams=[fake], windows=True, console_cp=936)
+    assert fake.calls == [{"encoding": "cp936", "errors": "replace"}]
+    # What PowerShell reads back from the pipe is the original Chinese text.
+    buf = io.BytesIO()
+    out = io.TextIOWrapper(buf, encoding="utf-8")
+    cli._utf8_console(streams=[out], windows=True, console_cp=936)
+    out.write("[OK] 截屏: 游戏窗口★")
+    out.flush()
+    assert buf.getvalue().decode("cp936") == "[OK] 截屏: 游戏窗口★"
+
+
+def test_run_prints_the_phone_url_in_lan_mode(home, offline_data, monkeypatch, capsys):
+    import socket
+
+    from tft_advisor.app import AdvisorApp
+    from tft_advisor.ui import server
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    monkeypatch.setattr(server, "_guess_lan_ip", lambda: "192.168.1.23")
+    monkeypatch.setattr(AdvisorApp, "wait", lambda self: None)
+    monkeypatch.setattr(cli, "_open", lambda *a, **k: None)
+    assert cli.main(["run", "--no-vision-llm", "--no-auto", "--host", "0.0.0.0", "--port", str(port)]) == 0
+    out = capsys.readouterr().out
+    phone = next(x for x in out.splitlines() if x.startswith("手机访问: "))
+    assert f"http://192.168.1.23:{port}/?token=" in phone and no_dashes(phone)
+    # The summary block (not only an earlier timestamped log line) names it.
+    lines = out.splitlines()
+    assert lines.index(phone) == next(i for i, x in enumerate(lines) if x.startswith("看板: ")) + 1
+
+
+def test_local_run_prints_no_phone_url(home, offline_data, monkeypatch, capsys):
+    import socket
+
+    from tft_advisor.app import AdvisorApp
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    monkeypatch.setattr(AdvisorApp, "wait", lambda self: None)
+    monkeypatch.setattr(cli, "_open", lambda *a, **k: None)
+    assert cli.main(["run", "--no-vision-llm", "--no-auto", "--port", str(port)]) == 0
+    assert "手机访问" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'comps_file = "C:\\Users\\王一楼\\Documents\\我的阵容.json"',  # \U -> "Invalid hex value"
+        'comps_file = "D:\\tft\\my.json"',  # \m -> "Unescaped '\\'"
+    ],
+)
+def test_windows_path_in_double_quotes_gets_a_chinese_hint(home, tmp_path, line):
+    p = write(tmp_path / "c.toml", "[data]\n" + line + "\n")
+    with pytest.raises(ValueError) as exc:
+        load_config(p)
+    msg = str(exc.value)
+    assert "单引号" in msg and "Windows 路径" in msg and str(p) in msg and no_dashes(msg)
+
+
+def test_unrelated_toml_error_has_no_path_hint(home, tmp_path):
+    p = write(tmp_path / "c.toml", "[ui]\nport = = 3\n")
+    with pytest.raises(ValueError) as exc:
+        load_config(p)
+    assert "单引号" not in str(exc.value)
+
+
+def test_silently_mangled_windows_path_is_rejected(home, tmp_path, capsys):
+    # "D:\tft\new_comps.json" is valid TOML: D:<TAB>ft<LF>ew_comps.json. It used
+    # to load, then "找不到阵容文件" dropped the whole comp library.
+    p = write(tmp_path / "c.toml", '[data]\ncomps_file = "D:\\tft\\new_comps.json"\n')
+    with pytest.raises(ValueError) as exc:
+        load_config(p)
+    msg = str(exc.value)
+    assert "[data].comps_file" in msg and "制表符" in msg
+    assert "comps_file = 'D:\\tft\\new_comps.json'" in msg  # the fixed line, ready to paste
+    assert "\t" not in msg and "\n" not in msg
+    assert cli.main(["doctor", "--offline", "--config", str(p)]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("错误: ") and len(err.strip().splitlines()) == 1
+    cfg = Config()
+    cfg.capture.screenshot_dir = "C:\new\\caps"  # what TOML makes of "C:\new\caps": a real newline
+    with pytest.raises(ValueError, match="screenshot_dir"):
+        cfg.validate()
+
+
+def test_single_quoted_windows_path_loads(home, tmp_path):
+    cfg = load_config(write(tmp_path / "c.toml", "[data]\ncomps_file = 'C:\\Users\\王一楼\\我的阵容.json'\n"))
+    assert cfg.data.comps_file.endswith("C:\\Users\\王一楼\\我的阵容.json")
+
+
+def test_relative_paths_are_relative_to_the_config_file(home, tmp_path):
+    cfg_dir = tmp_path / "cfgdir"
+    cfg_dir.mkdir()
+    p = write(
+        cfg_dir / "config.toml",
+        "[data]\ncomps_file = '我的阵容.json'\nmechanics_file = 'patch/m.toml'\ncache_dir = 'cache'\n"
+        "[capture]\nscreenshot_dir = '~/shots'\n",
+    )
+    assert Path.cwd() != cfg_dir  # the home fixture runs from another directory
+    cfg = load_config(p)
+    assert Path(cfg.data.comps_file) == cfg_dir / "我的阵容.json"
+    assert Path(cfg.data.mechanics_file) == cfg_dir / "patch" / "m.toml"
+    assert Path(cfg.data.cache_dir) == cfg_dir / "cache" and cfg.cache_dir == cfg_dir / "cache"
+    assert cfg.capture.screenshot_dir == "~/shots"  # home-relative stays as written
+    absolute = tmp_path / "abs.json"
+    cfg = load_config(write(cfg_dir / "c2.toml", f"[data]\ncomps_file = '{absolute}'\n"))
+    assert cfg.data.comps_file == str(absolute)
+    # A relative --config path works from the current directory too.
+    write(Path.cwd() / "local.toml", "[data]\ncomps_file = 'x.json'\n")
+    assert Path(load_config("local.toml").data.comps_file) == Path.cwd() / "x.json"
+
+
+def test_relative_comps_file_is_found_next_to_the_default_config(home, offline_data, capsys):
+    from tft_advisor.app import AdvisorApp
+
+    cfg_dir = home / ".tft_advisor"
+    cfg_dir.mkdir()
+    (cfg_dir / "我的阵容.json").write_text(
+        json.dumps({"comps": [{"name": "我的阿狸", "style": "fast8", "units": ["Ahri", "Morgana"], "carry": "Ahri"}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    write(cfg_dir / "config.toml", "[data]\ncomps_file = '我的阵容.json'\n")
+    app = AdvisorApp(load_config(), perceiver=None, fast_perceiver=None, use_llm=False, console=False, offline_data=True)
+    assert [c.name for c in app.comps] == ["我的阿狸"]
+
+
+# ---------------------------------------------------------------------------
+# review.py: metrics the review model can trust
+# ---------------------------------------------------------------------------
+
+
+def _full_rec(stage, gold=None, level=None, econ=None, style="standard", hp=80, streak=None, board=(), augments=(), item_bench=(), comp=None):
+    st = GameState(game_id="g1", stage=StageRound.parse(stage), hp=hp, gold=gold, level=level, streak=streak)
+    st.board = [Unit(api_name=f"TFT_{n}", name=n, star=s, items=list(items)) for n, s, items in board]
+    st.augments = list(augments)
+    st.item_bench = list(item_bench)
+    analysis = {"econ": {"recommendation": econ, "style": style} if econ else None, "comps": [{"name": comp}] if comp else []}
+    return {"game_id": "g1", "state": st.model_dump(mode="json"), "analysis": analysis, "advice": {"headline": f"h{stage}"}}
+
+
+def test_level_timing_reports_late_early_and_unknown():
+    mech = load_mechanics()
+    recs = [
+        _full_rec("2-1", 10, 4),
+        _full_rec("3-2", 34, 5),  # level 5 first seen here; 2-5 was not logged
+        _full_rec("3-3", 18, 5),
+        _full_rec("3-4", 24, 6),
+        _full_rec("4-1", 50, 6),
+        _full_rec("4-2", 30, 7),
+        _full_rec("4-3", 20, 8),
+    ]
+    timing = {x["level"]: x for x in summarize_log(recs, mech)["level_timing"]}
+    assert timing[4]["standard_round"] == "2-1" and timing[4]["rounds_late"] == 0
+    # A gap in the log hides when level 5 came: not called late.
+    assert timing[5]["standard_round"] == "2-5" and timing[5]["rounds_late"] is None
+    # Regression: this used to read "6级@3-4(标准6)", i.e. on curve.
+    assert timing[6]["standard_round"] == "3-2" and timing[6]["rounds_late"] == 2 and timing[6]["below_at"] == ["3-2", "3-3"]
+    assert timing[7]["standard_round"] == "4-1" and timing[7]["rounds_late"] == 1
+    assert timing[8]["standard_round"] == "4-5" and timing[8]["rounds_late"] == -2
+    text = format_summary(summarize_log(recs, mech))
+    assert "6级@3-4(标准3-2，至少晚2回合)" in text and "8级@4-3(标准4-5，早2回合)" in text and "5级@3-2(标准2-5)" in text
+    assert no_dashes(text)
+
+
+def test_interest_metric_counts_only_rounds_the_assistant_said_to_save():
+    mech = load_mechanics()
+    recs = [
+        _full_rec("2-1", 12, 4, econ="save"),  # stage 2 cannot be at the cap
+        _full_rec("3-2", 34, 5, econ="level"),  # the assistant asked to spend
+        _full_rec("3-5", 30, 6, econ="save"),  # 3 interest instead of 5
+        _full_rec("4-1", 55, 6, econ="save"),
+        _full_rec("4-2", 8, 7, econ="roll"),
+    ]
+    s = summarize_log(recs, mech)
+    assert s["interest_short_on_save_rounds"] == 2 and s["interest_short_rounds"] == ["3-5"]
+    assert "interest_missed_stage2_3" not in s
+    assert "(第3阶段起，累计): 2（3-5）" in format_summary(s)
+
+
+def test_review_payload_has_items_augments_comp_and_explains_fields():
+    from tft_advisor.config import AnthropicConfig
+    from tft_advisor.llm import LLM
+
+    mech = load_mechanics()
+    recs = [
+        _full_rec("2-1", 10, 4, econ="save", streak=-2, augments=["潜在锻造"], comp="日蚀骑士 芸阿娜", style="reroll2"),
+        _full_rec(
+            "3-2", 30, 5, econ="slow_roll", streak=-3, augments=["潜在锻造", "史诗搜牌"], item_bench=["女神之泪"],
+            board=[("阿狸", 2, ["珠光护手", "朔极之矛"]), ("瑟提", 1, [])], comp="日蚀骑士 芸阿娜", style="reroll2",
+        ),
+    ]
+    s = summarize_log(recs, mech)
+    row = s["timeline"][-1]
+    assert row["board"] == ["阿狸★★[珠光护手+朔极之矛]", "瑟提★"]
+    assert row["streak"] == -3 and row["comp"] == "日蚀骑士 芸阿娜" and row["style"] == "reroll2" and row["econ"] == "slow_roll"
+    assert s["final_item_bench"] == ["女神之泪"]
+    assert s["augments"] == [{"name": "潜在锻造", "seen_at": "2-1"}, {"name": "史诗搜牌", "seen_at": "3-2"}]
+    text = format_summary(s)
+    assert "海克斯: 潜在锻造@2-1, 史诗搜牌@3-2" in text and "阿狸★★[珠光护手+朔极之矛]" in text
+    # The prompt explains the derived metrics and forbids criticising what the data does not show.
+    for needle in ("rounds_late", "interest_short_on_save_rounds", "reroll", "skip", "up to 3"):
+        assert needle in REVIEW_SYSTEM
+    with FakeAnthropic() as fake:
+        fake.queue_text("做得好：前期连败攒钱")
+        llm_review(LLM(AnthropicConfig(), client=fake.client()), "m", "medium", s)
+        payload = json.loads(fake.requests[0]["body"]["messages"][0]["content"][0]["text"])
+    assert payload["timeline"][-1]["board"][0] == "阿狸★★[珠光护手+朔极之矛]"
+    assert payload["augments"][1]["name"] == "史诗搜牌" and payload["final_item_bench"] == ["女神之泪"]
+
+
+def test_replay_mock_and_demo_never_use_an_installed_ocr(home, offline_data, tmp_path, monkeypatch, capsys):
+    import tft_advisor.vision.ocr as ocr_mod
+
+    made = []
+
+    class FakeOcr:
+        name = "ocr"
+
+        def __init__(self, set_data):
+            made.append(self)
+
+        def perceive(self, image, purpose="auto", hint=None):  # pragma: no cover - must not run
+            raise AssertionError("the real OCR was used instead of the mock")
+
+    monkeypatch.setattr(ocr_mod, "ocr_available", lambda: True)
+    monkeypatch.setattr(ocr_mod, "OcrPerceiver", FakeOcr)
+    Image.new("RGB", (320, 180)).save(tmp_path / "a.png")
+    assert cli.main(["replay", str(tmp_path / "a.png"), "--mock", str(FIXTURES), "--purpose", "shop", "--no-llm"]) == 0
+    assert cli.main(["demo", "--steps", "2", "--interval", "0", "--no-dashboard"]) == 0
+    assert made == []
+    assert "(没有结果" not in capsys.readouterr().out

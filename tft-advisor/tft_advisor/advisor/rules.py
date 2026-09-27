@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from typing import Iterable, Optional
+from typing import Iterable, NamedTuple, Optional
 
 from ..config import HotkeyConfig
 from ..data.mechanics import Mechanics, load_mechanics
 from ..data.setdata import SetData, normalize_name
-from ..engine.economy import reroll_level
+from ..engine.economy import REROLL_END, reroll_level
 from ..engine.tracker import WISP_PREFIXES, is_wisp_name
+from ..vision.base import is_unknown_item
 from ..models import (
     ActionType,
     Advice,
@@ -37,6 +38,7 @@ ACTION_MAX = 40
 PLAN_MAX = 120
 FIELD_MAX = 120
 MAX_ACTIONS = 6
+MAX_UNIT_ITEMS = 3  # item slots per champion
 
 # Stabilization rounds where a roll-down is standard.
 ROLLDOWN_POINTS = {(3, 2), (4, 1), (4, 2)}
@@ -142,6 +144,17 @@ def _unit_keys(u: Unit) -> set[str]:
     return keys
 
 
+_THIEFS_GLOVES = {normalize_name(n) for n in ("Thief's Gloves", "窃贼手套")}
+# Raw API ids (e.g. "DA_Artifact_NavoriFlickerblade") left by a comp library
+# entry the set data could not resolve: never shown to the player.
+_API_ID = re.compile(r"^[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+$")
+
+
+def is_display_name(name: Optional[str]) -> bool:
+    """False for empty names and raw API ids."""
+    return bool(name and name.strip()) and not _API_ID.match(name.strip())
+
+
 # Defensive components: an item built only from these is a tank item.
 _DEFENSIVE_COMPONENT_APIS = {"TFT_Item_ChainVest", "TFT_Item_NegatronCloak", "TFT_Item_GiantsBelt"}
 # Fallback when set data is not available (en + zh display names, normalized).
@@ -175,7 +188,8 @@ def is_tank_item(name: str, set_data: Optional[SetData] = None) -> bool:
 
 
 def _carry_items(u: Unit, set_data: Optional[SetData]) -> int:
-    return sum(1 for i in u.items if i and not is_tank_item(i, set_data))
+    # "?" (an icon vision could not name) is neutral: it may be a tank item.
+    return sum(1 for i in u.items if i and not is_unknown_item(i) and not is_tank_item(i, set_data))
 
 
 def find_carry(state: GameState, analysis: Analysis, set_data: Optional[SetData] = None) -> Optional[Unit]:
@@ -200,12 +214,23 @@ def find_carry(state: GameState, analysis: Analysis, set_data: Optional[SetData]
 
 AUGMENT_STALE_S = 90.0
 
-# Words the econ engine uses in its reason for reroll (slow roll) lines.
-_REROLL_REASON_WORDS = ("慢搜", "赌狗")
+# Rounds a reroll line reaches its reroll level (economy.py: stage 3, 3-5 for
+# 3-cost rerolls that sit at level 7).
+REROLL_START = (3, 1)
+REROLL_START_L7 = (3, 5)
 
 
-def _is_reroll_plan(econ) -> bool:
-    return any(w in (econ.reason or "") for w in _REROLL_REASON_WORDS)
+def _is_reroll_plan(econ, sr: Optional[StageRound] = None) -> bool:
+    """True while the econ plan follows a reroll line (stay low, slow roll).
+
+    Decided from ``econ.style``, never from the reason text (stage-2, carousel
+    and roll-down reasons do not mention the reroll). The engine resets the
+    style to standard once the reroll ends (target 3-star or 4-5); its early
+    exits (carousel, stage 1) keep the comp's style, so 4-5 is checked here.
+    """
+    if not (getattr(econ, "style", "") or "").startswith("reroll"):
+        return False
+    return sr is None or sr.key < REROLL_END
 
 
 def augment_pending(state: GameState) -> bool:
@@ -228,6 +253,13 @@ def augment_pending(state: GameState) -> bool:
     if seen is not None and state.last_update and state.last_update - seen > AUGMENT_STALE_S:
         return False
     return True
+
+
+class CarouselPick(NamedTuple):
+    component: str
+    item: Optional[str]
+    holder: Optional[str]
+    completes: bool = True  # False: the item still needs another component after this one
 
 
 def _unit_label(u: Unit) -> str:
@@ -264,6 +296,7 @@ class RulesAdvisor:
         # player's setup; on the carousel the board / shop cannot be used.
         can_position = not carousel and state.screen_type != ScreenType.COMBAT
         carousel_pick = self._carousel_pick(state, analysis, carry) if carousel else None
+        carry_full = carousel and carousel_pick is None and self._carry_full(state, analysis, carry)
 
         actions: list[AdviceAction] = []
 
@@ -275,7 +308,7 @@ class RulesAdvisor:
         if augment:
             add(ActionType.AUGMENT, AUGMENT_GENERIC, 1)
         if carousel:
-            add(ActionType.CAROUSEL, self._carousel_text(carousel_pick), 1)
+            add(ActionType.CAROUSEL, self._carousel_text(carousel_pick, carry_full), 1)
 
         buy_text, buy_priority = ("", 2) if carousel else self._buy(state, analysis)
         if buy_text:
@@ -284,7 +317,7 @@ class RulesAdvisor:
         for kind, text, prio in self._econ_actions(state, analysis, carousel):
             add(kind, text, prio)
 
-        for text, prio in self._item_actions(analysis):
+        for text, prio in self._item_actions(state, analysis):
             # Items cannot be moved while on the carousel: do it right after.
             add(ActionType.ITEM, text, max(prio, 2) if carousel else prio)
 
@@ -309,7 +342,7 @@ class RulesAdvisor:
         if wisp:
             add(ActionType.BUY, wisp, 3)
 
-        headline = clip(self._headline(state, analysis, carousel, carousel_pick, augment), HEADLINE_MAX)
+        headline = clip(self._headline(state, analysis, carousel, carousel_pick, augment, carry_full), HEADLINE_MAX)
         headline = headline or DEFAULT_HEADLINE  # e.g. an econ reason made only of dashes
         # Do not repeat the headline as a generic action (e.g. the stage-1 econ reason).
         actions = [a for a in actions if not (a.type == ActionType.OTHER and a.text == headline)]
@@ -321,7 +354,7 @@ class RulesAdvisor:
             actions=actions,
             plan=clip(self._plan(state, analysis), PLAN_MAX),
             comp=self._comp_text(comp) or None,
-            items=self._items_text(analysis, comp, carry) or None,
+            items=self._items_text(analysis, comp, carry, state) or None,
             positioning=clip(self._positioning_text(carry, state), FIELD_MAX) or None,
             augment=self._augment_text(state) if augment else None,
             scout_request=sanitize(analysis.scout_requests[0].text) if analysis.scout_requests else None,
@@ -354,7 +387,9 @@ class RulesAdvisor:
     def _gold_left_after(self, state: GameState, analysis: Analysis, level_first: bool) -> int:
         gold = self._gold(state, analysis)
         spend = (self._level_spend(state, analysis) or 0) if level_first else 0
-        return max(0, gold - spend - analysis.econ.roll_budget)
+        # The analyzer pays shop picks out of the roll budget (shop_picks_cost).
+        picks = getattr(analysis, "shop_picks_cost", 0) or 0
+        return max(0, gold - spend - picks - analysis.econ.roll_budget)
 
     # --------------------------------------------------------------- headline
     def _headline(
@@ -362,8 +397,9 @@ class RulesAdvisor:
         state: GameState,
         analysis: Analysis,
         carousel: bool,
-        carousel_pick: Optional[tuple[str, Optional[str], Optional[str]]],
+        carousel_pick: Optional[CarouselPick],
         augment: bool,
+        carry_full: bool = False,
     ) -> str:
         econ = analysis.econ
         rec = econ.recommendation
@@ -373,7 +409,7 @@ class RulesAdvisor:
         if carousel:
             if carousel_pick:
                 return f"选秀：拿{carousel_pick[0]}"
-            return "选秀：拿主C装备散件"
+            return "选秀：拿坦克装备或缺的英雄" if carry_full else "选秀：拿主C装备散件"
         if state.stage is None:
             return f"按 {self.hotkeys.analyze} 分析当前局面"
         can_roll = econ.roll_budget >= self.mech.roll_cost
@@ -392,8 +428,11 @@ class RulesAdvisor:
         if rec == EconAction.LEVEL:
             target = econ.target_level or ((state.level or 0) + 1)
             return f"升到{target}级" + (f"，买{pick}" if pick else "")
-        slam = next((s for s in analysis.items if s.priority == 1), None)
+        # A built item nobody can take is not headline material.
+        slam = next((s for s in analysis.items if s.priority == 1 and (s.components or s.holder)), None)
         if slam:
+            if not slam.components:
+                return f"把{slam.item}装给{slam.holder}"
             return f"合成{slam.item}给{slam.holder}" if slam.holder else f"合成{slam.item}"
         if rec == EconAction.SLOW_ROLL and can_roll:
             return f"慢搜：只花{econ.roll_budget}金币"
@@ -492,7 +531,7 @@ class RulesAdvisor:
             return 0.0
         comp_keys = {_norm(n) for n in (comp.core_units + comp.have_units + comp.missing_units)} if comp else set()
         if keys & comp_keys:
-            core = (o.cost or 0) >= 3 or _is_reroll_plan(analysis.econ)
+            core = (o.cost or 0) >= 3 or _is_reroll_plan(analysis.econ, state.stage)
             return ROLL_VALUE_CORE if core else ROLL_VALUE_FILLER
         if o.owned_copies <= 0:
             return 0.0
@@ -587,11 +626,29 @@ class RulesAdvisor:
             out.append((ActionType.OTHER, econ.reason, 2))
         return out
 
-    def _item_actions(self, analysis: Analysis) -> list[tuple[str, int]]:
-        slams = [s for s in analysis.items if s.priority == 1][:2]
-        out = [(f"合成 {s.item} 给 {s.holder}" if s.holder else f"合成 {s.item}", 1) for s in slams]
+    def _stuck_item_text(self, state: GameState, item: str) -> str:
+        """A built item on the bench that no unit takes right now: say why."""
+        board = list(state.board)
+        if not board:
+            return f"先上场英雄再装 {item}"
+        if _norm(item) in _THIEFS_GLOVES:
+            return f"{item} 只能给没装备的英雄，先留着"
+        if all(len([i for i in u.items if i]) >= MAX_UNIT_ITEMS for u in board):
+            return f"装备格都满了，{item} 先留着"
+        return f"现在的阵容没人适合用 {item}，先留着"
+
+    def _item_actions(self, state: GameState, analysis: Analysis) -> list[tuple[str, int]]:
+        out: list[tuple[str, int]] = []
+        for s in [s for s in analysis.items if s.priority == 1][:2]:
+            if s.components:
+                out.append((f"合成 {s.item} 给 {s.holder}" if s.holder else f"合成 {s.item}", 1))
+            elif s.holder:
+                # Already built (sitting on the bench): equip, do not "combine".
+                out.append((f"把 {s.item} 装给 {s.holder}", 1))
+            else:
+                out.append((self._stuck_item_text(state, s.item), 2))
         if not out:
-            nxt = next((s for s in analysis.items if s.priority == 2), None)
+            nxt = next((s for s in analysis.items if s.priority == 2 and s.components), None)
             if nxt:
                 out.append((f"准备合成 {nxt.item}" + (f" 给 {nxt.holder}" if nxt.holder else ""), 3))
         return out
@@ -622,11 +679,41 @@ class RulesAdvisor:
         return "备战席满了，卖掉 " + _join(analysis.sell_candidates[:2])
 
     # --------------------------------------------------------------- carousel
+    @staticmethod
+    def _holder_full(state: GameState, name: Optional[str]) -> bool:
+        """True when the unit called ``name`` cannot take another item (3 slots
+        used). Board copies decide; a bench copy only when none is fielded."""
+        key = _norm(name)
+        if not key:
+            return False
+        for units in (state.board, state.bench):
+            found = [u for u in units if key in _unit_keys(u)]
+            if found:
+                return all(len([i for i in u.items if i]) >= MAX_UNIT_ITEMS for u in found)
+        return False
+
+    def _carry_full(self, state: GameState, analysis: Analysis, carry: Optional[Unit]) -> bool:
+        comp = analysis.comps[0] if analysis.comps else None
+        if comp and comp.carry:
+            # Not owned yet: its items are still worth collecting.
+            return self._holder_full(state, comp.carry)
+        return carry is not None and len([i for i in carry.items if i]) >= MAX_UNIT_ITEMS
+
     def _carousel_pick(
         self, state: GameState, analysis: Analysis, carry: Optional[Unit]
-    ) -> Optional[tuple[str, Optional[str], Optional[str]]]:
-        """(component, completed item, holder) worth taking on the carousel."""
+    ) -> Optional[CarouselPick]:
+        """(component, completed item, holder) worth taking on the carousel.
+
+        Components the item plan already combines (priority 1-2) are spoken
+        for, and a holder with 3 items cannot take another one. A pick that
+        completes an item beats one that is still a component short."""
         bench = Counter(_norm(x) for x in state.item_bench)
+        reserved: set[int] = set()
+        for i, sug in enumerate(analysis.items):
+            need = Counter(_norm(c) for c in sug.components)
+            if sug.priority <= 2 and need and all(bench.get(k, 0) >= n for k, n in need.items()):
+                bench.subtract(need)
+                reserved.add(i)
 
         def missing(components: list[str]) -> list[str]:
             have = bench.copy()
@@ -639,31 +726,47 @@ class RulesAdvisor:
                     out.append(c)
             return out
 
-        for sug in sorted(analysis.items, key=lambda s: s.priority):
+        candidates: list[tuple[list[str], str, Optional[str]]] = []
+        order = sorted(range(len(analysis.items)), key=lambda i: analysis.items[i].priority)
+        for i in order:
+            sug = analysis.items[i]
+            if i in reserved or not sug.components or self._holder_full(state, sug.holder):
+                continue
             miss = missing(list(sug.components))
             if miss:
-                return miss[0], sug.item, sug.holder
+                candidates.append((miss, sug.item, sug.holder))
         comp = analysis.comps[0] if analysis.comps else None
-        if comp and comp.carry_items and self.set_data is not None:
+        if comp and comp.carry_items and self.set_data is not None and not self._carry_full(state, analysis, carry):
             held = {_norm(i) for i in (carry.items if carry else [])}
+            planned = {_norm(s.item) for s in analysis.items if s.components}
             for name in comp.carry_items:
                 item = self.set_data.resolve_item(name)
                 if item is None or not item.composition or _norm(item.name) in held or _norm(name) in held:
                     continue
+                if _norm(item.name) in planned:
+                    continue  # already built from the bench or named above
                 parts = [self.set_data.items[c].name for c in item.composition if c in self.set_data.items]
                 miss = missing(parts)
                 if miss:
-                    return miss[0], item.name, comp.carry
-        return None
+                    candidates.append((miss, item.name, comp.carry))
+        if not candidates:
+            return None
+        miss, item_name, holder = next((c for c in candidates if len(c[0]) == 1), candidates[0])
+        return CarouselPick(miss[0], item_name, holder, len(miss) == 1)
 
-    def _carousel_text(self, pick: Optional[tuple[str, Optional[str], Optional[str]]]) -> str:
+    def _carousel_text(
+        self, pick: Optional[CarouselPick], carry_full: bool = False
+    ) -> str:
         if not pick:
+            if carry_full:
+                return "主C装备已满，选秀拿坦克装备散件或缺的英雄"
             return "选秀优先拿主C需要的装备散件"
-        component, item, holder = pick
+        component, item, holder, completes = pick
+        verb = "做" if completes else "凑"  # 凑: one more component still needed
         if item and holder:
-            return f"选秀拿 {component}（给 {holder} 做 {item}）"
+            return f"选秀拿 {component}（给 {holder} {verb} {item}）"
         if item:
-            return f"选秀拿 {component}（做 {item}）"
+            return f"选秀拿 {component}（{verb} {item}）"
         return f"选秀拿 {component}"
 
     # ------------------------------------------------------------ text fields
@@ -678,60 +781,29 @@ class RulesAdvisor:
             parts.append("接下来每回合搜到没钱，优先稳血保名次")
         elif sr.stage == 1:
             parts.append("2-1 升 4 级，前期买对子凑羁绊，之后开始存钱")
-        elif _is_reroll_plan(econ):
+        elif _is_reroll_plan(econ, sr):
             # Reroll lines stay low and slow roll; the standard level curve
             # (4-1 L7, 4-5 L8) would contradict the econ advice.
             stay = level
-            if econ.recommendation == EconAction.LEVEL and econ.target_level:
+            if econ.recommendation in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL) and econ.target_level:
                 parts.append(f"现在升 {econ.target_level}")
                 stay = max(level, econ.target_level)
             cap = self._cap_gold()
             rr = reroll_level(econ.style)
-            if stay and rr and stay < rr:
-                # Stage 2 follows the standard curve; the reroll level comes later.
-                parts.append(f"{rr} 级开始慢搜三星，只花 {cap} 以上的钱")
+            if rr and (not stay or stay < rr):
+                # Stage 2 follows the standard curve; the reroll level comes in
+                # stage 3 (3-5 for a level 7 reroll).
+                start = REROLL_START_L7 if rr >= 7 else REROLL_START
+                when = f"{start[0]}-{start[1]} " if sr.key < start else ""
+                parts.append(f"{when}到 {rr} 级开始慢搜三星，只花 {cap} 以上的钱")
+            elif econ.recommendation in (EconAction.ROLL, EconAction.LEVEL_AND_ROLL):
+                # HP forces a real roll this round (econ: "搜到 20 左右追三星").
+                parts.append(f"停在 {stay} 级搜牌追三星")
             else:
-                parts.append(f"停在 {stay} 级慢搜三星，只花 {cap} 以上的钱" if stay else f"慢搜三星，只花 {cap} 以上的钱")
-            parts.append("主C三星后再升级补强")
+                parts.append(f"停在 {stay} 级慢搜三星，只花 {cap} 以上的钱")
+            parts.append("三星成型或 4-5 后再升级补强")
         else:
-            std = self.mech.standard_level_at(sr)
-            if econ.recommendation in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL) and econ.target_level:
-                now = f"现在升 {econ.target_level}"
-                if econ.recommendation == EconAction.LEVEL_AND_ROLL:
-                    now += " 搜牌稳血"
-                parts.append(now)
-                level = max(level, econ.target_level)
-            elif std is not None and level and level < std:
-                parts.append(f"尽快补到 {std} 级")
-            # Level milestones for the line being played (fast 8 / fast 9
-            # level earlier than the standard curve, matching economy.py).
-            milestones = dict(self.mech.standard_levels)
-            if econ.style in ("fast8", "fast9"):
-                milestones.pop("4-5", None)
-                milestones["4-2"] = 8
-            if econ.style == "fast9":
-                milestones.pop("5-5", None)
-                milestones["5-2"] = 9
-            upcoming: list[tuple[StageRound, int]] = []
-            for key, lvl in milestones.items():
-                r = StageRound.parse(key)
-                if r is not None and r.key > sr.key and lvl > max(level, std or 0):
-                    upcoming.append((r, lvl))
-            upcoming.sort(key=lambda x: x[0].key)
-            for r, lvl in upcoming[:2]:
-                text = f"{r.stage}-{r.round} 升 {lvl}"
-                if lvl == 8:
-                    text += " 找 4 费主C"
-                elif lvl >= 9:
-                    text += " 找 5 费"
-                elif r.key in ROLLDOWN_POINTS:
-                    text += " 搜牌稳血"
-                parts.append(text)
-            if not upcoming:
-                if level >= 9:
-                    parts.append("慢搜找 5 费和三星，补满最强阵容")
-                else:
-                    parts.append("利息满后升 9 找 5 费")
+            parts.extend(self._level_steps(sr, level, econ))
             gold = self._gold(state, analysis)
             if econ.recommendation == EconAction.SAVE and gold < self._cap_gold() and sr.stage <= 4:
                 parts.insert(0, f"先存到 {self._cap_gold()}")
@@ -741,6 +813,66 @@ class RulesAdvisor:
         if comp:
             parts.append(f"目标 {comp.name}")
         return "，".join(parts)
+
+    def _milestones(self, style: str) -> list[tuple[StageRound, int]]:
+        """(round, level) milestones of the line being played, sorted (fast 8 /
+        fast 9 level earlier than the standard curve, matching economy.py)."""
+        table = dict(self.mech.standard_levels)
+        if style in ("fast8", "fast9"):
+            table.pop("4-5", None)
+            table["4-2"] = 8
+        if style == "fast9":
+            table.pop("5-5", None)
+            table["5-2"] = 9
+        out = [(r, lvl) for key, lvl in table.items() for r in (StageRound.parse(key),) if r is not None]
+        return sorted(out, key=lambda x: x[0].key)
+
+    @staticmethod
+    def _level_tag(lvl: int) -> str:
+        if lvl == 8:
+            return " 找 4 费主C"
+        if lvl >= 9:
+            return " 找 5 费"
+        return ""
+
+    def _level_steps(self, sr: StageRound, level: int, econ) -> list[str]:
+        """Plan steps for a standard / fast 8 / fast 9 line: the level up the
+        econ plans now, a catch-up when the line is behind (a fast 8 player
+        still at 7 after 4-2 must hear "升 8"), then the next milestones."""
+        steps: list[str] = []
+        sched = self._milestones(econ.style)
+        # Level the line should already have (milestones passed so far).
+        due = max((lvl for r, lvl in sched if r.key <= sr.key), default=0)
+        now = level or due  # unknown level: assume the line is on schedule
+        if econ.recommendation in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL) and econ.target_level:
+            text = f"现在升 {econ.target_level}"
+            if econ.recommendation == EconAction.LEVEL_AND_ROLL:
+                text += " 搜牌稳血"
+            steps.append(text)
+            now = max(now, econ.target_level)
+        nine_named = False
+        if now < due:
+            # Behind: never jump from 7 or lower straight to 9 in one step.
+            targets = [8, due] if due > 8 and now < 8 else [due]
+            for i, lvl in enumerate(targets):
+                if i:
+                    verb = f"再升 {lvl}"
+                else:
+                    verb = f"尽快升 {lvl}" if lvl == now + 1 else f"尽快补到 {lvl} 级"
+                steps.append(verb + (self._level_tag(lvl).lstrip() if verb.endswith("级") else self._level_tag(lvl)))
+            nine_named = due >= 9
+            now = due
+        upcoming = [(r, lvl) for r, lvl in sched if r.key > sr.key and lvl > now]
+        for r, lvl in upcoming[:2]:
+            tag = self._level_tag(lvl) or (" 搜牌稳血" if r.key in ROLLDOWN_POINTS else "")
+            steps.append(f"{r.stage}-{r.round} 升 {lvl}{tag}")
+            nine_named = nine_named or lvl >= 9
+        if not upcoming and not nine_named:
+            if now >= 9:
+                steps.append("慢搜找 5 费和三星，补满最强阵容")
+            else:
+                steps.append("利息满后升 9 找 5 费")
+        return steps
 
     def _comp_text(self, comp: Optional[CompSuggestion]) -> str:
         if comp is None:
@@ -753,14 +885,30 @@ class RulesAdvisor:
             text += f"（{_join(comp.contested_by[:2])} 在抢）"
         return clip(text, FIELD_MAX)
 
-    def _items_text(self, analysis: Analysis, comp: Optional[CompSuggestion], carry: Optional[Unit]) -> str:
+    def _items_text(
+        self,
+        analysis: Analysis,
+        comp: Optional[CompSuggestion],
+        carry: Optional[Unit],
+        state: Optional[GameState] = None,
+    ) -> str:
         # No leading "装备：" label: the dashboard and overlay show their own.
-        if analysis.items:
-            parts = [f"{s.item} 给 {s.holder}" if s.holder else s.item for s in analysis.items[:3]]
+        # A component still to find is no plan for a unit with 3 items.
+        sugs = [
+            s
+            for s in analysis.items
+            if not (state is not None and s.components and s.priority >= 3 and self._holder_full(state, s.holder))
+        ]
+        if sugs:
+            parts = [
+                f"{s.item} 给 {s.holder}" if s.holder else (s.item if s.components else f"{s.item} 先留着")
+                for s in sugs[:3]
+            ]
             return clip(_join(parts, "，"), FIELD_MAX)
-        if comp and comp.carry_items:
+        names = [n for n in (comp.carry_items if comp else []) if is_display_name(n)]
+        if names:
             who = comp.carry or (carry.name if carry else "主C")
-            return clip(f"{who}：{_join(comp.carry_items[:3])}", FIELD_MAX)
+            return clip(f"{who}：{_join(names[:3])}", FIELD_MAX)
         return ""
 
     def _carry_is_melee(self, carry: Optional[Unit]) -> Optional[bool]:

@@ -276,9 +276,10 @@ def test_scout_goes_to_opponent_snapshot(tracker, clock):
             purpose="scout",
             viewing_own_board=False,
             viewed_player_name="alice",
+            viewed_player_level=7,
             stage="3-2",
             gold=31,
-            level=8,
+            level=8,  # the local player's HUD level: neither ours to take nor Alice's
             hp=55,
             xp_current=50,
             board=[uo("Miss Fortune", 2), "Draven"],
@@ -294,7 +295,7 @@ def test_scout_goes_to_opponent_snapshot(tracker, clock):
     assert st.item_bench == ["B.F. Sword"] and st.traits[0].name == "Gunslinger"
     assert [s.name for s in st.shop] == ["Lucian", "Pyke"]
     snap = st.opponents["Alice"]  # canonical name from the player list
-    assert snap.level == 8 and snap.hp == 55 and snap.stage == "3-2" and snap.captured_at == 1003.0
+    assert snap.level == 7 and snap.hp == 55 and snap.stage == "3-2" and snap.captured_at == 1003.0
     assert [u.api_name for u in snap.board] == ["TFT99_MissFortune", "TFT99_Draven"]
     assert snap.items == ["Recurve Bow"] and snap.traits[0].name == "Pirate"
     assert tracker.taken_copies() == {"TFT99_MissFortune": 3, "TFT99_Draven": 1, "TFT99_Garen": 1}
@@ -309,8 +310,8 @@ def test_viewing_own_board_false_without_scout_purpose(tracker):
 
 
 def test_scout_snapshot_merges_none_fields(tracker):
-    tracker.ingest(obs(purpose="scout", viewed_player_name="Bob", board=["Ahri"], bench=["Garen"], level=7))
-    st = tracker.ingest(obs(purpose="scout", viewed_player_name="Bob", board=None, bench=["Graves"], level=None))
+    tracker.ingest(obs(purpose="scout", viewed_player_name="Bob", board=["Ahri"], bench=["Garen"], viewed_player_level=7))
+    st = tracker.ingest(obs(purpose="scout", viewed_player_name="Bob", board=None, bench=["Graves"], viewed_player_level=None))
     snap = st.opponents["Bob"]
     assert [u.name for u in snap.board] == ["Ahri"] and [u.name for u in snap.bench] == ["Graves"] and snap.level == 7
 
@@ -613,6 +614,7 @@ def test_wire_observation_converts_back(tracker):
             "unreadable": ["hp", "players", "streak"],
             "viewing_own_board": True,
             "viewed_player_name": "",
+            "viewed_player_level": 0,
             "stage": "3-2",
             "gold": 34,
             "level": 6,
@@ -636,8 +638,124 @@ def test_wire_observation_converts_back(tracker):
     assert screen.hp is None and screen.players is None and screen.streak is None  # unreadable -> null
     assert screen.item_bench == [] and screen.augments == []  # visible and empty stays []
     assert screen.viewed_player_name is None and screen.stage == "3-2" and screen.gold == 34
+    assert screen.viewed_player_level is None  # 0 = not shown
     assert [(s.name, s.cost) for s in screen.shop] == [("Graves", 1), (None, None), ("Wisp: Grow Up", 3)]
     assert screen.board[0].row == 0 and screen.bench[0].row is None and screen.bench[0].col == 2
     assert screen.traits[0].next_breakpoint is None
     st = tracker.ingest(Observation(screen=screen, source="claude", purpose="auto"))
     assert st.gold == 34 and st.level == 6 and [u.name for u in st.board] == ["Garen"]
+
+
+# ---------------------------------------------------------------------------
+# Regressions (vision-wire review): whose level / board / HP a frame carries
+# ---------------------------------------------------------------------------
+
+
+def _wire_screen(**over):
+    from tft_advisor.models import ScreenObservationWire
+
+    base = ScreenObservation(screen_type=ScreenType.PLANNING, stage="3-3", gold=20, level=6, hp=70)
+    wire = ScreenObservationWire.from_screen(base).model_dump(mode="json")
+    wire.update(over)
+    return ScreenObservationWire.model_validate(wire).to_screen()
+
+
+def test_scouted_opponent_never_gets_our_level(tracker):
+    tracker.ingest(own_frame(stage="3-2", level=6, board=["Graves"], players=players(("Me", 70), ("Opp", 50), me="Me")))
+    # Wire round trip of a scout frame: HUD level 6 is ours, the plate says 8.
+    screen = _wire_screen(
+        viewing_own_board=False, viewed_player_name="Opp", viewed_player_level=8, level=6,
+        board=[{"name": "Ahri", "star": 1, "items": [], "row": 3, "col": 0}], unreadable=[],
+    )
+    st = tracker.ingest(Observation(screen=screen, purpose="scout", source="claude"))
+    assert st.opponents["Opp"].level == 8 and st.level == 6
+    # Plate not shown: unknown, not the local level.
+    screen = _wire_screen(viewing_own_board=False, viewed_player_name="Opp", viewed_player_level=0, level=6, unreadable=[])
+    t2 = GameTracker(tracker.set_data, tracker._mech)
+    t2.ingest(own_frame(stage="3-2", level=6, players=players(("Me", 70), ("Opp", 50), me="Me")))
+    st = t2.ingest(Observation(screen=screen.model_copy(update={"board": [uo("Ahri")]}), purpose="scout"))
+    assert st.opponents["Opp"].level is None
+    # The older free-text note still works.
+    st = t2.ingest(obs(purpose="scout", viewed_player_name="Opp", level=6, board=["Ahri"], notes=["对手等级 7"]))
+    assert st.opponents["Opp"].level == 7
+
+
+def test_uncertain_frame_does_not_overwrite_our_board_or_hp(tracker):
+    tracker.ingest(own_frame(stage="3-2", level=6, hp=70, board=["Garen", "Graves"], players=players(("Me", 70), ("Opp", 41), me="Me")))
+    st = tracker.ingest(
+        obs(stage="3-3", viewing_own_board=None, viewed_player_name=None, hp=41, level=6, gold=12,
+            board=["Ahri", "Shen"], players=players(("Me", 70), ("Opp", 41), me="Me"))
+    )
+    assert [u.name for u in st.board] == ["Garen", "Graves"] and st.hp == 70
+    assert st.gold == 12 and str(st.stage) == "3-3"  # the HUD still applies
+    # An uncertain frame whose board is clearly ours (one unit bought) is applied.
+    tracker.ingest(own_frame(hp=70, board=["Garen", "Graves", "Braum", "Lucian"]))
+    st = tracker.ingest(obs(viewing_own_board=None, hp=68, board=["Garen", "Graves", "Braum", "Lucian", "Pyke"]))
+    assert len(st.board) == 5 and st.hp == 68
+
+
+def test_augment_choices_cleared_by_a_scout_frame_next_round(tracker, clock):
+    tracker.ingest(own_frame(stage="2-1", screen_type=ScreenType.AUGMENT_SELECT, augment_choices=["A", "B", "C"], players=players(("Me", 100), ("Opp", 100), me="Me")))
+    clock.tick(70)
+    st = tracker.ingest(obs(purpose="scout", viewing_own_board=False, viewed_player_name="Opp", stage="2-2", board=["Ahri"], augment_choices=[]))
+    assert st.augment_choices == []
+
+
+def test_false_on_carousel_still_merges_the_hud(tracker):
+    tracker.ingest(own_frame(stage="3-2", level=6, xp_current=10, xp_needed=36, streak=3, hp=70, board=["Garen"]))
+    st = tracker.ingest(obs(stage="3-4", screen_type=ScreenType.CAROUSEL, viewing_own_board=False, level=7, xp_current=2, xp_needed=56, streak=4))
+    assert st.level == 7 and st.xp_current == 2 and st.streak == 4
+    assert st.opponents == {}
+
+
+def test_false_placeholder_on_our_frame_is_not_filed_under_an_opponent(tracker):
+    tracker.ingest(
+        own_frame(stage="3-2", hp=60, board=[uo("Garen", 2), uo("Graves", 2), "Braum"], players=players(("Me", 60), ("Opp", 60), me="Me"))
+    )
+    st = tracker.ingest(obs(stage="3-2", viewing_own_board=False, hp=60, board=[uo("Garen", 2), uo("Graves", 2), "Braum", "Lucian"]))
+    assert "Opp" not in st.opponents and tracker.taken_by_player() == {}
+    assert [u.name for u in st.board][-1] == "Lucian"
+    # A real scout request still falls back to the HP match.
+    st = tracker.ingest(obs(purpose="scout", viewing_own_board=False, hp=60, board=["Ahri", "Shen"]))
+    assert "Opp" in st.opponents
+
+
+def test_level_change_without_xp_drops_the_old_xp(tracker, mech):
+    tracker.ingest(own_frame(stage="3-2", level=6, xp_current=30, xp_needed=36))
+    st = tracker.ingest(own_frame(stage="3-3", level=7, xp_current=None, xp_needed=None))
+    assert st.level == 7 and st.xp_current is None and st.xp_needed == mech.xp_to_level[7]
+    st = tracker.ingest(own_frame(level=7, xp_current=4, xp_needed=56))
+    st = tracker.set_field("level", 8)
+    assert st.xp_current is None and st.xp_needed == mech.xp_to_level[8]
+
+
+def test_placeholder_values_do_not_wipe_known_state(tracker):
+    tracker.ingest(own_frame(stage="4-1", streak=-4, shop=["Graves", "Lucian"], board=["Garen", "Graves", "Braum", "Ahri"], bench=["Pyke"]))
+    # Same round, streak placeholder 0 and a closed shop ([]): keep what we know.
+    st = tracker.ingest(own_frame(stage="4-1", streak=0, shop=[]))
+    assert st.streak == -4 and [s.name for s in st.shop] == ["Graves", "Lucian"]
+    # The next round may change the streak; a real value still replaces a 0.
+    st = tracker.ingest(own_frame(stage="4-2", streak=0))
+    assert st.streak == 0
+    st = tracker.ingest(own_frame(stage="4-2", streak=-5))
+    assert st.streak == -5
+    # Augment cards cover the arena: an empty board read there is not a sold board.
+    st = tracker.ingest(own_frame(stage="4-2", screen_type=ScreenType.AUGMENT_SELECT, board=[], bench=[], augment_choices=["X", "Y", "Z"]))
+    assert len(st.board) == 4 and [u.name for u in st.bench] == ["Pyke"]
+    assert st.augment_choices == ["X", "Y", "Z"]
+
+
+def test_wire_schema_text_is_model_facing():
+    from anthropic import transform_schema
+    from pydantic import TypeAdapter
+
+    from tft_advisor.models import ScreenObservationWire
+
+    schema = transform_schema(TypeAdapter(ScreenObservationWire).json_schema())
+    root = schema.get("description", "")
+    assert "comment above" not in root and "ScreenObservation" not in root and "``" not in root
+    props = schema["properties"]
+    for name, placeholder in (("gold", "-1"), ("xp_current", "-1"), ("hp", "-1"), ("level", "0"), ("xp_needed", "0")):
+        desc = props[name].get("description", "")
+        assert placeholder in desc and "unreadable" in desc, name
+    assert "viewed_player_level" in props

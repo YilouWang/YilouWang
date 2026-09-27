@@ -888,7 +888,7 @@ class DashboardServer:
                 self.log(f"令牌保存在 {where}，以后启动不变，手机可以直接收藏这个链接；想换新令牌就删除这个文件再启动。不要把链接发给别人。")
             else:
                 self.log("令牌只在本次运行有效，不要把链接发给别人。")
-            self.log("手机打不开时，请在 Windows 防火墙里允许 Python 访问专用网络。")
+            self.log("手机打不开时：Windows 防火墙要允许 Python（需要管理员），Wi-Fi 设成「专用网络」，关掉 VPN 或加速器（详见 README「手机看板打不开」）。")
         return self.url
 
     def stop(self) -> None:

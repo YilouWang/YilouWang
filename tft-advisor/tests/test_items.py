@@ -302,3 +302,62 @@ def test_thiefs_gloves_needs_an_itemless_fielded_unit(set_data):
     empty = make_state("4-2", board=[("Graves", 2, ("Deathblade",), 3, 0), ("Braum", 1, (), 0, 3)], item_bench=["Thief's Gloves"])
     sugs = plan_items(empty, set_data, comp=CompSuggestion(name="X", score=0.5, carry="Graves"))
     assert sugs[0].holder == "Braum"
+
+
+# ---------------------------------------------------------------------------
+# Regressions (domain review): emblems nobody can use, carry components
+# ---------------------------------------------------------------------------
+
+
+def _s18_comp(name_en: str):
+    from tft_advisor.engine.comps_engine import suggest_comps
+
+    from .conftest import s18_comps, s18_set_data, s18_state
+
+    comp = next(c for c in s18_comps() if c.name_en == name_en)
+    return comp, s18_set_data(), s18_state, suggest_comps
+
+
+def test_s18_emblem_without_the_trait_is_not_slammed():
+    comp, sd, s18_state, suggest = _s18_comp("Ahri Morgana")
+    board = [("Ahri", 2, ["Jeweled Gauntlet"]), "Zyra", "Sett", "Morgana", "Karma", "Yorick", "Leona", "Taric"]
+    for stage, bench, emblem in (("5-2", ["B.F. Sword", "Frying Pan"], "猎人纹章"), ("3-2", ["Spatula", "Giant's Belt"], "黑荆棘纹章")):
+        st = s18_state(stage, board=board, items=bench, level=8, hp=80, gold=30)
+        top = suggest(st, sd, [comp], {}, top_n=1)[0]
+        out = plan_items(st, sd, comp=top, hp_bucket="healthy")
+        assert not any(s.item == emblem for s in out), [s.item for s in out]
+        assert not any(s.priority == 1 for s in out)
+    # With the trait on the board the emblem is worth making.
+    hunter = sd.resolve_trait("Hunter")
+    hunters = [c.name for c in sd.champions.values() if hunter.name in c.traits][:2]
+    st = s18_state("5-2", board=hunters + ["Leona"], items=["B.F. Sword", "Frying Pan"], level=8, hp=80, gold=30)
+    assert any(s.item == "猎人纹章" for s in plan_items(st, sd, hp_bucket="healthy"))
+
+
+def test_s18_carry_component_is_held_at_healthy_hp():
+    comp, sd, s18_state, suggest = _s18_comp("Ahri Morgana")
+    board = [("Ahri", 2), "Zyra", "Sett", "Morgana", "Karma", "Yorick", "Leona", "Taric"]
+    st = s18_state("3-2", board=board, items=["B.F. Sword", "Giant's Belt"], level=6, hp=80, gold=30)
+    top = suggest(st, sd, [comp], {}, top_n=1)[0]
+    shojin = sd.resolve_item("Spear of Shojin")
+    assert shojin.name in top.carry_items or "Spear of Shojin" in top.carry_items
+    out = plan_items(st, sd, comp=top, hp_bucket="healthy")
+    sterak = [s for s in out if s.components and "暴风大剑" in s.components]
+    assert sterak and all(s.priority == 2 for s in sterak)
+    # Low HP slams anyway.
+    low = plan_items(st, sd, comp=top, hp_bucket="low")
+    assert any(s.priority == 1 and "暴风大剑" in s.components for s in low)
+
+
+def test_no_half_item_hint_for_a_carry_with_full_slots(set_data):
+    # A lone B.F. Sword is half of the carry's Infinity Edge: say what is missing,
+    # unless the carry already holds three items (nothing more fits).
+    comp = CompSuggestion(name="X", score=0.5, carry="Lucian", carry_items=["Infinity Edge"])
+    open_slots = make_state("3-2", board=[("Lucian", 2, (), 3, 1)], item_bench=["B.F. Sword"])
+    assert any("还差" in s.reason for s in plan_items(open_slots, set_data, comp=comp))
+    full = make_state(
+        "3-2",
+        board=[("Lucian", 2, ("Last Whisper", "Giant Slayer", "Deathblade"), 3, 1)],
+        item_bench=["B.F. Sword"],
+    )
+    assert not any("还差" in s.reason for s in plan_items(full, set_data, comp=comp))

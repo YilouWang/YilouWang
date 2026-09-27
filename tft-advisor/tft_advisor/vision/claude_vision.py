@@ -25,7 +25,17 @@ from ..config import AnthropicConfig
 from ..engine.tracker import is_wisp_name
 from ..llm import LLM, LLMError, image_block, text_block
 from ..models import Observation, ScreenObservation, ScreenObservationWire, StageRound, UnitObs
-from .base import PerceptionError, PerceptionHint, clean_name, clean_text, crop_region, normalize_purpose, region_box
+from .base import (
+    UNKNOWN_ITEM,
+    PerceptionError,
+    PerceptionHint,
+    clean_name,
+    clean_text,
+    crop_region,
+    is_unknown_item,
+    normalize_purpose,
+    region_box,
+)
 from .prompts import build_user_text, build_vision_system
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -212,7 +222,8 @@ def _clean_units(units: Optional[list[UnitObs]], on_board: bool, notes: list[str
             u.row = None
             if u.col is not None and not 0 <= u.col <= 8:
                 u.col = None
-        u.items = [i for i in u.items if (i or "").strip()][:3]
+        # One "?" per icon that could not be named: it still takes one of the 3 item slots.
+        u.items = [UNKNOWN_ITEM if is_unknown_item(i) else i for i in u.items if (i or "").strip()][:3]
         out.append(u)
     limit = _MAX_BOARD_UNITS if on_board else _MAX_BENCH_UNITS
     if len(out) > limit:

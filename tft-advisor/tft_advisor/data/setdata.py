@@ -18,11 +18,14 @@ Quirks handled here (seen in the Set 18 "Enchanted Wilds" export, Unreal era):
 from __future__ import annotations
 
 import difflib
+import gzip
 import json
 import os
 import re
+import threading
 import time
 import unicodedata
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from importlib import resources
@@ -520,14 +523,97 @@ def _parse_items(
 # ---- loading ---------------------------------------------------------------------
 
 
-def _download(url: str, dest: Path, timeout: float = 60.0) -> None:
-    req = urllib.request.Request(url, headers={"User-Agent": "tft-advisor/0.1"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        payload = resp.read()
+# Download limits. The export is ~25 MB per locale (a few MB gzipped).
+SOCKET_TIMEOUT_S = 15.0  # per socket operation (connect, each read)
+DOWNLOAD_DEADLINE_S = 45.0  # whole file, while the player waits for startup
+FORCED_DEADLINE_S = 300.0  # `data update` and background refreshes may take longer
+RETRY_BACKOFF_H = 6.0  # after a failed download, do not retry on every launch
+ATTEMPT_STAMP = "cdragon_last_attempt"  # cache file: time of the last failed download
+_CHUNK = 1 << 20
+_PROGRESS_EVERY = 5 << 20
+
+
+def _meta_path(dest: Path) -> Path:
+    return dest.with_name(dest.name + ".meta")
+
+
+def _download(
+    url: str,
+    dest: Path,
+    timeout: Optional[float] = None,
+    deadline_s: Optional[float] = None,
+    log: Optional[Callable[[str], None]] = None,
+) -> bool:
+    """Fetch ``url`` into ``dest`` (gzip, conditional on the cached ETag /
+    Last-Modified). Returns False when the server says the cache is current
+    (304: only the cache time is refreshed). Raises on any failure, including
+    the whole-file deadline, and never leaves a partial cache file."""
+    timeout = SOCKET_TIMEOUT_S if timeout is None else timeout
+    deadline = time.monotonic() + (DOWNLOAD_DEADLINE_S if deadline_s is None else deadline_s)
+    headers = {"User-Agent": "tft-advisor/0.1", "Accept-Encoding": "gzip"}
+    meta: dict[str, str] = {}
+    if dest.is_file():
+        try:
+            meta = json.loads(_meta_path(dest).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            meta = {}
+        if isinstance(meta, dict):
+            if meta.get("etag"):
+                headers["If-None-Match"] = str(meta["etag"])
+            if meta.get("last_modified"):
+                headers["If-Modified-Since"] = str(meta["last_modified"])
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 304 and dest.is_file():
+            os.utime(dest, None)  # still current: restart the refresh clock
+            return False
+        raise
+    with resp:
+        chunks: list[bytes] = []
+        got = 0
+        next_note = _PROGRESS_EVERY
+        # read1 returns what one socket read brings, so the deadline is
+        # checked while a slow server trickles bytes.
+        read = getattr(resp, "read1", resp.read)
+        while True:
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"超过 {int(deadline_s or DOWNLOAD_DEADLINE_S)} 秒还没下载完")
+            chunk = read(_CHUNK)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            got += len(chunk)
+            if log is not None and got >= next_note:
+                log(f"  已下载 {got / 1e6:.0f} MB ...")
+                next_note += _PROGRESS_EVERY
+        payload = b"".join(chunks)
+        encoding = (resp.headers.get("Content-Encoding") or "").lower()
+        etag = resp.headers.get("ETag")
+        modified = resp.headers.get("Last-Modified")
+    if "gzip" in encoding or payload[:2] == b"\x1f\x8b":
+        payload = gzip.decompress(payload)
     json.loads(payload)  # validate before replacing the cache
     tmp = dest.with_suffix(".tmp")
     tmp.write_bytes(payload)
     os.replace(tmp, dest)
+    try:
+        _meta_path(dest).write_text(json.dumps({"etag": etag or "", "last_modified": modified or ""}), encoding="utf-8")
+    except OSError:
+        pass
+    if log is not None:
+        log(f"  下载完成：{len(payload) / 1e6:.1f} MB（传输 {got / 1e6:.1f} MB）")
+    return True
+
+
+def _recent_failure(cache: Path) -> Optional[float]:
+    """Hours since the last failed download, when within the retry backoff."""
+    try:
+        age_h = (time.time() - float((cache / ATTEMPT_STAMP).read_text(encoding="utf-8").strip())) / 3600
+    except (OSError, ValueError):
+        return None
+    return age_h if 0 <= age_h < RETRY_BACKOFF_H else None
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -564,26 +650,72 @@ def bundled_snapshot(locale: str) -> Optional[dict[str, Any]]:
     return _bundled_json(f"snapshot_{locale}.json")
 
 
-def load_set_data(cfg: DataConfig, offline: bool = False, log: Callable[[str], None] = print) -> SetData:
+def _refresh_files(
+    cfg: DataConfig, cache: Path, locales: list[str], force: bool, log: Callable[[str], None], deadline_s: float
+) -> None:
+    """Download the stale exports. The first failure stops the run (the
+    network is down: no second wait) and starts the retry backoff."""
+    stamp = cache / ATTEMPT_STAMP
+    for loc in locales:
+        dest = cache / f"cdragon_tft_{loc}.json"
+        fresh = dest.is_file() and (time.time() - dest.stat().st_mtime) < cfg.refresh_hours * 3600
+        if fresh and not force:
+            continue
+        url = f"{cfg.cdragon_base.rstrip('/')}/{loc}.json"
+        try:
+            log(f"下载 TFT 数据 {url} ...")
+            if not _download(url, dest, deadline_s=deadline_s, log=log):
+                log("  服务器数据没有更新，继续用缓存")
+        except Exception as exc:  # network / proxy / timeout / JSON problems
+            log(f"下载失败 ({exc})" + ("，使用缓存" if dest.is_file() else "") + f"，{RETRY_BACKOFF_H:g} 小时内不再自动重试")
+            try:
+                stamp.write_text(str(time.time()), encoding="utf-8")
+            except OSError:
+                pass
+            return
+    try:
+        stamp.unlink()
+    except OSError:
+        pass
+
+
+def load_set_data(
+    cfg: DataConfig, offline: bool = False, log: Callable[[str], None] = print, background: bool = False
+) -> SetData:
     """Download (or reuse cached) CommunityDragon exports and build SetData.
 
     Order: fresh download -> cache -> bundled snapshot (real data, may be a
-    patch behind) -> bundled synthetic sample (tests only).
+    patch behind) -> bundled synthetic sample (tests only). Downloads use
+    gzip and conditional requests, stop at a whole-file deadline and, after a
+    failure, are not retried for ``RETRY_BACKOFF_H`` hours (``refresh_hours
+    = 0`` forces a download, as ``data update`` does). ``background``: when a
+    cache or the bundled snapshot can be used right away, refresh in a daemon
+    thread instead of blocking; the new data applies on the next start.
     """
     cache = Path(os.path.expanduser(cfg.cache_dir))
     cache.mkdir(parents=True, exist_ok=True)
     locales = [cfg.locale] + ([] if cfg.locale == "en_us" else ["en_us"])
+    force = cfg.refresh_hours <= 0
+    refreshing = False
+    if not offline:
+        failed_h = None if force else _recent_failure(cache)
+        if failed_h is not None:
+            log(f"{failed_h:.1f} 小时前下载赛季数据失败，暂不重试（`tft-advisor data update` 可立即重试）")
+        elif background and (
+            (cache / f"cdragon_tft_{cfg.locale}.json").is_file() or bundled_snapshot(cfg.locale) is not None
+        ):
+            threading.Thread(
+                target=_refresh_files,
+                args=(cfg, cache, locales, force, lambda *_: None, FORCED_DEADLINE_S),
+                name="cdragon-refresh",
+                daemon=True,
+            ).start()
+            refreshing = True
+        else:
+            _refresh_files(cfg, cache, locales, force, log, FORCED_DEADLINE_S if force else DOWNLOAD_DEADLINE_S)
     paths: dict[str, Path] = {}
     for loc in locales:
         dest = cache / f"cdragon_tft_{loc}.json"
-        fresh = dest.is_file() and (time.time() - dest.stat().st_mtime) < cfg.refresh_hours * 3600
-        if not offline and not fresh:
-            url = f"{cfg.cdragon_base.rstrip('/')}/{loc}.json"
-            try:
-                log(f"下载 TFT 数据 {url} ...")
-                _download(url, dest)
-            except Exception as exc:  # network / proxy / JSON problems
-                log(f"下载失败 ({exc})" + ("，使用缓存" if dest.is_file() else ""))
         if dest.is_file():
             paths[loc] = dest
 
@@ -608,7 +740,10 @@ def load_set_data(cfg: DataConfig, offline: bool = False, log: Callable[[str], N
         snap_en = bundled_snapshot("en_us")
         sd = build(snap, snap_en, f"bundled-snapshot-{cfg.locale}")
         if sd:
-            log(f"使用内置赛季快照 S{sd.set_number}（可能落后一个补丁）。联网后运行 `tft-advisor data update` 获取最新数据。")
+            if refreshing:
+                log(f"先用内置赛季快照 S{sd.set_number}，正在后台下载最新数据（下次启动生效）")
+            else:
+                log(f"使用内置赛季快照 S{sd.set_number}（可能落后一个补丁）。联网后运行 `tft-advisor data update` 获取最新数据。")
             return sd
 
     log("警告: 使用内置样例数据 (不是当前赛季!)。请联网后运行 `tft-advisor data update`。")

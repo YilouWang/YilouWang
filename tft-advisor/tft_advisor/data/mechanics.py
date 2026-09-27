@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..models import StageRound
+from .textio import read_user_data
 
 _BUNDLED = "mechanics.toml"
 
@@ -210,9 +211,16 @@ def bundled_mechanics_raw() -> dict[str, Any]:
 
 
 def load_mechanics(override_path: Optional[str] = None) -> Mechanics:
+    """Bundled mechanics, with a user TOML (UTF-8, BOM allowed) merged over them."""
     raw = bundled_mechanics_raw()
     if override_path:
         p = Path(override_path).expanduser()
-        with open(p, "rb") as fh:
-            raw = _deep_merge(raw, tomllib.load(fh))
+        if not p.is_file():
+            raise FileNotFoundError(f"找不到机制文件: {p}")
+        user = read_user_data(p, "机制文件", fmt="toml")
+        raw = _deep_merge(raw, user)
+        try:
+            return _from_dict(raw)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"机制文件 {p} 内容有误: {exc}") from None
     return _from_dict(raw)

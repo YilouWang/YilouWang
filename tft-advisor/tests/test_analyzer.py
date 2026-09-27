@@ -144,8 +144,10 @@ def test_mid_game_analysis(analyzer):
     lvl7.level = 7
     assert analyzer.analyze(lvl7, taken).odds[0].unit == "Miss Fortune"
     graves = next(o for o in out.odds if o.unit == "Graves")
-    assert graves.seen_elsewhere == 3 and graves.owned_copies == 5
-    assert graves.remaining_in_pool == analyzer.mech.pool_size[1] - 5 - 3
+    # 5 owned plus the shop copy the buy action takes (it completes the second 2-star).
+    assert "Graves" in out.shop_picks
+    assert graves.seen_elsewhere == 3 and graves.owned_copies == 6
+    assert graves.remaining_in_pool == analyzer.mech.pool_size[1] - 6 - 3
     units = [o.unit for o in out.odds]
     # A 2-star upgrade of a comp unit ranks before a 3-star chase of a 1 cost (still listed:
     # cheap 3-stars are realistic at level 5).
@@ -263,9 +265,16 @@ def test_warnings(set_data, mech, comps):
     w = " | ".join(an.analyze(st).warnings)
     assert "场上只有 2 个英雄" in w
     assert "散件" in w
-    assert "金币 80" in w
+    assert "金币 80" not in w  # the critical-HP all-in already spends it
     assert "血量只剩 20" in w
     assert "等级落后" not in w  # 4-1 standard is 7
+    # Too much gold is flagged only when the plan leaves it unspent.
+    from tft_advisor.models import EconPlan
+
+    saving = EconPlan(gold=80, recommendation=EconAction.SAVE)
+    assert any("金币 80" in x for x in an._warnings(st, [], "standard", saving))
+    rolling = EconPlan(gold=80, recommendation=EconAction.ROLL, roll_budget=30)
+    assert not any("金币 80" in x for x in an._warnings(st, [], "standard", rolling))
 
     behind = make_state("4-2", board=["Graves"] * 6, gold=10, level=6, hp=80)
     assert any("等级落后" in x for x in an.analyze(behind).warnings)
@@ -275,6 +284,13 @@ def test_warnings(set_data, mech, comps):
 
     loose = make_state("3-2", board=["Graves"], item_bench=["Infinity Edge"], level=1)
     assert any("成装还没装备" in x for x in an.analyze(loose).warnings)
+
+    # An item nobody on the team can use is held on purpose: no "equip it" nag.
+    unusable = make_state("3-2", board=["Graves"], item_bench=["Rabadon's Deathcap"], level=1)
+    result = an.analyze(unusable)
+    assert not any("成装还没装备" in x for x in result.warnings)
+    assert any("先留着" in s.reason and s.holder is None for s in result.items)
+    assert not any("换下一件" in s.reason for s in result.items)
 
 
 def test_board_warning_needs_a_seen_board(set_data, mech, comps):
@@ -463,9 +479,13 @@ def test_s18_win_streak_roll_without_a_target_is_dropped(s18):
     win = s18.analyze(s18_state("4-2", board=board, level=7, gold=36, hp=64, streak=2, xp_current=0))
     assert win.econ.recommendation == EconAction.SAVE and win.econ.roll_budget == 0
     assert "连胜" in win.econ.reason
-    # Without a streak the medium-HP roll-down stays.
+    # Without a streak a medium-HP roll-down with nothing to find is dropped too.
     plain = s18.analyze(s18_state("4-2", board=board, level=7, gold=36, hp=64, streak=-1, xp_current=0))
-    assert plain.econ.recommendation == EconAction.ROLL
+    assert plain.econ.recommendation == EconAction.SAVE and plain.econ.roll_budget == 0
+    assert "连胜" not in plain.econ.reason
+    # Low HP keeps its roll.
+    low = s18.analyze(s18_state("4-2", board=board, level=7, gold=36, hp=40, streak=-1, xp_current=0))
+    assert low.econ.recommendation == EconAction.ROLL
 
 
 def test_s18_elder_dragon_takes_two_team_slots(s18):
@@ -485,3 +505,99 @@ def test_s18_unmatched_comp_hint_warns(mech):
     ok = Analyzer(s18_set_data(), mech, s18_comps(), comp_hint="法师").analyze(st)
     assert not any("没有阵容匹配" in w for w in ok.warnings)
     no_dash(warned)
+
+
+# ---------------------------------------------------------------------------
+# Regressions (domain review): 5 cost carries, critical HP levels, shop picks
+# inside the budget, rolls with nothing to find
+# ---------------------------------------------------------------------------
+
+
+def _names(*apis: str) -> list[str]:
+    sd = s18_set_data()
+    return [sd.champions[a].name for a in apis]
+
+
+VANGUARDS = _names("DA_18_Diana", "DA_18_Hecarim", "DA_CrimsonRaptor18", "DA_18_Zyra", "DA_Brambleback18", "DA_Sentinel18", "DA_Taric18")
+
+
+def test_s18_five_cost_carry_goes_nine_instead_of_rolling_at_eight(s18, mech):
+    assert next(c for c in s18_comps() if c.name_en == "Inferno Fast 9").style == "fast9"
+    board = ["Ashe"] + _names("DA_18_Rakan", "DA_Vi18", "DA_Amumu18", "DA_18_Sivir", "DA_18_Ivern", "DA_18_Maokai", "DA_Taric18")
+    for stage, gold in (("5-1", 80), ("5-1", 100), ("5-3", 90)):
+        out = s18.analyze(s18_state(stage, board=board, level=8, xp_current=10, hp=80, streak=0, gold=gold))
+        assert out.comps[0].carry == "艾希"
+        assert out.econ.recommendation == EconAction.LEVEL and out.econ.target_level == 9, (stage, out.econ.reason)
+        assert not any("太多了" in w for w in out.warnings)
+    # Exactly the price of level 9 at 5-2 (hinted Spirit Blossom): level, no roll at 8.
+    blossom = _names("DA_Karma18", "DA_18_Yorick", "DA_Vi18", "DA_18_Sivir", "DA_18_Zyra", "DA_18_Ahri", "DA_18_Sett", "DA_18_GnarSmall")
+    an = Analyzer(s18_set_data(), mech, s18_comps(), comp_hint="Spirit Blossom")
+    need = mech.gold_to_reach(8, 10, 9)
+    out = an.analyze(s18_state("5-2", board=blossom, level=8, xp_current=10, hp=80, gold=need))
+    assert out.econ.recommendation == EconAction.LEVEL and out.econ.target_level == 9, out.econ.reason
+
+
+def test_s18_ready_carry_with_spare_gold_levels_or_buys_xp(s18):
+    board = [("Aphelios", 2)] + VANGUARDS
+    out = s18.analyze(s18_state("4-5", board=board, level=8, xp_current=10, hp=80, streak=0, gold=110))
+    assert out.econ.recommendation == EconAction.LEVEL and out.econ.target_level == 9
+    out = s18.analyze(s18_state("4-5", board=board, level=8, xp_current=10, hp=80, streak=0, gold=80))
+    assert out.econ.recommendation == EconAction.SAVE and "买经验" in out.econ.reason
+
+
+def test_s18_critical_hp_levels_when_the_odds_hold(s18):
+    # 4-5, level 7 (behind), 100 gold, 18 HP: level 8 costs 56 and the carry
+    # odds are better there (plus one more unit on the board).
+    st = s18_state("4-5", board=["Aphelios"] + VANGUARDS[:6], level=7, xp_current=0, hp=18, gold=100)
+    out = s18.analyze(st)
+    assert out.econ.recommendation == EconAction.LEVEL_AND_ROLL and out.econ.target_level == 8
+    assert out.econ.roll_budget == 100 - 56 - out.shop_picks_cost
+    assert all(o.level == 8 for o in out.odds)
+    # 60 gold: the level would leave 4 gold for rolls; stay all-in at 7.
+    out = s18.analyze(st.model_copy(update={"gold": 60}))
+    assert out.econ.recommendation == EconAction.ALL_IN
+
+
+def _with_shop(st: GameState, names: list[str]) -> GameState:
+    sd = s18_set_data()
+    champs = [sd.resolve_champion(n) for n in names]
+    st.shop = [ShopSlot(name=c.name, cost=c.cost) for c in champs]
+    st.shop_units = [Unit(api_name=c.api_name, name=c.name, cost=c.cost, traits=list(c.traits)) for c in champs]
+    return st
+
+
+def test_s18_shop_picks_fit_the_plan_and_count_in_the_odds(s18, mech):
+    comp = next(c for c in s18_comps() if c.name_en == "Ahri Morgana")
+    board = [u for u in comp.units if u != "阿狸"][:6] + ["Ahri"]
+    st = _with_shop(s18_state("4-5", board=board, level=8, hp=40, gold=22), ["Ahri", "Karma", "Ahri", "Taric", "Leona"])
+    out = s18.analyze(st)
+    # Buying both Ahri copies makes her 2-star: not a roll target any more.
+    assert out.shop_picks.count("阿狸") == 2
+    ahri = next((o for o in out.odds if o.unit == "阿狸"), None)
+    assert ahri is None or ahri.goal_star == 3
+    spend = 0
+    if out.econ.recommendation in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL):
+        spend = mech.gold_to_reach(8, 0, out.econ.target_level)
+    assert spend + out.econ.roll_budget + out.shop_picks_cost <= 22
+    # A save plan at 50 does not buy filler units below the interest step.
+    filler = _with_shop(
+        s18_state("4-3", board=[("Aphelios", 2)] + VANGUARDS, level=8, hp=80, gold=50, streak=0),
+        ["Amumu", "Varus", "Shen", "Yorick", "Leona"],
+    )
+    out = s18.analyze(filler)
+    assert out.econ.recommendation == EconAction.SAVE
+    assert 50 - out.shop_picks_cost >= 50, out.shop_picks
+
+
+def test_s18_roll_down_with_nothing_to_find_is_dropped(s18, mech):
+    # Fast 8 at 4-2, level 7, 40 gold, medium HP, board of 4-5 costs and
+    # 2-star 3 costs: no target reaches 10%, so save for level 8.
+    board = ["Aphelios", "Zyra", *_names("DA_Brambleback18", "DA_Sentinel18", "DA_Taric18"), ("Diana", 2), ("Hecarim", 2)]
+    out = s18.analyze(s18_state("4-2", board=board, level=7, xp_current=10, hp=60, gold=40, streak=-1))
+    assert out.econ.recommendation == EconAction.SAVE and out.econ.roll_budget == 0, out.econ.reason
+    assert "升 8 级" in out.econ.reason
+    # Reroll line at 4-1: 14 gold cannot find a 3-star, so it saves for the slow roll.
+    an = Analyzer(s18_set_data(), mech, s18_comps(), comp_hint="Caitlyn Hunters")
+    st = s18_state("4-1", board=[("Caitlyn", 2), "Tristana", "Rakan", "Sejuani", "Vi", "Sivir"], bench=["Caitlyn"], level=6, hp=50, gold=34)
+    out = an.analyze(st)
+    assert out.econ.recommendation == EconAction.SAVE and "慢搜" in out.econ.reason

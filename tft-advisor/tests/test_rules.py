@@ -129,6 +129,9 @@ def test_level_and_roll_at_4_1(advisor, mech):
     assert adv.stage == "4-1"
     left = 60 - mech.gold_to_reach(6, 0, 7) - econ.roll_budget
     assert adv.headline == f"升到7级，搜到{left}金币"
+    # Shop picks are paid out of the roll budget: the gold left counts them too.
+    paid = analysis.model_copy(update={"shop_picks_cost": 3})
+    assert advisor.advise(state, paid).headline == f"升到7级，搜到{left - 3}金币"
     kinds = types(adv)
     assert ActionType.LEVEL in kinds and ActionType.ROLL in kinds and ActionType.BUY in kinds
     roll = action(adv, ActionType.ROLL)
@@ -682,3 +685,156 @@ def test_plan_milestones_follow_the_line(advisor):
     late = dict(base, stage=StageRound.parse("4-6"), level=8)
     fast9 = advisor.advise(GameState(**late), Analysis(econ=EconPlan(recommendation=EconAction.SAVE, style="fast9")))
     assert "5-2 升 9" in fast9.plan and "5-5" not in fast9.plan
+
+
+# ---------------------------------------------------------------------------
+# Regression tests (tft-domain review, round 2)
+# ---------------------------------------------------------------------------
+
+
+def test_reroll_plan_follows_econ_style_not_reason_words(advisor, mech):
+    """Stage-2, roll-down and carousel reasons never say 慢搜 / 赌狗: the plan
+    must still follow the reroll line (econ.style), not the standard curve."""
+    stage2 = GameState(stage=StageRound.parse("2-5"), gold=30, level=5, xp_current=0, hp=80)
+    econ = plan_economy(stage2, mech, "reroll2")
+    assert econ.style == "reroll2" and "慢搜" not in econ.reason
+    adv = advisor.advise(stage2, Analysis(econ=econ))
+    check_contract(adv)
+    assert "3-1 到 6 级开始慢搜" in adv.plan
+    assert "4-1 升 7" not in adv.plan and "3-2 升 6" not in adv.plan
+    # 4-1, medium HP, not 3-star yet: econ rolls to ~20, the plan stays at 6.
+    chase = GameState(stage=StageRound.parse("4-1"), gold=34, level=6, xp_current=0, hp=50)
+    econ = plan_economy(chase, mech, "reroll2", key_star=2)
+    assert econ.recommendation == EconAction.ROLL and econ.style == "reroll2"
+    adv = advisor.advise(chase, Analysis(econ=econ))
+    assert "停在 6 级搜牌追三星" in adv.plan
+    assert "补到 7" not in adv.plan and "4-5 升 8" not in adv.plan
+    # Carousel: the HOLD reason is generic, the line is still a reroll.
+    car = GameState(stage=StageRound.parse("3-4"), gold=30, level=6, hp=70)
+    adv = advisor.advise(car, Analysis(econ=plan_economy(car, mech, "reroll2")))
+    assert "停在 6 级慢搜" in adv.plan and "4-1 升 7" not in adv.plan
+    # A level 7 reroll reaches its level at 3-5.
+    r3 = GameState(stage=StageRound.parse("3-2"), gold=30, level=6, hp=80)
+    adv = advisor.advise(r3, Analysis(econ=EconPlan(recommendation=EconAction.SAVE, style="reroll3")))
+    assert "3-5 到 7 级开始慢搜" in adv.plan
+    # The reroll ends at 4-5 even where the engine kept the style (carousel 5-4).
+    late = GameState(stage=StageRound.parse("5-4"), gold=30, level=7, hp=70)
+    adv = advisor.advise(late, Analysis(econ=plan_economy(late, mech, "reroll2")))
+    assert "慢搜三星" not in adv.plan and "升 8" in adv.plan
+
+
+def test_reroll_style_makes_cheap_comp_units_core_roll_targets(advisor):
+    """_roll_value reads econ.style: on a reroll line a 1-cost comp unit is core."""
+    state = GameState(stage=StageRound.parse("4-1"), gold=40, level=6, hp=50)
+    comp = CompSuggestion(name="X", score=0.8, carry="Draven", core_units=["Draven", "Garen", "Vi"])
+    odds = [_roll_odds("Garen", 1, 1, 0.65), _roll_odds("Vi", 3, 1, 0.6)]
+    reroll = EconPlan(recommendation=EconAction.ROLL, roll_budget=40, style="reroll1", reason="血量 50：搜到 20")
+    text = action(advisor.advise(state, Analysis(econ=reroll, comps=[comp], odds=odds)), ActionType.ROLL).text
+    assert text.index("Garen") < text.index("Vi")
+    std = reroll.model_copy(update={"style": "standard"})
+    text = action(advisor.advise(state, Analysis(econ=std, comps=[comp], odds=odds)), ActionType.ROLL).text
+    assert text.index("Vi") < text.index("Garen")
+
+
+def test_fast_line_behind_schedule_still_hears_level_8(advisor):
+    save = dict(recommendation=EconAction.SAVE)
+    for sr in ("4-2", "4-3"):
+        state = GameState(stage=StageRound.parse(sr), gold=38, level=7, hp=70)
+        adv = advisor.advise(state, Analysis(econ=EconPlan(style="fast8", **save)))
+        check_contract(adv)
+        assert "尽快升 8 找 4 费主C" in adv.plan and "5-5 升 9" in adv.plan
+    # Fast 9 at 6 after 4-2: catch up to 8, then 9 at 5-2.
+    state = GameState(stage=StageRound.parse("4-2"), gold=30, level=6, hp=70)
+    adv = advisor.advise(state, Analysis(econ=EconPlan(style="fast9", **save)))
+    assert "尽快补到 8 级" in adv.plan and "5-2 升 9" in adv.plan
+    # Level 7 after 5-5: one level at a time, 9 named once.
+    state = GameState(stage=StageRound.parse("5-6"), gold=38, level=7, hp=70)
+    adv = advisor.advise(state, Analysis(econ=EconPlan(style="standard", **save)))
+    assert "尽快升 8" in adv.plan and "再升 9 找 5 费" in adv.plan
+    assert adv.plan.count("升 9") == 1 and "补到 9" not in adv.plan
+    # Econ levels to 7 now while the fast 8 line wants 8: 8 is still named.
+    state = GameState(stage=StageRound.parse("4-2"), gold=40, level=6, hp=70)
+    adv = advisor.advise(state, Analysis(econ=EconPlan(recommendation=EconAction.LEVEL, target_level=7, style="fast8")))
+    assert "现在升 7" in adv.plan and "尽快升 8" in adv.plan
+    # On schedule at 9: no "升 9" at all.
+    state = GameState(stage=StageRound.parse("5-6"), gold=38, level=9, hp=70)
+    adv = advisor.advise(state, Analysis(econ=EconPlan(style="standard", **save)))
+    assert "升 9" not in adv.plan and "慢搜找 5 费" in adv.plan
+
+
+def test_carousel_pick_does_not_reuse_slammed_components(advisor):
+    """B.F. Sword + Gloves are slammed into Infinity Edge: the carousel cannot
+    count that B.F. Sword again for a Deathblade."""
+    state = GameState(
+        stage=StageRound.parse("3-4"), gold=30, level=6, hp=70, item_bench=["B.F. Sword", "Sparring Gloves"],
+        board=[unit("Draven", 4, 2, row=3, col=0)],
+    )
+    comp = CompSuggestion(name="X", score=0.8, carry="Draven", carry_items=["Deathblade", "Giant Slayer"])
+    ie = ItemSuggestion(item="Infinity Edge", components=["B.F. Sword", "Sparring Gloves"], holder="Draven", priority=1)
+    adv = advisor.advise(state, Analysis(comps=[comp], items=[ie]))
+    check_contract(adv)
+    car = action(adv, ActionType.CAROUSEL).text
+    # Both carry items now need 2 components; the first BiS item is named, and
+    # the slammed item is never "picked" again.
+    assert "Infinity Edge" not in car and "凑 Deathblade" in car
+    # A leftover component that completes an item beats a two-component item.
+    state = state.model_copy(update={"item_bench": ["B.F. Sword", "Sparring Gloves", "Recurve Bow"]})
+    adv = advisor.advise(state, Analysis(comps=[comp], items=[ie]))
+    assert "做 Giant Slayer" in action(adv, ActionType.CAROUSEL).text
+
+
+def test_carousel_skips_a_carry_with_three_items(advisor):
+    full = unit("Draven", 4, 2, ["Red Buff", "Deathblade", "Infinity Edge"], row=3, col=0)
+    state = GameState(stage=StageRound.parse("4-4"), gold=30, level=7, hp=70, item_bench=["B.F. Sword"], board=[full])
+    comp = CompSuggestion(name="X", score=0.8, carry="Draven", carry_items=["Red Buff", "Deathblade", "Giant Slayer"])
+    leftover = ItemSuggestion(item="Giant Slayer", components=["B.F. Sword", "Recurve Bow"], holder="Draven", priority=3)
+    adv = advisor.advise(state, Analysis(comps=[comp], items=[leftover]))
+    check_contract(adv)
+    car = action(adv, ActionType.CAROUSEL).text
+    assert "Recurve Bow" not in car and "Draven" not in car and "主C装备已满" in car
+    assert "主C" not in adv.headline or "已满" in adv.headline
+    assert adv.items is None or "Giant Slayer 给 Draven" not in adv.items
+    # With an empty bench the comp's carry items are skipped too.
+    empty = state.model_copy(update={"item_bench": []})
+    adv = advisor.advise(empty, Analysis(comps=[comp]))
+    assert "B.F. Sword" not in action(adv, ActionType.CAROUSEL).text
+    # A free slot: the carry items are back.
+    two = state.model_copy(update={"board": [full.model_copy(update={"items": ["Red Buff", "Infinity Edge"]})], "item_bench": []})
+    assert "Deathblade" in action(advisor.advise(two, Analysis(comps=[comp])), ActionType.CAROUSEL).text
+
+
+def test_completed_item_on_bench_is_equipped_not_combined(advisor):
+    state = GameState(stage=StageRound.parse("4-3"), gold=38, level=7, hp=70, item_bench=["Red Buff"],
+                      board=[unit("Draven", 4, 2, row=3, col=0), unit("Braum", 2, row=0, col=3)])
+    built = ItemSuggestion(item="Red Buff", components=[], holder="Draven", priority=1)
+    adv = advisor.advise(state, Analysis(items=[built]))
+    check_contract(adv)
+    assert adv.headline == "把Red Buff装给Draven"
+    assert action(adv, ActionType.ITEM).text == "把 Red Buff 装给 Draven"
+    assert all("合成" not in t for t in all_text(adv))
+    # Nobody on this (AP) team uses it: keep it, never the headline, and do
+    # not claim that every item slot is full.
+    orphan = built.model_copy(update={"holder": None})
+    adv = advisor.advise(state, Analysis(items=[orphan]))
+    item = action(adv, ActionType.ITEM)
+    assert item.text == "现在的阵容没人适合用 Red Buff，先留着" and item.priority == 2
+    assert "Red Buff" not in adv.headline and "满" not in item.text
+    # Really full board: say so.
+    full = [unit("Draven", 4, 2, ["A", "B", "C"], row=3, col=0)]
+    adv = advisor.advise(state.model_copy(update={"board": full}), Analysis(items=[orphan]))
+    assert "装备格都满了" in action(adv, ActionType.ITEM).text
+
+
+def test_raw_api_ids_never_reach_the_items_text(advisor):
+    from tft_advisor.advisor.rules import is_display_name
+
+    state = GameState(stage=StageRound.parse("3-3"), gold=20, level=6, hp=70)
+    comp = CompSuggestion(
+        name="Solar Kayle", score=0.8, carry="Kayle",
+        carry_items=["Guinsoo's Rageblade", "DA_Artifact_NavoriFlickerblade", "Rabadon's Deathcap"],
+    )
+    adv = advisor.advise(state, Analysis(comps=[comp]))
+    assert adv.items == "Kayle：Guinsoo's Rageblade、Rabadon's Deathcap"
+    only_raw = comp.model_copy(update={"carry_items": ["DA_18_EmblemFloraFatalisAugment"]})
+    assert advisor.advise(state, Analysis(comps=[only_raw])).items is None
+    assert is_display_name("Warmogs Armor") and is_display_name("无尽之刃") and not is_display_name("TFT_Item_Foo")

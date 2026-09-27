@@ -5,12 +5,14 @@
   truncated or refused reply is reported as such and its tokens are counted.
 * Adaptive thinking with a per-call effort level.
 * Server-side refusal fallbacks (``fallbacks="default"``) when enabled.
-* The big, stable system prompt (set data) is marked for prompt caching.
+* The big, stable system prompt (set data) is marked for prompt caching
+  (5 minute TTL, or 1 hour once calls with that prompt come further apart).
 * A client-side sliding-window rate limit keeps the per-game cost bounded.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 import time
@@ -25,9 +27,10 @@ from .config import AnthropicConfig
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
-# USD per million tokens: (input, output, cache read). Cache writes (5 minute
-# TTL) cost 1.25x input. Longest matching prefix wins; unknown models are
-# priced like Claude Opus 5. Only an estimate for the dashboard, not a bill.
+# USD per million tokens: (input, output, cache read). Cache writes cost 1.25x
+# input (5 minute TTL) or 2x input (1 hour TTL). Longest matching prefix wins;
+# unknown models are priced like Claude Opus 5. Only an estimate for the
+# dashboard, not a bill.
 _PRICES: dict[str, tuple[float, float, float]] = {
     "claude-fable-5-1": (10.0, 50.0, 0.25),
     "claude-mythos-5-1": (10.0, 50.0, 0.25),
@@ -42,6 +45,16 @@ _PRICES: dict[str, tuple[float, float, float]] = {
 }
 _DEFAULT_PRICE = _PRICES["claude-opus-5"]
 _CACHE_WRITE_FACTOR = 1.25
+_CACHE_WRITE_FACTOR_1H = 2.0
+
+# System prompt cache TTL. Every read refreshes an entry, so while calls that
+# share a system prompt start less than 5 minutes apart (auto mode: a call
+# every round) the default 5 minute TTL is written once and is the cheapest.
+# With auto off the player presses F6 only at key rounds, often more than 5
+# minutes apart, and every press would rewrite the ~9k token prompt at 1.25x.
+# So once a prompt was idle past the 5 minute TTL, its next write uses the
+# 1 hour TTL (2x once, then reads) and it stays there while that entry lives.
+_CACHE_TTL_S = {"5m": 300.0, "1h": 3600.0}
 
 
 def model_price(model: Optional[str]) -> tuple[float, float, float]:
@@ -71,6 +84,19 @@ def _num(obj: Any, name: str) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _cached_system_block(kwargs: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """The system block carrying the cache breakpoint, if the request has one."""
+    blocks = kwargs.get("system")
+    block = blocks[-1] if isinstance(blocks, list) and blocks else None
+    return block if isinstance(block, dict) and isinstance(block.get("cache_control"), dict) else None
+
+
+def _system_ttl(kwargs: dict[str, Any]) -> Optional[str]:
+    """'5m' / '1h' TTL the request asked for on its system prompt, None without a breakpoint."""
+    block = _cached_system_block(kwargs)
+    return (block["cache_control"].get("ttl") or "5m") if block is not None else None
 
 
 T = TypeVar("T", bound=BaseModel)
@@ -185,12 +211,20 @@ class LLMStats:
 
 
 class LLM:
-    def __init__(self, cfg: AnthropicConfig, client: Any = None, limiter: Optional[RateLimiter] = None) -> None:
+    def __init__(
+        self, cfg: AnthropicConfig, client: Any = None, limiter: Optional[RateLimiter] = None, clock=time.monotonic
+    ) -> None:
         self.cfg = cfg
         self._client = client
         self.limiter = limiter or RateLimiter(cfg.max_calls_per_minute)
         self.stats = LLMStats()
         self._lock = threading.Lock()
+        self._clock = clock
+        # (model, system prompt hash) -> (start of the last answered call, its cache TTL)
+        self._cache_seen: dict[str, tuple[float, str]] = {}
+        # Set when the API rejected the server-side fallback beta (400): later
+        # requests go without it instead of failing every call of the game.
+        self.fallbacks_rejected = False
 
     # ---- client -------------------------------------------------------------
     @property
@@ -206,21 +240,61 @@ class LLM:
                 raise LLMUnavailable(f"无法创建 Claude 客户端: {exc}") from exc
         return self._client
 
+    # ---- prompt cache TTL -----------------------------------------------------
+    @staticmethod
+    def _cache_key(model: Any, system: Any) -> str:
+        digest = hashlib.sha1(str(system).encode("utf-8", "replace")).hexdigest()
+        return f"{model}\0{digest}"
+
+    def _cache_ttl(self, model: str, system: str) -> str:
+        """'5m' or '1h' for this call's system prompt breakpoint (see ``_CACHE_TTL_S``)."""
+        with self._lock:
+            seen = self._cache_seen.get(self._cache_key(model, system))
+        if seen is None:
+            return "5m"
+        last, ttl = seen
+        gap = self._clock() - last
+        if gap <= _CACHE_TTL_S.get(ttl, 0.0):
+            return ttl  # the entry is still alive: this call reads it, keep its TTL
+        # Expired, so this call writes anyway: calls that far apart are what the
+        # 1 hour TTL is for. Beyond an hour neither TTL helps; 5m is the cheaper write.
+        return "1h" if gap <= _CACHE_TTL_S["1h"] else "5m"
+
+    def _remember_cache(self, kwargs: dict[str, Any], started: float) -> None:
+        """Record that a call with this system prompt reached the API (it wrote or read the cache)."""
+        block = _cached_system_block(kwargs)
+        if block is None:
+            return
+        ttl = _system_ttl(kwargs) or "5m"
+        key = self._cache_key(kwargs.get("model"), block.get("text"))
+        with self._lock:
+            prev = self._cache_seen.get(key)
+            if prev is None or started >= prev[0]:  # concurrent calls: the latest start wins
+                self._cache_seen[key] = (started, ttl)
+            for k, (last, _ttl) in list(self._cache_seen.items()):
+                if started - last > _CACHE_TTL_S["1h"]:
+                    del self._cache_seen[k]
+
     def _request_kwargs(self, model: str, effort: str, system: str, content: list[dict[str, Any]], max_tokens: int) -> dict[str, Any]:
+        cache_control: dict[str, Any] = {"type": "ephemeral"}
+        if self._cache_ttl(model, system) == "1h":
+            cache_control["ttl"] = "1h"
         kwargs: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
-            "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+            "system": [{"type": "text", "text": system, "cache_control": cache_control}],
             "messages": [{"role": "user", "content": content}],
             "thinking": {"type": "adaptive"},
             "output_config": {"effort": effort},
         }
-        if self.cfg.use_fallbacks:
+        if self.cfg.use_fallbacks and not self.fallbacks_rejected:
             kwargs["betas"] = [FALLBACK_BETA]
             kwargs["fallbacks"] = "default"
         return kwargs
 
-    def _account(self, resp: Any, started: float, purpose: str) -> None:
+    def _account(self, resp: Any, started: float, purpose: str, long_cache: bool = False) -> None:
+        """Count one answered call. ``long_cache``: the request asked for the 1 hour
+        TTL, used to price cache writes when the reply has no per-TTL breakdown."""
         usage = getattr(resp, "usage", None)
         # With server-side fallbacks the top-level usage covers only the attempt
         # that produced the message; ``usage.iterations`` lists every billed attempt.
@@ -238,13 +312,37 @@ class LLM:
                 self.stats.output_tokens += out
                 self.stats.cache_read_tokens += read
                 self.stats.cache_write_tokens += write
+                # usage.cache_creation splits the write by TTL (1 hour writes cost 2x, not 1.25x).
+                breakdown = _field(entry, "cache_creation")
+                if breakdown is not None:
+                    write_1h = min(write, _num(breakdown, "ephemeral_1h_input_tokens"))
+                else:
+                    write_1h = write if long_cache else 0
+                write_cost = (write - write_1h) * _CACHE_WRITE_FACTOR + write_1h * _CACHE_WRITE_FACTOR_1H
                 p_in, p_out, p_read = model_price(_field(entry, "model") or resp_model)
-                self.stats.cost_usd += (inp * p_in + write * p_in * _CACHE_WRITE_FACTOR + read * p_read + out * p_out) / 1e6
+                self.stats.cost_usd += (inp * p_in + write_cost * p_in + read * p_read + out * p_out) / 1e6
 
     def _fail(self, msg: str) -> None:
         with self._lock:
             self.stats.failures += 1
             self.stats.last_error = msg
+
+    def _send(self, client: Any, fn_name: str, kwargs: dict[str, Any]) -> Any:
+        """One request; when a 400 names the fallback beta (not enabled for this
+        account or model), it is dropped for good and the request is sent again."""
+        import anthropic
+
+        try:
+            return getattr(client.beta.messages, fn_name)(**kwargs)
+        except anthropic.BadRequestError as exc:
+            if "fallbacks" not in kwargs or "fallback" not in str(exc).lower():
+                raise
+        self.fallbacks_rejected = True
+        kwargs.pop("fallbacks", None)
+        betas = [b for b in kwargs.pop("betas", None) or [] if b != FALLBACK_BETA]
+        if betas:
+            kwargs["betas"] = betas
+        return getattr(client.beta.messages, fn_name)(**kwargs)
 
     def _call(self, fn_name: str, purpose: str, kwargs: dict[str, Any]) -> Any:
         if not self.limiter.try_acquire():
@@ -254,8 +352,9 @@ class LLM:
 
         client = self.client  # LLMUnavailable when no client can be built
         started = time.monotonic()
+        cache_started = self._clock()
         try:
-            resp = getattr(client.beta.messages, fn_name)(**kwargs)
+            resp = self._send(client, fn_name, kwargs)
         except anthropic.AuthenticationError as exc:
             self._fail("auth")
             raise LLMUnavailable("Claude API 密钥无效，请检查 ANTHROPIC_API_KEY") from exc
@@ -292,7 +391,8 @@ class LLM:
         except Exception as exc:  # credential refresh, response validation, SDK surprises
             self._fail(f"{type(exc).__name__}: {_short(exc)}")
             raise LLMError(f"调用 Claude 失败: {type(exc).__name__}: {_short(exc)}") from exc
-        self._account(resp, started, purpose)
+        self._remember_cache(kwargs, cache_started)
+        self._account(resp, started, purpose, long_cache=_system_ttl(kwargs) == "1h")
         stop = getattr(resp, "stop_reason", None)
         if stop == "refusal":
             self._fail("refusal")

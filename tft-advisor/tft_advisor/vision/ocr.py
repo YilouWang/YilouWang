@@ -6,7 +6,8 @@ it is a good way to re-read the shop after every roll or to cross-check
 Claude's numbers. It only returns fields it read confidently; everything else
 stays ``None``.
 
-Install with ``pip install rapidocr-onnxruntime`` (``pip install tft-advisor[ocr]``).
+Install with ``pip install -e ".[ocr]"``: ``rapidocr-onnxruntime`` on Python
+< 3.13, its successor ``rapidocr`` 3.x (plus ``onnxruntime``) from 3.13 on.
 """
 
 from __future__ import annotations
@@ -40,10 +41,30 @@ class OcrLine(NamedTuple):
 MIN_CONFIDENCE = 0.5
 
 
-def ocr_available() -> bool:
-    """True when ``rapidocr_onnxruntime`` can be imported."""
+def _rapidocr_class() -> tuple[Any, dict[str, Any]]:
+    """The RapidOCR engine class and its constructor kwargs:
+    ``rapidocr_onnxruntime`` (Python < 3.13) or its successor ``rapidocr`` 3.x
+    (needs ``onnxruntime``). Raises when neither can be imported."""
     try:
-        import rapidocr_onnxruntime  # noqa: F401
+        from rapidocr_onnxruntime import RapidOCR  # lazy optional dependency
+
+        return RapidOCR, {}
+    except Exception as exc:  # noqa: BLE001 - ImportError, DLL load errors, ...
+        first: Exception = exc
+    try:
+        import onnxruntime  # noqa: F401  (rapidocr 3.x does not pull an inference engine)
+        from rapidocr import RapidOCR
+    except Exception:  # noqa: BLE001
+        raise first from None
+    # rapidocr 3.x prints model paths at INFO on every engine start and a
+    # warning for every crop without text (most of them): errors only.
+    return RapidOCR, {"params": {"Global.log_level": "error"}}
+
+
+def ocr_available() -> bool:
+    """True when a RapidOCR engine (``rapidocr_onnxruntime`` or ``rapidocr`` 3.x) can be imported."""
+    try:
+        _rapidocr_class()
     except Exception:
         return False
     return True
@@ -166,8 +187,14 @@ def _box_center(box: Any) -> tuple[float, float]:
 
 
 def normalize_engine_output(raw: Any) -> list[OcrLine]:
-    """RapidOCR ``(result, elapse)`` -> ``OcrLine`` list sorted top to bottom, then left to right."""
-    result = raw[0] if isinstance(raw, tuple) else raw
+    """RapidOCR ``(result, elapse)`` (rapidocr-onnxruntime) or a ``RapidOCROutput``
+    (rapidocr 3.x: ``.boxes`` / ``.txts`` / ``.scores``) -> ``OcrLine`` list
+    sorted top to bottom, then left to right."""
+    if not isinstance(raw, (tuple, list)) and hasattr(raw, "txts"):
+        boxes, txts, scores = getattr(raw, "boxes", None), raw.txts, getattr(raw, "scores", None)
+        result: Any = [] if boxes is None or txts is None or scores is None else list(zip(boxes, txts, scores))
+    else:
+        result = raw[0] if isinstance(raw, tuple) else raw
     lines: list[OcrLine] = []
     for entry in result or []:
         try:
@@ -301,11 +328,11 @@ class OcrPerceiver:
             with self._lock:  # two threads must not both load the ONNX models
                 if self._engine is None:
                     try:
-                        from rapidocr_onnxruntime import RapidOCR  # lazy optional dependency
+                        RapidOCR, kwargs = _rapidocr_class()
                     except Exception as exc:
                         raise PerceptionError("OCR 不可用") from exc
                     try:
-                        self._engine = RapidOCR()
+                        self._engine = RapidOCR(**kwargs)
                     except Exception as exc:
                         raise PerceptionError(f"OCR 不可用: {exc}") from exc
         return self._engine

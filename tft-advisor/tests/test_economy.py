@@ -344,3 +344,109 @@ def test_low_hp_levels_and_rolls_outside_the_rolldown_rounds(mech):
     plan = plan_economy(gs("4-3", gold=60, level=7, xp=20, hp=28), mech, "fast8")
     assert plan.recommendation == EconAction.LEVEL_AND_ROLL and plan.target_level == 8
     assert plan.roll_budget == 60 - spend - 10
+
+
+# ---------------------------------------------------------------------------
+# Regressions (domain review): fast 9 timing, critical HP levels, no-roll
+# fallbacks, catching up late, the stage 2 level points
+# ---------------------------------------------------------------------------
+
+
+def test_fast8_ready_carry_levels_when_it_costs_no_interest(mech):
+    need = mech.gold_to_reach(8, 10, 9)
+    cap = mech.interest_step * mech.interest_cap
+    # 4-5, 2-star carry, enough gold to go 9 and still keep 50: level now.
+    plan = plan_economy(gs("4-5", gold=cap + need, level=8, xp=10, hp=80, streak=0), mech, "fast8", key_star=2)
+    assert plan.recommendation == EconAction.LEVEL and plan.target_level == 9
+    assert "不掉利息" in plan.reason and "主C已2星" in plan.reason
+    # Only one interest step lost: level too.
+    plan = plan_economy(gs("4-5", gold=cap + need - 10, level=8, xp=10, hp=80), mech, "fast8", key_star=2)
+    assert plan.recommendation == EconAction.LEVEL and plan.target_level == 9
+    # A 3-star carry is called a 3-star.
+    plan = plan_economy(gs("4-3", gold=cap + need, level=8, xp=10, hp=80), mech, "fast8", key_star=3)
+    assert "主C已3星" in plan.reason and "两星" not in plan.reason
+    # 80 gold: the spare 30 goes into XP, the 50 interest stays.
+    plan = plan_economy(gs("4-5", gold=cap + 30, level=8, xp=10, hp=80), mech, "fast8", key_star=2)
+    assert plan.recommendation == EconAction.SAVE and plan.roll_budget == 0
+    assert "多出的 30 金币买经验" in plan.reason
+
+
+def test_five_cost_carry_makes_fast8_a_nine_line(mech):
+    need = mech.gold_to_reach(8, 10, 9)
+    cap = mech.interest_step * mech.interest_cap
+    for stage, gold in (("5-1", 80), ("5-1", 100), ("5-3", 90), ("5-2", need)):
+        plan = plan_economy(gs(stage, gold=gold, level=8, xp=10, hp=80), mech, "fast8", key_star=1, carry_cost=5)
+        assert plan.style == "fast9", stage
+        assert plan.recommendation == EconAction.LEVEL and plan.target_level == 9, (stage, gold, plan.reason)
+    # Before 5-1 it never rolls at 8 for the 5 cost: it saves (or puts the
+    # gold above 50 into XP) for level 9.
+    for gold in (40, 60, cap + 20):
+        plan = plan_economy(gs("4-5", gold=gold, level=8, xp=10, hp=80), mech, "fast8", key_star=1, carry_cost=5)
+        assert plan.recommendation not in ROLLING, (gold, plan.reason)
+        assert "搜主C二星" not in plan.reason
+    # Enough to go 9 and keep 50: level right away.
+    plan = plan_economy(gs("4-5", gold=cap + need, level=8, xp=10, hp=80), mech, "fast8", key_star=0, carry_cost=5)
+    assert plan.recommendation == EconAction.LEVEL and plan.target_level == 9
+    # A 4 cost carry keeps the fast 8 roll at level 8.
+    plan = plan_economy(gs("4-5", gold=60, level=8, hp=82), mech, "fast8", key_star=1, carry_cost=4)
+    assert plan.style == "fast8" and plan.recommendation == EconAction.ROLL
+
+
+def test_critical_hp_buys_a_cheap_level_even_on_curve(mech):
+    # 3-2, level 6 (on curve), 26/36 XP: level 7 costs 12 of 90 gold.
+    cost = mech.gold_to_reach(6, 26, 7)
+    plan = plan_economy(gs("3-2", gold=90, level=6, xp=26, hp=10), mech)
+    assert plan.recommendation == EconAction.LEVEL_AND_ROLL and plan.target_level == 7
+    assert plan.roll_budget == 90 - cost
+    # Behind the curve, up to half the gold goes into the level.
+    cost = mech.gold_to_reach(7, 20, 8)
+    plan = plan_economy(gs("4-5", gold=2 * cost, level=7, xp=20, hp=18), mech)
+    assert plan.recommendation == EconAction.LEVEL_AND_ROLL and plan.target_level == 8
+    # A reroll line at its reroll level does not level at critical HP.
+    plan = plan_economy(gs("4-1", gold=60, level=5, xp=16, hp=15), mech, "reroll1", key_star=2)
+    assert plan.recommendation == EconAction.ALL_IN
+
+
+def test_no_gold_to_roll_texts(mech):
+    # Critical HP with 1 gold stays all-in (the rules say: reposition, sell).
+    plan = plan_economy(gs("5-6", gold=1, level=8, hp=24), mech)
+    assert plan.recommendation == EconAction.ALL_IN and plan.roll_budget <= 1
+    # Low HP late with the reserve eating the budget: never "save to 50".
+    plan = plan_economy(gs("6-2", gold=10, level=9, hp=25), mech)
+    assert plan.recommendation not in (EconAction.SAVE, EconAction.ROLL)
+    assert "不够搜一次" not in plan.reason and "调整站位" in plan.reason
+    plan = plan_economy(gs("4-2", gold=14, level=6, hp=30), mech, "reroll2", key_star=2)
+    assert plan.recommendation != EconAction.SAVE and "不够搜一次" not in plan.reason
+    # "Not enough for one roll" only when the gold really is below one roll.
+    for stage, gold, level, hp in (("3-3", 11, 6, 30), ("5-3", 51, 9, 90)):
+        plan = plan_economy(gs(stage, gold=gold, level=level, hp=hp), mech)
+        assert "不够搜一次" not in plan.reason, (stage, plan.reason)
+    plan = plan_economy(gs("3-3", gold=1, level=6, hp=30), mech)
+    assert plan.recommendation == EconAction.SAVE and "不够搜一次" in plan.reason
+    # A roll-down that keeps nothing says so plainly.
+    plan = plan_economy(gs("4-1", gold=30, level=7, hp=30), mech)
+    assert "保留约 0" not in plan.reason
+
+
+def test_behind_the_curve_late_buys_the_catch_up_level(mech):
+    cost = mech.gold_to_reach(7, 15, 8)
+    plan = plan_economy(gs("5-2", gold=cost + 7, level=7, xp=15, hp=90), mech)
+    assert plan.recommendation == EconAction.LEVEL and plan.target_level == 8
+    cost = mech.gold_to_reach(7, 0, 8)
+    plan = plan_economy(gs("5-5", gold=cost + 2, level=7, hp=70), mech)
+    assert plan.recommendation == EconAction.LEVEL and plan.target_level == 8
+    # On curve in stage 3 the 10 gold floor still holds.
+    cost = mech.gold_to_reach(5, 0, 6)
+    plan = plan_economy(gs("3-3", gold=cost + 5, level=5, hp=90), mech)
+    assert plan.target_level != 6
+
+
+def test_stage_two_level_points_do_not_flip_with_gold(mech):
+    one_buy = mech.xp_to_level[3] - mech.xp_per_buy  # one XP buy from level 4
+    for gold in range(mech.buy_xp_cost, 25):
+        plan = plan_economy(gs("2-1", gold=gold, level=3, xp=one_buy, hp=100), mech)
+        assert plan.recommendation == EconAction.LEVEL and plan.target_level == 4, gold
+    one_buy = mech.xp_to_level[4] - mech.xp_per_buy
+    for gold in (10, 12, 15):
+        plan = plan_economy(gs("2-5", gold=gold, level=4, xp=one_buy, hp=100), mech)
+        assert plan.recommendation == EconAction.LEVEL and plan.target_level == 5, gold

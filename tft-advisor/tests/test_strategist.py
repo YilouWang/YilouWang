@@ -10,6 +10,7 @@ from tft_advisor.advisor.prompts import (
     SYSTEM_PROMPT_STRATEGIST,
     build_state_message,
     build_strategist_system,
+    trait_effects_text,
 )
 from tft_advisor.advisor.rules import RulesAdvisor
 from tft_advisor.advisor.strategist import ClaudeStrategist
@@ -118,8 +119,12 @@ def make_strategist(fake: FakeAnthropic, set_data, **cfg_kw) -> tuple[ClaudeStra
 
 
 def test_advise_happy_path(set_data, mech):
+    from tft_advisor.models import ScoutRequest
+
     state = make_state()
     analysis = make_analysis(state, mech)
+    # The model may restate a request the planner already made.
+    analysis.scout_requests = [ScoutRequest(id="s", text="请点开「Alice」的棋盘后按 F7", target_player="Alice")]
     rules = RulesAdvisor(mech=mech).advise(state, analysis)
     with FakeAnthropic() as fake:
         fake.queue_json(REPLY)
@@ -149,7 +154,8 @@ def test_advise_happy_path(set_data, mech):
         assert system["cache_control"] == {"type": "ephemeral"}
         assert system["text"].startswith(SYSTEM_PROMPT_STRATEGIST)
         assert "TFT Set 99" in system["text"] and "Draven" in system["text"]
-        assert system["text"] == build_strategist_system(set_data.summary_text())
+        assert system["text"] == build_strategist_system(set_data.summary_text() + "\n\n" + trait_effects_text(set_data))
+        assert "TRAIT EFFECTS" in system["text"]
         # Identical system prompt bytes on every call (prompt cache).
         assert fake.requests[1]["body"]["system"] == body["system"]
         assert strat.system_prompt is strat.system_prompt
@@ -386,3 +392,184 @@ def test_duplicate_field_labels_are_stripped(set_data, mech):
     assert adv.positioning == "Draven 放后排角落"
     assert adv.comp == "Draven 决斗大师"
     assert rules.items and not rules.items.startswith("装备")
+
+
+# ---------------------------------------------------------------------------
+# Regression tests (strategist prompt review)
+# ---------------------------------------------------------------------------
+
+
+def _scout_reply(**kw):
+    reply = dict(
+        REPLY,
+        actions=[
+            {"type": "level", "text": "买经验升到 8 级", "priority": 1},
+            {"type": "scout", "text": "点开「Nina」的棋盘后按 F7", "priority": 2},
+            {"type": "other", "text": "去看一下 Alice 的棋盘", "priority": 3},
+            {"type": "other", "text": "Alice 在抢 Draven，准备转型", "priority": 3},
+        ],
+        scout_request="请点开「Nina」的棋盘后按 F7",
+    )
+    reply.update(kw)
+    return reply
+
+
+def test_scouting_off_never_reaches_the_player(set_data, mech):
+    """[advisor] scout_prompts = false: the prompt says so and the reply's
+    scout request / scout actions are dropped in code as well."""
+    state = make_state()
+    state.players.append(PlayerObs(name="Nina", hp=50))
+    analysis = make_analysis(state, mech)
+    rules = RulesAdvisor(mech=mech).advise(state, analysis)
+    assert "scouting false" in SYSTEM_PROMPT_STRATEGIST
+    with FakeAnthropic() as fake:
+        fake.queue_json(_scout_reply())
+        cfg = AnthropicConfig(strategy_model="m")
+        strat = ClaudeStrategist(LLM(cfg, client=fake.client()), cfg, set_data, scout_enabled=False)
+        adv = strat.advise(state, analysis, rules)
+        data = _payload(fake.requests[0]["body"]["messages"][0]["content"][0]["text"])
+    assert adv.source == "llm"
+    assert adv.scout_request is None
+    texts = [a.text for a in adv.actions]
+    assert ActionType.SCOUT not in [a.type for a in adv.actions]
+    assert "去看一下 Alice 的棋盘" not in texts and "Alice 在抢 Draven，准备转型" in texts
+    assert data["scouting"] is False and "open_scout_requests" not in data
+
+
+def test_scouting_on_keeps_only_planned_targets(set_data, mech):
+    from tft_advisor.models import ScoutRequest
+
+    state = make_state()
+    state.players.append(PlayerObs(name="Nina", hp=50))
+    analysis = make_analysis(state, mech)
+    analysis.scout_requests = [ScoutRequest(id="s", text="请点开「Alice」的棋盘后按 F7", target_player="Alice")]
+    rules = RulesAdvisor(mech=mech).advise(state, analysis)
+    with FakeAnthropic() as fake:
+        fake.queue_json(_scout_reply())
+        fake.queue_json(_scout_reply(scout_request="请点开「Alice」的棋盘确认她在不在抢"))
+        fake.queue_json(_scout_reply(scout_request="看不清金币，请切回自己的棋盘后按 F6"))
+        strat, _, _ = make_strategist(fake, set_data)
+        off_budget = strat.advise(state, analysis, rules)
+        planned = strat.advise(state, analysis, rules)
+        own = strat.advise(state, analysis, rules)
+        data = _payload(fake.requests[0]["body"]["messages"][0]["content"][0]["text"])
+    # Nina is not a planned request: dropped, the planner's request stays.
+    assert off_budget.scout_request == rules.scout_request and "Alice" in off_budget.scout_request
+    assert all("Nina" not in a.text for a in off_budget.actions)
+    assert "去看一下 Alice 的棋盘" in [a.text for a in off_budget.actions]
+    assert planned.scout_request == "请点开「Alice」的棋盘确认她在不在抢"
+    assert own.scout_request == "看不清金币，请切回自己的棋盘后按 F6"
+    assert data["scouting"] is True and data["open_scout_requests"] == ["Alice"]
+    assert data["rules"]["scout_request"] == rules.scout_request
+
+
+def test_state_carries_econ_style_and_comp_style(set_data, mech):
+    state = make_state()
+    analysis = make_analysis(state, mech)
+    analysis.econ = analysis.econ.model_copy(update={"style": "reroll2", "level_estimated": True})
+    data = _payload(build_state_message(state, analysis, None))
+    assert data["econ"]["style"] == "reroll2" and data["econ"]["level_estimated"] is True
+    assert "econ.style is the line the engine plans for" in SYSTEM_PROMPT_STRATEGIST
+    assert "from 4-5" in SYSTEM_PROMPT_STRATEGIST and "streaks can skip a roll-down" in SYSTEM_PROMPT_STRATEGIST
+    analysis.econ = analysis.econ.model_copy(update={"style": "standard", "level_estimated": False})
+    data = _payload(build_state_message(state, analysis, None))
+    assert data["econ"]["style"] == "standard" and "level_estimated" not in data["econ"]
+
+    # A comp entry passes the library style / tier through when the engine sets them.
+    class StyledComp(CompSuggestion):
+        style: str = "reroll2"
+        tier: str = "B"
+
+    analysis.comps = [StyledComp(name="X", score=0.5, carry_items=["Deathblade", "DA_Artifact_NavoriFlickerblade"])]
+    comp = _payload(build_state_message(state, analysis, None))["comps"][0]
+    assert comp["style"] == "reroll2" and comp["tier"] == "B"
+    assert comp["carry_items"] == ["Deathblade"]  # raw API ids never reach the model
+
+
+def test_null_fields_do_not_backfill_contradicting_rules_text(set_data, mech):
+    from tft_advisor.advisor.rules import AUGMENT_MORE
+
+    state = make_state()
+    analysis = make_analysis(state, mech)
+    rules = RulesAdvisor(mech=mech, claude_enabled=True).advise(state, analysis)
+    assert AUGMENT_MORE in rules.augment and rules.comp
+    data = _payload(build_state_message(state, analysis, rules))
+    for field in ("comp", "items", "positioning", "augment"):
+        assert data["rules"][field] == getattr(rules, field)
+    assert "keeps the rules text" in SYSTEM_PROMPT_STRATEGIST
+    assert "must name one of the choices" in SYSTEM_PROMPT_STRATEGIST
+    pivot = dict(
+        REPLY,
+        comp=None,
+        augment=None,
+        actions=[
+            {"type": "pivot", "text": "转 Garen 骑士，Draven 被抢", "priority": 1},
+            {"type": "augment", "text": "选 Tiny Titans 保血", "priority": 1},
+        ],
+    )
+    no_aug_action = dict(REPLY, augment=None, actions=[{"type": "level", "text": "升 8", "priority": 1}])
+    with FakeAnthropic() as fake:
+        fake.queue_json(pivot)
+        fake.queue_json(no_aug_action)
+        strat, _, _ = make_strategist(fake, set_data)
+        adv = strat.advise(state, analysis, rules)
+        adv2 = strat.advise(state, analysis, rules)
+    assert adv.comp is None  # the rules comp is the line the model just left
+    assert adv.augment == "选 Tiny Titans 保血"
+    assert "Claude" not in adv2.augment and "Rich Get Richer" in adv2.augment
+
+
+def test_system_prompt_grounds_augments_wisps_and_language(set_data):
+    text = SYSTEM_PROMPT_STRATEGIST
+    assert "不确定" in text and "never invent numbers or effects" in text
+    assert "精灵" in text and "灵魂莲华" in text and "主宰" in text
+    assert "at most 60 characters" in text
+    assert "+N is an N-round win" in text and "1-star copies" in text and "exp_gold" in text
+    effects = trait_effects_text(set_data)
+    assert effects.startswith("TRAIT EFFECTS") and "%i:" not in effects
+    assert all(len(line) < 200 for line in effects.splitlines())
+
+
+def test_state_message_carries_configured_hotkeys(set_data, mech):
+    from tft_advisor.config import HotkeyConfig
+
+    state = make_state()
+    analysis = make_analysis(state, mech)
+    data = _payload(build_state_message(state, analysis, None))
+    assert data["hotkeys"] == {"analyze": "F6", "scout": "F7"}
+    data = _payload(build_state_message(state, analysis, None, hotkeys=HotkeyConfig(analyze="F10", scout="F11")))
+    assert data["hotkeys"] == {"analyze": "F10", "scout": "F11"}
+    data = _payload(build_state_message(state, analysis, None, hotkeys=HotkeyConfig(enabled=False)))
+    assert data["hotkeys"] == "off"
+    assert "分析" in SYSTEM_PROMPT_STRATEGIST and "记录对手" in SYSTEM_PROMPT_STRATEGIST
+    assert "F7 (record" not in SYSTEM_PROMPT_STRATEGIST  # no hard-coded default keys
+    with FakeAnthropic() as fake:
+        fake.queue_json(REPLY)
+        cfg = AnthropicConfig(strategy_model="m")
+        strat = ClaudeStrategist(LLM(cfg, client=fake.client()), cfg, set_data, hotkeys=HotkeyConfig(scout="F11"))
+        strat.advise(state, analysis, RulesAdvisor(mech=mech).advise(state, analysis))
+        sent = _payload(fake.requests[0]["body"]["messages"][0]["content"][0]["text"])
+    assert sent["hotkeys"]["scout"] == "F11"
+
+
+def test_odds_rows_trimmed_to_useful_signal():
+    def row(name, best, goal_star=2):
+        return HitOdds(
+            unit=name, api_name=f"TFT99_{name}", cost=5, owned_copies=1, goal_copies=3 if goal_star == 2 else 9,
+            goal_star=goal_star, seen_elsewhere=0, remaining_in_pool=8, level=8, p_per_slot=0.001, p_in_shop=0.01,
+            p_goal_by_gold={g: best * g / 80 for g in (10, 20, 30, 40, 50, 60, 80)},
+        )
+
+    from tft_advisor.models import EconPlan
+
+    odds = [row("Taric", 0.005), row("Draven", 0.004), row("Garen", 0.6), row("Vi", 0.01, goal_star=3)]
+    comps = [CompSuggestion(name="X", score=0.8, carry="Draven")]
+    analysis = Analysis(odds=odds, comps=comps, econ=EconPlan(roll_budget=34))
+    data = _payload(build_state_message(GameState(stage=StageRound.parse("4-2")), analysis, None))
+    units = [o["unit"] for o in data["odds"]]
+    assert units == ["Draven", "Garen"]  # hopeless Taric dropped, the carry kept
+    assert list(data["odds"][1]["p_goal_by_gold"]) == ["20", "30", "40", "60", "80"]
+    # A reroll line keeps its 3-star target even when it is far away.
+    analysis.econ = EconPlan(roll_budget=34, style="reroll1")
+    units = [o["unit"] for o in _payload(build_state_message(GameState(), analysis, None))["odds"]]
+    assert units == ["Draven", "Garen", "Vi"]

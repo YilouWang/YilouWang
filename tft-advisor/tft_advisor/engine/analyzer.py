@@ -34,7 +34,7 @@ from .comps_engine import (
     star_of_copies,
     suggest_comps,
 )
-from .economy import STYLES, hp_bucket, plan_economy, reroll_cost, reroll_level
+from .economy import ROLLDOWN_ROUNDS, STYLES, hp_bucket, plan_economy, reroll_cost, reroll_level
 from .items import plan_items, profile_hints_from_comps
 from .probability import compute_hit_odds
 
@@ -45,6 +45,9 @@ RICH_GOLD = 70
 ROLL_TARGET_FLOOR = 0.10  # a roll needs a target with at least this chance at its budget
 FIND_ONE_FLOOR = 0.5  # ... or a missing unit it will probably find
 WIN_STREAK_CHECK = 2  # win streaks from this length only roll for a real target
+CRITICAL_TARGETS = 3  # odds targets compared when a critical-HP all-in could level first
+HOPELESS_P = 0.05  # a target below this at both levels does not decide the level
+LEVEL_SLOT_BONUS = 0.05  # odds a level may cost at critical HP (it also adds a unit)
 
 T = TypeVar("T")
 
@@ -112,13 +115,31 @@ class Analyzer:
         # Econ and odds need a level: an unread level would be treated as 1
         # ("buy XP to reach level 2" at stage 5), so estimate it instead.
         est = self._guard("level", lambda: self._with_level_estimate(state), state)
+        carry_cost = self._guard("carry_cost", lambda: self._carry_cost(top), None)
         analysis.econ = self._guard(
-            "econ", lambda: plan_economy(est, self.mech, style, key_star=key_star), EconPlan(gold=state.gold or 0)
+            "econ",
+            lambda: plan_economy(est, self.mech, style, key_star=key_star, carry_cost=carry_cost),
+            EconPlan(gold=state.gold or 0),
         )
+        self._guard("critical_level", lambda: self._critical_level(est, analysis, top, taken_total, style), None)
+        # Shop picks come first (the cheapest copies there are): they are paid
+        # from the roll budget, and the odds count the copies they buy.
+        picks = self._guard("shop", lambda: self._pick_shop(state, est, top, analysis.econ), [])
+        self._guard("fund_picks", lambda: self._fund_picks(analysis.econ, picks), None)
         # Odds at the level the next shops will be rolled at (after leveling).
-        odds_state = self._guard("odds_level", lambda: self._odds_state(est, analysis.econ), est)
+        odds_state = self._guard("odds_level", lambda: self._odds_state(est, analysis.econ, picks), est)
         analysis.odds = self._guard("odds", lambda: self._odds(odds_state, top, taken_total, style), [])
+        before = (analysis.econ.recommendation, analysis.econ.target_level)
         self._guard("roll_check", lambda: self._drop_pointless_roll(est, analysis, style), None)
+        if (analysis.econ.recommendation, analysis.econ.target_level) != before:
+            # No roll after all: the shop budget and the roll level changed.
+            new_picks = self._guard("shop", lambda: self._pick_shop(state, est, top, analysis.econ), picks)
+            if new_picks != picks or analysis.econ.target_level != before[1]:
+                picks = new_picks
+                odds_state = self._guard("odds_level", lambda: self._odds_state(est, analysis.econ, picks), est)
+                analysis.odds = self._guard("odds", lambda: self._odds(odds_state, top, taken_total, style), analysis.odds)
+        analysis.shop_picks = [p[1] for p in picks]
+        analysis.shop_picks_cost = sum(p[2] for p in picks)
         analysis.items = self._guard(
             "items",
             lambda: plan_items(
@@ -130,11 +151,12 @@ class Analyzer:
             ),
             [],
         )
-        analysis.shop_picks = self._guard("shop", lambda: self._shop_picks(state, top), [])
         analysis.sell_candidates = self._guard("sell", lambda: self._sell_candidates(state, top), [])
         # The econ plan's style: a reroll that ended (4-5 or later) levels normally.
         econ_style = analysis.econ.style if analysis.econ.style in STYLES else style
-        analysis.warnings = self._guard("warnings", lambda: self._warnings(state, analysis.items, econ_style), [])
+        analysis.warnings = self._guard(
+            "warnings", lambda: self._warnings(state, analysis.items, econ_style, analysis.econ), []
+        )
         if self.last_errors:
             analysis.warnings.append("部分分析出错已跳过，建议可能不完整")
         return analysis
@@ -257,10 +279,18 @@ class Analyzer:
             apis.add(carry)
         return {a for a in apis if a}
 
+    def _carry_cost(self, top: Optional[CompSuggestion]) -> Optional[int]:
+        api = self._resolve_api(top.carry) if top else None
+        champ = self.set_data.champions.get(api) if api else None
+        return champ.cost if champ else None
+
     # ------------------------------------------------------------------ odds
-    def _odds_state(self, state: GameState, econ: EconPlan) -> GameState:
-        """The state whose level the next shops roll at: after a LEVEL or
-        LEVEL_AND_ROLL plan that is the target level, not the current one."""
+    def _odds_state(self, state: GameState, econ: EconPlan, picks: Optional[list[tuple]] = None) -> GameState:
+        """The state the next shops roll from: after a LEVEL or LEVEL_AND_ROLL
+        plan the level is the target level, and the shop picks are already
+        bought (their copies count as owned, so a goal the shop completes is
+        not a roll target any more)."""
+        update: dict = {}
         target = econ.target_level
         if (
             econ.recommendation in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL)
@@ -268,8 +298,64 @@ class Analyzer:
             and state.level is not None
             and target > state.level
         ):
-            return state.model_copy(update={"level": target, "xp_current": 0})
-        return state
+            update.update(level=target, xp_current=0)
+        bought = [p[3] for p in picks or [] if p[3] is not None]
+        if bought:
+            update["bench"] = [*state.bench, *bought]
+        return state.model_copy(update=update) if update else state
+
+    def _critical_level(
+        self,
+        state: GameState,
+        analysis: Analysis,
+        top: Optional[CompSuggestion],
+        taken_total: dict[str, int],
+        style: str,
+    ) -> None:
+        """Critical HP all-in: buy the next level first when the roll-down odds
+        of the main target are about as good there (the level also adds a unit)."""
+        econ = analysis.econ
+        level = state.level
+        if econ.recommendation != EconAction.ALL_IN or econ.level_estimated or level is None:
+            return
+        if level >= self.mech.max_level:
+            return
+        rr = reroll_level(econ.style)
+        if rr is not None and level >= rr:
+            return  # a reroll line does not level past its reroll level
+        gold = econ.gold
+        spend = self.mech.gold_to_reach(level, state.xp_current, level + 1)
+        if spend is None or spend <= 0 or spend > gold:
+            return
+        targets = self._odds_targets(state, top, style)[:CRITICAL_TARGETS]
+        if not targets:
+            return
+        left = gold - spend
+        now = compute_hit_odds(state, self.set_data, self.mech, taken_total, targets=targets, budgets=(gold,))
+        up = compute_hit_odds(
+            state, self.set_data, self.mech, taken_total, targets=targets, budgets=(left,), level=level + 1
+        )
+        pairs = []
+        for a, b in zip(now, up):
+            if a.goal_copies - a.owned_copies <= 0 or a.remaining_in_pool < a.goal_copies - a.owned_copies:
+                continue
+            pairs.append((a.p_goal_by_gold.get(gold, 0.0), b.p_goal_by_gold.get(left, 0.0)))
+        if not pairs:
+            return
+        # The main target decides; one nobody can hit at either level does not.
+        p_now, p_up = next(((a, b) for a, b in pairs if max(a, b) >= HOPELESS_P), pairs[0])
+        if p_up + LEVEL_SLOT_BONUS < p_now:
+            return
+        roll = max(1, self.mech.roll_cost)
+        econ.target_level = level + 1
+        if left >= roll:
+            econ.recommendation = EconAction.LEVEL_AND_ROLL
+            econ.roll_budget = left
+            econ.reason = f"血量 {state.hp}，危险：先升 {level + 1} 级多上一个人，再 all-in 搜牌"
+        else:
+            econ.recommendation = EconAction.LEVEL
+            econ.roll_budget = 0
+            econ.reason = f"血量 {state.hp}，危险：升到 {level + 1} 级多上一个人"
 
     def _has_roll_target(self, analysis: Analysis) -> bool:
         """Does the roll budget have something realistic to find? A unit whose
@@ -296,33 +382,62 @@ class Analyzer:
     def _drop_pointless_roll(self, state: GameState, analysis: Analysis, style: str) -> None:
         """Turn a roll with no realistic target into save / level.
 
-        Only where rolling is optional: a win streak (the board already wins)
-        or a fast 8 / fast 9 line at level 8+. Low HP, reroll slow rolls and
-        all-ins keep their roll.
+        Only where rolling is optional: a win streak (the board already wins),
+        a fast 8 / fast 9 line at level 8+, a roll-down round without low HP,
+        and the stage 4+ "chase the 3-star" roll of a reroll line. Low HP,
+        reroll slow rolls and all-ins keep their roll. Gold that stays above
+        the interest cap after the level goes into the level instead.
         """
         econ = analysis.econ
         if econ.recommendation not in (EconAction.ROLL, EconAction.LEVEL_AND_ROLL):
             return
-        if hp_bucket(state.hp) in ("low", "critical") or style.startswith("reroll"):
+        if hp_bucket(state.hp) in ("low", "critical"):
+            return
+        sr = state.stage
+        stage = sr.stage if sr else 0
+        line = econ.style if econ.style in STYLES else style
+        reroll = line.startswith("reroll")
+        reroll_chase = reroll and stage >= LATE_STAGE and econ.recommendation == EconAction.ROLL
+        if reroll and not reroll_chase:
             return
         streak = state.streak or 0
         level = econ.target_level if econ.recommendation == EconAction.LEVEL_AND_ROLL else state.level
-        late_fast = style in ("fast8", "fast9") and (level or 0) >= 8
-        if streak < WIN_STREAK_CHECK and not late_fast:
+        fast = line in ("fast8", "fast9")
+        late_fast = fast and (level or 0) >= 8
+        rolldown = sr is not None and sr.key in ROLLDOWN_ROUNDS
+        if streak < WIN_STREAK_CHECK and not late_fast and not rolldown and not reroll_chase:
             return
         if self._has_roll_target(analysis):
             return
+        econ.roll_budget = 0
         if econ.recommendation == EconAction.LEVEL_AND_ROLL and econ.target_level:
             econ.recommendation = EconAction.LEVEL
             econ.reason = f"升到 {econ.target_level} 级；这回合搜到关键牌的概率很低，先不搜"
+            return
+        cap = self.mech.interest_step * self.mech.interest_cap
+        to_next = econ.gold_to_next_level
+        cur = state.level
+        if (
+            not reroll
+            and cur is not None
+            and cur < self.mech.max_level
+            and to_next is not None
+            and econ.gold - to_next >= cap
+        ):
+            econ.recommendation = EconAction.LEVEL
+            econ.target_level = cur + 1
+            econ.reason = f"搜到关键牌的概率很低：升到 {cur + 1} 级也不掉利息，先升级"
+            return
+        econ.recommendation = EconAction.SAVE
+        econ.target_level = None
+        if streak >= WIN_STREAK_CHECK:
+            econ.reason = f"连胜 {streak} 场，这回合搜到关键牌的概率很低：不搜，存钱"
+        elif reroll_chase:
+            econ.reason = f"搜到三星的概率很低：先存钱，攒到 {cap} 以上再慢搜"
+        elif fast and (cur or 0) < 8:
+            econ.reason = "搜到升星的概率很低：先不搜，存钱升 8 级"
         else:
-            econ.recommendation = EconAction.SAVE
-            econ.target_level = None
-            if streak >= WIN_STREAK_CHECK:
-                econ.reason = f"连胜 {streak} 场，这回合搜到关键牌的概率很低：不搜，存钱"
-            else:
-                econ.reason = "搜到升星的概率很低：先不搜，存钱准备升级"
-        econ.roll_budget = 0
+            econ.reason = "搜到升星的概率很低：先不搜，存钱准备升级"
 
     def _chase_three_star(self, o: Owned, level: int, style: str) -> bool:
         """Is rolling for a 3-star of this (already 2-star) unit a real plan?
@@ -344,6 +459,15 @@ class Analyzer:
     def _odds(
         self, state: GameState, top: Optional[CompSuggestion], taken_total: dict[str, int], style: str = "standard"
     ) -> list[HitOdds]:
+        targets = self._odds_targets(state, top, style)
+        if not targets:
+            return []
+        odds = compute_hit_odds(state, self.set_data, self.mech, taken_total, targets=targets)
+        return odds[:MAX_ODDS]
+
+    def _odds_targets(self, state: GameState, top: Optional[CompSuggestion], style: str = "standard") -> list[str]:
+        """Units worth odds, most important first (the carry, then one copy
+        from the next star, comp units, missing comp units, the rest)."""
         owned = owned_units(state, self.set_data)
         comp_apis = self._comp_apis(top)
         carry = self._resolve_api(top.carry) if top else None
@@ -395,11 +519,7 @@ class Analyzer:
             if o.copies < 9:
                 add(api, (5, need(o), -o.cost, api))
         ranked.sort(key=lambda t: t[0])
-        targets = [api for _k, api in ranked[:MAX_ODDS]]
-        if not targets:
-            return []
-        odds = compute_hit_odds(state, self.set_data, self.mech, taken_total, targets=targets)
-        return odds[:MAX_ODDS]
+        return [api for _k, api in ranked[:MAX_ODDS]]
 
     # ------------------------------------------------------------------ shop
     def _shop_units(self, state: GameState) -> list[Optional[Unit]]:
@@ -428,7 +548,33 @@ class Analyzer:
                 active.add(name)
         return active
 
-    def _shop_picks(self, state: GameState, top: Optional[CompSuggestion]) -> list[str]:
+    def _pick_budget(self, state: GameState, econ: EconPlan) -> tuple[Optional[int], Optional[int]]:
+        """(hard, soft) gold limits for shop picks under the econ plan.
+
+        hard: gold minus the level the plan buys. soft (everything but an
+        upgrade now or an owned comp unit): a rolling plan pays the picks from
+        its roll budget; a save or level plan keeps its interest step.
+        """
+        gold = state.gold
+        if gold is None:
+            return None, None
+        rec = econ.recommendation
+        spend = 0
+        if rec in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL) and econ.target_level and state.level is not None:
+            spend = self.mech.gold_to_reach(state.level, state.xp_current, econ.target_level) or 0
+        hard = max(0, gold - spend)
+        if rec in (EconAction.ROLL, EconAction.SLOW_ROLL, EconAction.LEVEL_AND_ROLL, EconAction.ALL_IN):
+            return hard, min(hard, econ.roll_budget)
+        if rec in (EconAction.SAVE, EconAction.LEVEL):
+            cap = self.mech.interest_step * self.mech.interest_cap
+            floor = min(cap, (hard // max(1, self.mech.interest_step)) * self.mech.interest_step)
+            return hard, hard - floor
+        return hard, hard
+
+    def _pick_shop(
+        self, state: GameState, est: GameState, top: Optional[CompSuggestion], econ: EconPlan
+    ) -> list[tuple[tuple, str, int, Optional[Unit]]]:
+        """Shop units worth buying, in priority order: (key, name, cost, unit)."""
         shop = self._shop_units(state)
         if not shop:
             return []
@@ -438,8 +584,11 @@ class Analyzer:
         board_apis = {u.api_name for u in state.board}
         in_shop = Counter(u.api_name for u in shop if u is not None)
         early = state.stage is None or state.stage.stage <= 3
+        level = est.level or 1
+        style = econ.style if econ.style in STYLES else "standard"
+        upgrade_left: dict[str, int] = {}  # copies still needed for the next star
 
-        picks: list[tuple[tuple, str, int]] = []
+        picks: list[tuple[tuple, str, int, Optional[Unit]]] = []
         for idx, u in enumerate(shop):
             if u is None or u.api_name.startswith("?"):
                 continue
@@ -450,32 +599,64 @@ class Analyzer:
             cost = u.cost or 1
             ones = copies % 3
             twos = (copies // 3) % 3
-            upgrade = ones + in_shop[u.api_name] >= 3
+            if u.api_name not in upgrade_left:
+                upgrade_left[u.api_name] = 3 - ones if ones + in_shop[u.api_name] >= 3 else 0
+            upgrade = upgrade_left[u.api_name] > 0
             three_star = upgrade and twos == 2
-            if upgrade or three_star:
+            if upgrade:
+                upgrade_left[u.api_name] -= 1
                 tier = 0
-            elif copies and u.api_name in comp_apis:
+            elif copies and u.api_name in comp_apis and (copies < 3 or self._chase_three_star(o, level, style)):
                 tier = 1
             elif u.api_name in comp_apis:
-                tier = 2
+                tier = 2  # a first copy, or a 3-star nobody would roll for
             elif copies and early:
                 tier = 3
             elif u.api_name not in board_apis and any(t in active for t in u.traits):
                 tier = 4
             else:
                 continue
-            picks.append(((tier, 0 if three_star else 1, -cost, idx), u.name, cost))
+            bought = Unit(api_name=u.api_name, name=u.name, cost=u.cost, traits=list(u.traits))
+            picks.append(((tier, 0 if three_star else 1, -cost, idx), u.name, cost, bought))
         picks.sort(key=lambda p: p[0])
 
-        out: list[str] = []
-        budget = state.gold
+        hard, soft = self._pick_budget(est, econ)
+        out: list[tuple[tuple, str, int, Optional[Unit]]] = []
         spent = 0
-        for _key, name, cost in picks:
-            if budget is not None and spent + cost > budget:
+        for pick in picks:
+            cost = pick[2]
+            if hard is not None and spent + cost > hard:
+                continue
+            # An upgrade now or a copy of an owned comp unit may dip into the
+            # reserve; anything else must fit the plan's spare gold.
+            exempt = pick[0][0] <= 1
+            if not exempt and soft is not None and spent + cost > soft:
                 continue
             spent += cost
-            out.append(name)
+            out.append(pick)
         return out
+
+    def _fund_picks(self, econ: EconPlan, picks: list[tuple]) -> None:
+        """Shop picks are paid from the roll budget of a rolling plan."""
+        cost = sum(p[2] for p in picks)
+        if not cost or econ.recommendation not in (
+            EconAction.ROLL,
+            EconAction.SLOW_ROLL,
+            EconAction.LEVEL_AND_ROLL,
+            EconAction.ALL_IN,
+        ):
+            return
+        econ.roll_budget = max(0, econ.roll_budget - cost)
+        if econ.roll_budget >= max(1, self.mech.roll_cost) or econ.recommendation == EconAction.ALL_IN:
+            return
+        econ.roll_budget = 0
+        if econ.recommendation == EconAction.LEVEL_AND_ROLL and econ.target_level:
+            econ.recommendation = EconAction.LEVEL
+            econ.reason = f"升到 {econ.target_level} 级，买完商店里的牌，剩下的钱不够再搜"
+        else:
+            econ.recommendation = EconAction.SAVE
+            econ.target_level = None
+            econ.reason = "先买商店里的牌，剩下的金币不够再搜"
 
     # ------------------------------------------------------------------ sell
     def _sell_candidates(self, state: GameState, top: Optional[CompSuggestion]) -> list[str]:
@@ -499,7 +680,19 @@ class Analyzer:
         return [name for _v, name in cands]
 
     # -------------------------------------------------------------- warnings
-    def _warnings(self, state: GameState, items: list[ItemSuggestion], style: str) -> list[str]:
+    def _gold_after(self, state: GameState, econ: Optional[EconPlan]) -> int:
+        """Gold left once the econ plan's level and rolls are paid."""
+        gold = state.gold or 0
+        if econ is None:
+            return gold
+        spend = 0
+        if econ.recommendation in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL) and econ.target_level:
+            spend = self.mech.gold_to_reach(state.level, state.xp_current, econ.target_level) or 0
+        return gold - spend - econ.roll_budget
+
+    def _warnings(
+        self, state: GameState, items: list[ItemSuggestion], style: str, econ: Optional[EconPlan] = None
+    ) -> list[str]:
         out: list[str] = []
         mech = self.mech
         sr = state.stage
@@ -538,11 +731,13 @@ class Analyzer:
             crafted = [s for s in items if s.components and s.priority <= 2]
             if comps_on_bench and not crafted:
                 out.append(f"备战席有散件（{', '.join(comps_on_bench)}）暂时合不成装备，选秀和野怪优先拿能配对的散件")
-            loose = [s.item for s in items if not s.components]
+            # Only items someone can take: the rest are held on purpose ("先留着").
+            loose = [s.item for s in items if not s.components and s.holder]
             if loose:
                 out.append(f"成装还没装备：{', '.join(loose)}，记得给英雄装上")
 
-        if state.gold is not None and state.gold >= RICH_GOLD and stage >= LATE_STAGE:
+        rich = state.gold is not None and state.gold >= RICH_GOLD and stage >= LATE_STAGE
+        if rich and self._gold_after(state, econ) >= RICH_GOLD:  # the plan itself leaves the gold unspent
             cap = mech.interest_step * mech.interest_cap
             out.append(f"金币 {state.gold} 太多了，利息最多只算到 {cap}，多出来的钱拿去升级或搜牌")
 

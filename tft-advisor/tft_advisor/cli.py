@@ -17,11 +17,56 @@ from . import __version__
 from .config import Config, load_config
 
 
-def _utf8_console() -> None:
-    # Windows consoles default to a legacy code page; Chinese output needs UTF-8.
-    for stream in (sys.stdout, sys.stderr):
+def _console_output_cp() -> int:
+    """Windows console output code page (936 on Chinese Windows), 0 when unknown."""
+    try:
+        import ctypes
+
+        return int(ctypes.windll.kernel32.GetConsoleOutputCP())  # type: ignore[attr-defined]
+    except Exception:
+        return 0
+
+
+def _stream_encoding(stream: Any, windows: bool, console_cp: int) -> Optional[str]:
+    """Encoding for ``stream``, or None to leave it as Python set it up.
+
+    A terminal (and anything off Windows) gets UTF-8; a Windows console writes
+    through WriteConsoleW, so that is only a safety net. Output redirected on
+    Windows (``doctor > doctor.txt``, ``| Select-String``) is decoded by
+    PowerShell with the console code page: UTF-8 bytes would turn into mojibake
+    on a Chinese system, so use that code page when it can hold Chinese.
+    """
+    if os.environ.get("PYTHONIOENCODING"):
+        return None  # the user chose explicitly
+    if not windows or os.environ.get("MSYSTEM"):
+        return "utf-8"  # Git Bash / MSYS terminals (a pipe, not a console) expect UTF-8
+    # UTF-8 mode (PYTHONUTF8=1, default from Python 3.15) does not change what
+    # PowerShell decodes a pipe with: the console code page decides (65001 = UTF-8).
+    try:
+        if stream.isatty():
+            return "utf-8"
+    except Exception:
+        pass
+    if console_cp and console_cp != 65001:
+        name = f"cp{console_cp}"
         try:
-            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+            "中文".encode(name)
+            return name
+        except (LookupError, UnicodeEncodeError):
+            pass  # e.g. cp437 on an English system: UTF-8 at least survives `> file`
+    return "utf-8"
+
+
+def _utf8_console(streams: Optional[Sequence[Any]] = None, windows: Optional[bool] = None, console_cp: Optional[int] = None) -> None:
+    # Chinese output: UTF-8 on terminals, the console code page when redirected on Windows.
+    if windows is None:
+        windows = sys.platform == "win32"
+    cp = console_cp if console_cp is not None else (_console_output_cp() if windows else 0)
+    for stream in streams if streams is not None else (sys.stdout, sys.stderr):
+        try:
+            encoding = _stream_encoding(stream, windows, cp)
+            if encoding:
+                stream.reconfigure(encoding=encoding, errors="replace")
         except Exception:
             pass
 
@@ -108,6 +153,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"TFT 助手已启动 ({app.set_data.set_number} {app.set_data.set_name})  识别: {app.perception_mode()}")
         if url:
             print(f"看板: {url}")
+            lan_url = getattr(app._server, "lan_url", None)
+            if lan_url and lan_url != url:
+                # The phone address is otherwise only in an earlier log line.
+                print(f"手机访问: {lan_url}（手机和电脑连同一个 Wi-Fi；打不开见 README「手机看板打不开」）")
         print(f"热键: {hk.analyze}=分析  {hk.scout}=记录对手棋盘  {hk.shop}=读商店  {hk.toggle_auto}=自动开关   Ctrl+C 退出")
         _open(url, cfg, app._server)
         app.wait()
@@ -186,7 +235,7 @@ def cmd_demo(args: argparse.Namespace) -> int:
 
 def cmd_replay(args: argparse.Namespace) -> int:
     """Run the pipeline over saved screenshots and print the advice."""
-    from .app import AdvisorApp, Job
+    from .app import AUTO, AdvisorApp, Job
     from .capture.screen import FileCapturer
 
     cfg = _load(args)
@@ -196,15 +245,17 @@ def cmd_replay(args: argparse.Namespace) -> int:
     if not cap.paths:
         print("没有找到截图")
         return 2
-    perceiver = None
+    perceiver: Any = AUTO
+    fast_perceiver: Any = AUTO
     if args.mock:
         from .vision.mock import MockPerceiver
 
         if not Path(args.mock).exists():
             print(f"错误: 找不到观察数据 {args.mock}", file=sys.stderr)
             return 2
-        perceiver = MockPerceiver(Path(args.mock))
-    app = AdvisorApp(cfg, perceiver=perceiver, use_llm=None if not args.no_llm else False)
+        # The mock answers every purpose, the shop included: no local OCR.
+        perceiver, fast_perceiver = MockPerceiver(Path(args.mock)), None
+    app = AdvisorApp(cfg, perceiver=perceiver, fast_perceiver=fast_perceiver, use_llm=None if not args.no_llm else False)
     # Driven by the capturer, so an unreadable file cannot shift the labels.
     while True:
         start = cap.index
@@ -290,6 +341,61 @@ def _check(label: str, ok: bool, detail: str = "") -> None:
     print(f"  [{'OK' if ok else '!!'}] {label}" + (f": {detail}" if detail else ""))
 
 
+#: OCR packages in the order vision.ocr tries them (rapidocr-onnxruntime on
+#: Python < 3.13, its successor rapidocr 3.x on newer Pythons).
+OCR_MODULES = ("rapidocr_onnxruntime", "rapidocr")
+VC_REDIST_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+
+
+def _not_installed(mod: str, exc: BaseException) -> bool:
+    """The module itself is missing (not one of its dependencies)."""
+    name = getattr(exc, "name", None)
+    return isinstance(exc, ModuleNotFoundError) and (name is None or mod == name or mod.startswith(name + "."))
+
+
+def _import_problem(mod: str, exc: BaseException) -> str:
+    """One Chinese line on why ``mod`` did not import, with the fix when known."""
+    text = " ".join(str(exc).split())[:160]
+    if "DLL load failed" in text:
+        # onnxruntime / numpy need MSVCP140.dll, which neither Python nor the wheels ship.
+        return f"已安装，但缺少 VC++ 运行库：安装 {VC_REDIST_URL} 后重开 PowerShell（{text}）"
+    if _not_installed(mod, exc):
+        return "未安装"
+    missing = getattr(exc, "name", None)
+    if isinstance(exc, ModuleNotFoundError) and missing:
+        return f"已安装，但缺少它依赖的 {missing}（{text}）"
+    return f"已安装，但导入失败: {type(exc).__name__}: {text}"
+
+
+def _doctor_ocr() -> None:
+    label = "OCR (可选)"
+    problems: list[tuple[str, BaseException]] = []
+    for mod in OCR_MODULES:
+        try:
+            m = importlib.import_module(mod)
+        except Exception as exc:  # noqa: BLE001 - ImportError, OSError from native DLLs, ...
+            problems.append((mod, exc))
+            continue
+        name = f"{mod} {getattr(m, '__version__', '')}".strip()
+        try:
+            from .vision.ocr import ocr_available
+
+            usable = ocr_available()
+        except Exception:  # noqa: BLE001
+            usable = False
+        if usable:
+            _check(label, True, name)
+        else:
+            _check(label, False, f"{name} 已安装，但助手的识别模块加载不了它（请更新 tft-advisor 或反馈）")
+        return
+    broken = [(mod, exc) for mod, exc in problems if not _not_installed(mod, exc)]
+    if broken:
+        mod, exc = broken[0]
+        _check(f"{label} {mod}", False, _import_problem(mod, exc))
+    else:
+        _check(label, True, '未安装（装上后读商店更快、不花钱：在 tft-advisor 目录运行 pip install -e ".[ocr]"）')
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     from .llm import has_credentials
 
@@ -297,12 +403,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"tft-advisor {__version__}  Python {platform.python_version()}  {platform.system()} {platform.release()}")
     print(f"配置文件: {cfg.source_path or '(默认值)'}")
     print("依赖:")
-    for mod, need in (("anthropic", True), ("pydantic", True), ("PIL", True), ("numpy", True), ("mss", True), ("rapidocr_onnxruntime", False), ("pyttsx3", False), ("tkinter", False)):
+    for mod, need in (("anthropic", True), ("pydantic", True), ("PIL", True), ("numpy", True), ("mss", True), ("pyttsx3", False), ("tkinter", False)):
         try:
             m = importlib.import_module(mod)
             _check(mod, True, getattr(m, "__version__", ""))
-        except Exception as exc:
-            _check(mod + ("" if need else " (可选)"), not need, f"未安装 ({type(exc).__name__})")
+        except Exception as exc:  # noqa: BLE001 - ImportError, OSError from native DLLs, ...
+            missing = _not_installed(mod, exc)
+            _check(mod + ("" if need else " (可选)"), not need and missing, _import_problem(mod, exc))
+    _doctor_ocr()
     print("Claude:")
     _check("API 凭证", has_credentials(), "ANTHROPIC_API_KEY 已设置" if os.environ.get("ANTHROPIC_API_KEY") else "未找到 ANTHROPIC_API_KEY")
     _check("视觉模型", True, cfg.anthropic.vision_model + f" (effort {cfg.anthropic.vision_effort})")
@@ -311,7 +419,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     try:
         from .data.setdata import load_set_data
 
-        sd = load_set_data(cfg.data, offline=args.offline, log=lambda *_: None)
+        # Download progress / failures are shown: a silent 45 s wait looks like a hang.
+        sd = load_set_data(cfg.data, offline=args.offline, log=lambda m: print(f"  {m}"))
         _check("赛季数据", sd.source != "bundled-sample", f"S{sd.set_number} {sd.set_name}, {len(sd.champions)} 英雄 ({sd.source})")
     except Exception as exc:
         _check("赛季数据", False, str(exc))
@@ -388,7 +497,9 @@ def _doctor_api(cfg: Config, offline: bool = False) -> int:
     # Strategy: the real system prompt (set data + comp library) on an empty game.
     comps = load_comps(cfg.data.comps_file or None, sd)
     reference = "\n\n".join(x for x in (set_notes(sd.set_number), comps_reference_text(comps)) if x)
-    strategist = ClaudeStrategist(llm, cfg.anthropic, sd, extra_reference=reference)
+    strategist = ClaudeStrategist(
+        llm, cfg.anthropic, sd, extra_reference=reference, hotkeys=cfg.hotkeys, scout_enabled=cfg.advisor.scout_prompts
+    )
     started = time.monotonic()
     baseline = Advice(headline="测试", source="rules")
     advice = strategist.advise(GameState(), Analysis(), baseline)

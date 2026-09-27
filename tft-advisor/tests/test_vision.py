@@ -1244,3 +1244,101 @@ def test_unreal_hud_notes_only_for_set_18_plus():
     assert "Wisp: <the name as written>" in build_vision_system(s18)
     assert UNREAL_HUD_NOTES not in build_vision_system(sample)
     assert build_vision_system(s18) == build_vision_system(s18)  # deterministic for prompt caching
+
+
+def test_unreadable_unit_items_keep_one_placeholder_per_icon():
+    from tft_advisor.vision.base import UNKNOWN_ITEM, is_unknown_item
+
+    assert UNKNOWN_ITEM == "?"
+    for raw in ("?", "？", "??", " ? ", "unknown", "Unknown item", "未知装备", "无法识别"):
+        assert is_unknown_item(raw), raw
+    for raw in ("", None, "B.F. Sword", "Giant Slayer", "无尽之刃"):
+        assert not is_unknown_item(raw), raw
+
+    board = [
+        {"name": "Ashe", "star": 2, "items": ["B.F. Sword", "？", " unknown item "], "row": 3, "col": 3},
+        {"name": "Garen", "star": 1, "items": ["?", "?", "?", "?"], "row": 0, "col": 2},
+    ]
+    bench = [{"name": "Vayne", "star": 1, "items": ["", "?"], "row": None, "col": 0}]
+    s = sanitize_screen(ScreenObservation.model_validate(dict(GOOD_REPLY, board=board, bench=bench)))
+    assert [u.items for u in s.board] == [["B.F. Sword", "?", "?"], ["?", "?", "?"]]
+    assert s.bench[0].items == ["?"]
+
+
+def test_vision_prompt_asks_for_a_placeholder_per_unreadable_item_icon(set_data):
+    system = build_vision_system(set_data)
+    assert 'write "?" for each icon you can see but cannot name' in system
+    assert "items is [] only when the unit holds no item" in system
+    assert "leave that unit's items empty" not in system
+    # "?" from earlier frames is not a name: it never goes into the hints.
+    text = build_user_text("auto", PerceptionHint(item_names=["?", "B.F. Sword", "？"]), [])
+    assert "Items likely on screen: B.F. Sword." in text
+    assert "?" not in text.split("Items likely on screen:")[1].split("\n")[0]
+
+
+def test_carry_full_of_unreadable_items_is_not_treated_as_empty(set_data, mech):
+    # Ashe holds 3 icons Claude cannot name. They reach the tracker as "?" and
+    # still fill Ashe's 3 slots, so the planner never slams a 4th item onto her.
+    from tft_advisor.engine.items import plan_items
+    from tft_advisor.engine.tracker import GameTracker
+
+    board = [
+        {"name": "Ashe", "star": 2, "items": ["?", "?", "?"], "row": 3, "col": 3},
+        {"name": "Garen", "star": 1, "items": [], "row": 0, "col": 2},
+    ]
+    reply = dict(GOOD_REPLY, stage="4-1", board=board, bench=[], item_bench=["B.F. Sword", "B.F. Sword", "Recurve Bow"])
+    with FakeAnthropic() as fake:
+        fake.queue_json_wire(reply)
+        obs = make_perceiver(fake, set_data).perceive(frame(), purpose="manual")
+    assert obs.screen.board[0].items == ["?", "?", "?"]
+    state = GameTracker(set_data, mech).ingest(obs)
+    ashe = next(u for u in state.board if u.name == "Ashe")
+    assert ashe.items == ["?", "?", "?"]
+    suggestions = plan_items(state, set_data)
+    assert suggestions and all(s.holder != "Ashe" for s in suggestions)
+
+
+def test_ocr_accepts_the_rapidocr_3_engine_and_its_output(set_data, monkeypatch):
+    # Python 3.13+ installs rapidocr 3.x (rapidocr-onnxruntime stops at 3.12):
+    # its engine is used when the old package is missing, with its logging quiet.
+    import sys
+    import types
+
+    import numpy as np
+
+    import tft_advisor.vision.ocr as ocr_mod
+
+    made = []
+
+    class Output:  # the shape of rapidocr 3.x RapidOCROutput
+        def __init__(self, boxes, txts, scores):
+            self.boxes, self.txts, self.scores = boxes, txts, scores
+
+    class RapidOCR3:
+        def __init__(self, params=None):
+            made.append(params)
+
+        def __call__(self, arr):
+            box = np.array([[0, 0], [40, 0], [40, 20], [0, 20]], dtype=float)
+            return Output(np.array([box]), ("3-2",), (0.99,))
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", None)
+    monkeypatch.setitem(sys.modules, "onnxruntime", types.ModuleType("onnxruntime"))
+    monkeypatch.setitem(sys.modules, "rapidocr", types.SimpleNamespace(RapidOCR=RapidOCR3))
+    assert ocr_mod.ocr_available()
+    lines = ocr_mod.OcrPerceiver(set_data).read_lines(Image.new("RGB", (80, 40)))
+    assert [ln.text for ln in lines] == ["3-2"] and lines[0].height == 20
+    assert made == [{"Global.log_level": "error"}]
+    # Nothing detected: rapidocr 3.x returns None fields.
+    assert ocr_mod.normalize_engine_output(Output(None, None, None)) == []
+    # rapidocr 3.x without an inference engine is not usable.
+    monkeypatch.setitem(sys.modules, "onnxruntime", None)
+    assert not ocr_mod.ocr_available()
+
+
+def test_vision_prompt_asks_for_the_viewed_players_level(set_data):
+    # The tracker takes an opponent's level only from viewed_player_level.
+    system = build_vision_system(set_data)
+    assert "viewed_player_level:" in system
+    scout = build_user_text("scout", None, [])
+    assert "viewed_player_level" in scout and "对手等级" not in scout

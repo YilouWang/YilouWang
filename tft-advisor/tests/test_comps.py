@@ -79,12 +79,16 @@ def test_load_toml(tmp_path, set_data):
 
 
 def test_load_missing_or_broken_file(tmp_path, set_data):
+    # A missing or broken custom file falls back to the bundled library.
+    bundled = [c.name for c in load_comps(None, set_data)]
+    assert bundled
     logs: list[str] = []
-    assert load_comps(str(tmp_path / "nope.json"), set_data, log=logs.append) == []
+    assert [c.name for c in load_comps(str(tmp_path / "nope.json"), set_data, log=logs.append)] == bundled
     bad = tmp_path / "bad.json"
     bad.write_text("{not json", encoding="utf-8")
-    assert load_comps(str(bad), set_data, log=logs.append) == []
-    assert len(logs) == 2
+    assert [c.name for c in load_comps(str(bad), set_data, log=logs.append)] == bundled
+    assert any("bad.json" in x and "格式错误" in x for x in logs)
+    assert sum("改用内置阵容库" in x for x in logs) == 2
 
 
 @pytest.mark.parametrize(
@@ -324,14 +328,40 @@ def test_load_comps_never_raises(tmp_path, set_data):
     deep = tmp_path / "deep.json"
     deep.write_text("[" * 100000 + "]" * 100000, encoding="utf-8")
     logs: list[str] = []
-    assert load_comps(str(deep), set_data, log=logs.append) == []
+    bundled = [c.name for c in load_comps(None, set_data)]
+    assert [c.name for c in load_comps(str(deep), set_data, log=logs.append)] == bundled
     weird = tmp_path / "weird.json"
     weird.write_text(json.dumps({"comps": [
         {"name": {"x": 1}, "units": 5}, {"name": "ok", "units": ["Graves", {"a": 1}], "carry_items": 7, "style": ["x"], "tier": 3},
     ]}), encoding="utf-8")
     comps = load_comps(str(weird), set_data, log=logs.append)
     assert [c.name for c in comps] == ["ok"] and comps[0].units == ["Graves"] and comps[0].style == "standard"
-    assert load_comps(str(tmp_path), set_data, log=logs.append) == []  # a directory
+    assert [c.name for c in load_comps(str(tmp_path), set_data, log=logs.append)] == bundled  # a directory
+
+
+def test_user_files_accept_a_utf8_bom(tmp_path, set_data):
+    from tft_advisor.data.mechanics import load_mechanics
+
+    comps = tmp_path / "我的阵容.json"
+    body = json.dumps({"comps": [{"name": "BOM comp", "units": ["Graves", "Lucian"], "style": "fast8"}]}, ensure_ascii=False)
+    comps.write_bytes(b"\xef\xbb\xbf" + body.encode("utf-8"))  # Notepad / PowerShell 5.1
+    logs: list[str] = []
+    assert [c.name for c in load_comps(str(comps), set_data, log=logs.append)] == ["BOM comp"] and logs == []
+    toml = tmp_path / "comps.toml"
+    toml.write_bytes(b"\xef\xbb\xbf" + '[[comps]]\nname = "TOML comp"\nunits = ["Graves", "Lucian"]\n'.encode("utf-8"))
+    assert [c.name for c in load_comps(str(toml), set_data)] == ["TOML comp"]
+    mech = tmp_path / "mech.toml"
+    mech.write_bytes(b"\xef\xbb\xbfroll_cost = 3\n")
+    assert load_mechanics(str(mech)).roll_cost == 3
+    bad = tmp_path / "bad_mech.toml"
+    bad.write_bytes(b"roll_cost = = 3\n")
+    with pytest.raises(ValueError, match="bad_mech.toml"):
+        load_mechanics(str(bad))
+    gbk = tmp_path / "gbk.json"
+    gbk.write_bytes('{"comps": [{"name": "阵容"}]}'.encode("gbk"))
+    logs.clear()
+    load_comps(str(gbk), set_data, log=logs.append)
+    assert any("不是 UTF-8" in x for x in logs)
 
 
 # ---------------------------------------------------------------------------
@@ -395,3 +425,36 @@ def test_s18_hint_by_trait_and_chinese_champion_name():
     # A trait that does not exist in the set changes nothing.
     none = suggest_comps(st, sd, s18_comps(), {}, 45, hint="枪手")
     assert {s.name: s.score for s in none} == base
+
+
+def test_s18_library_never_shows_raw_api_ids():
+    import re
+
+    from tft_advisor.data.comps import comps_reference_text, item_display_name
+
+    from .conftest import s18_comps, s18_set_data
+
+    comps = s18_comps()
+    text = comps_reference_text(comps)
+    assert not re.search(r"\b(?:DA|TFT)\d*_\w+", text), re.findall(r"\b(?:DA|TFT)\d*_\w+", text)
+    for c in comps:
+        for name in [*c.carry_items, *(x for v in c.item_holders.values() for x in v)]:
+            assert not re.match(r"^(?:DA|TFT)\d*_", name), (c.name, name)
+    sd = s18_set_data()
+    assert item_display_name("DA_18_EmblemJuggernaut", sd) == "主宰纹章"
+    assert item_display_name("DA_18_EmblemFloraFatalisAugment", sd) == "绝命花妖纹章"
+    logs: list[str] = []
+    assert item_display_name("DA_Artifact_ShinyNewThing", sd, logs.append, "X") == "Shiny New Thing"
+    assert logs and "DA_Artifact_ShinyNewThing" in logs[0]
+    assert item_display_name("Some Item", sd) == "Some Item"
+
+
+def test_s18_comp_suggestion_carries_the_library_plan():
+    from .conftest import s18_comps, s18_set_data, s18_state
+
+    comp = next(c for c in s18_comps() if c.name_en == "Ahri Morgana")
+    st = s18_state("4-2", board=comp.units[:5], level=7, gold=30, hp=70)
+    top = suggest_comps(st, s18_set_data(), [comp], {}, top_n=1)[0]
+    assert top.style == comp.style and top.tier == comp.tier
+    assert top.positions and all(0 <= r <= 3 and 0 <= c <= 6 for r, c in top.positions.values())
+    assert top.item_holders and all(isinstance(v, list) for v in top.item_holders.values())

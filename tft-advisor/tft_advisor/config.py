@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,9 +56,9 @@ class AdvisorConfig:
     scout_prompts: bool = True  # ask the human to show other boards
     shop_watch: bool = True  # re-read the shop when it changes (rolls)
     max_scout_requests_per_stage: int = 2
-    ocr_crosscheck: bool = False
+    ocr_crosscheck: bool = False  # also run OCR on every frame to double-check gold / stage (slower)
     shop_min_interval_s: float = 3.0  # automatic shop reads at most this often (roll-downs reroll fast)
-    shop_reserve_calls: int = 3  # skip automatic Claude shop reads when fewer calls/min remain  # also run OCR on every frame to double-check gold / stage (slower)
+    shop_reserve_calls: int = 3  # skip automatic Claude shop reads when fewer calls/min remain
     comp_hint: str = ""  # optional: the comp you want to play, free text
 
 
@@ -139,6 +140,14 @@ class Config:
         need(d.cdragon_base.strip().lower().startswith("https://"), "[data].cdragon_base", "必须是 https:// 开头的地址")
         for key, value in (("[data].cache_dir", d.cache_dir), ("[capture].screenshot_dir", c.screenshot_dir)):
             need(not _is_network_path(value), key, "不能是网络共享路径（\\\\ 或 // 开头），请用本机目录")
+        for section, key in PATH_KEYS:
+            value = getattr(getattr(self, section), key)
+            if _has_controls(value):
+                # "D:\tft\new.json" in TOML double quotes parses as D:<TAB>ft<LF>ew.json.
+                raise ValueError(
+                    f"配置项 [{section}].{key} 的路径里有制表符或换行：双引号里的 \\t、\\n 会被 TOML 当成转义字符。"
+                    f"请改用单引号：{key} = '{_restore_escapes(value)}'，或者把 \\ 换成 /"
+                )
         need(bool(u.host.strip()), "[ui].host", "不能为空")
         need(1 <= u.port <= 65535, "[ui].port", "必须在 1 到 65535 之间")
         need(u.voice_rate > 0, "[ui].voice_rate", "必须大于 0")
@@ -157,10 +166,44 @@ class Config:
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
+#: Path settings. Relative values in a config file are resolved against the
+#: directory of that file (not the current directory).
+PATH_KEYS = (("data", "comps_file"), ("data", "mechanics_file"), ("data", "cache_dir"), ("capture", "screenshot_dir"))
+
+#: Appended to TOML errors caused by a pasted Windows path ("C:\Users\...").
+WINDOWS_PATH_HINT = (
+    "。Windows 路径在双引号里的 \\ 会被当成转义字符：请用单引号，"
+    "例如 comps_file = 'C:\\Users\\你\\我的阵容.json'，或者把 \\ 换成 /"
+)
+
+_ESCAPES = {"\t": "\\t", "\n": "\\n", "\r": "\\r", "\b": "\\b", "\f": "\\f"}
+
+
+def _has_controls(value: str) -> bool:
+    return any(ord(ch) < 32 or ord(ch) == 127 for ch in str(value))
+
+
+def _restore_escapes(value: str) -> str:
+    """Undo TOML escapes in a mangled path (TAB -> \\t) so the user sees what they typed."""
+    return "".join(_ESCAPES.get(ch, ch if ord(ch) >= 32 and ord(ch) != 127 else repr(ch)[1:-1]) for ch in value)
+
 
 def _is_network_path(value: str) -> bool:
     text = os.path.expanduser(str(value)).strip()
     return text.startswith("\\\\") or text.startswith("//")
+
+
+def _resolve_paths(cfg: "Config", raw: dict[str, Any], base: Path) -> None:
+    """Relative path settings written in a config file are relative to that file."""
+    for section, key in PATH_KEYS:
+        if key not in (raw.get(section) or {}):
+            continue
+        value = getattr(getattr(cfg, section), key)
+        if not value.strip() or _has_controls(value) or _is_network_path(value):
+            continue  # empty = default; bad values are reported by validate()
+        expanded = Path(os.path.expanduser(value))
+        if not expanded.is_absolute():
+            setattr(getattr(cfg, section), key, str(base / expanded))
 
 
 def _merge(section_obj: Any, values: dict[str, Any], section: str) -> None:
@@ -202,7 +245,22 @@ def _read_toml(p: Path) -> dict[str, Any]:
     try:
         return tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        raise ValueError(f"配置文件 {p} 格式错误: {exc}") from None
+        msg = str(exc)
+        hint = WINDOWS_PATH_HINT if _backslash_error(msg, text) else ""
+        raise ValueError(f"配置文件 {p} 格式错误: {msg}{hint}") from None
+
+
+def _backslash_error(msg: str, text: str) -> bool:
+    """True when a TOML error comes from a backslash in a double-quoted string."""
+    if any(s in msg for s in ("hex value", "escape", "Unescaped", "'\\'")):
+        return True
+    m = re.search(r"at line (\d+)", msg)
+    if m:
+        lines = text.splitlines()
+        n = int(m.group(1))
+        if 1 <= n <= len(lines) and re.search(r'"[^"]*\\', lines[n - 1]):
+            return True
+    return False
 
 
 def load_config(path: Optional[str | Path] = None) -> Config:
@@ -228,6 +286,7 @@ def load_config(path: Optional[str | Path] = None) -> Config:
                 _merge(getattr(cfg, section), values, section)
             except ValueError as exc:
                 raise ValueError(f"{exc}（配置文件 {p}）") from None
+        _resolve_paths(cfg, raw, p.absolute().parent)
         cfg.source_path = str(p)
         break
     try:

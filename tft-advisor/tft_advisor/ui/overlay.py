@@ -18,6 +18,12 @@ Details that matter on the target Windows PC:
     125 % / 150 % / 200 % display scaling.
   * The window is made non-activating (``WS_EX_NOACTIVATE``): clicking or
     dragging it never takes keyboard focus away from the game.
+  * The window is excluded from screen capture (``WDA_EXCLUDEFROMCAPTURE``,
+    Windows 10 2004+). mss grabs with ``CAPTUREBLT``, which includes layered
+    topmost windows, so otherwise every frame sent to Claude would show the
+    overlay on top of the board. When that is not possible (older Windows,
+    other OS) the default position moves to the top-left corner, the height is
+    capped above the board, and the player is told to keep it off the board.
   * The "收起" button only collapses it to one line (click "展开" to restore);
     it never ends the app. ``close()`` (or Ctrl+C in the console) ends ``run()``.
 """
@@ -42,6 +48,18 @@ POLL_MS = 200
 TOPICS = ("advice", "requests", "status", "state")
 COMPACT_MAX_CHARS = 24
 MAX_HEIGHT_FRACTION = 0.45  # never cover more than this share of the screen height
+
+# SetWindowDisplayAffinity: hide the window from BitBlt / DXGI / stream capture.
+WDA_EXCLUDEFROMCAPTURE = 0x00000011
+# Windows 10 version 2004. Older builds treat the flag as WDA_MONITOR, which
+# would paint a black box over the board in every capture instead.
+EXCLUDE_FROM_CAPTURE_BUILD = 19041
+# Fallback when the overlay shows up in screenshots (fractions of the primary
+# screen, which the game fills in borderless mode; see capture/regions.py):
+# top-left corner, right of the item bench column (x < 0.042), and never
+# taller than the gap above the board region (y >= 0.26).
+CAPTURE_SAFE_X = 0.045
+CAPTURE_SAFE_MAX_HEIGHT = 0.25
 
 BG = "#111418"
 FG = "#e8e8e8"
@@ -220,6 +238,55 @@ def _make_non_activating(root: Any) -> bool:
         return False
 
 
+def _windows_build() -> int:
+    try:
+        return int(sys.getwindowsversion().build)  # type: ignore[attr-defined]
+    except Exception:
+        return 0
+
+
+def _capture_exclusion_supported() -> bool:
+    return sys.platform == "win32" and _windows_build() >= EXCLUDE_FROM_CAPTURE_BUILD
+
+
+def _user32() -> Any:
+    import ctypes
+
+    return ctypes.WinDLL("user32")  # private handle: never touch shared prototypes
+
+
+def _exclude_from_capture(root: Any) -> bool:
+    """Windows 10 2004+: keep the overlay out of screenshots (it stays visible on the monitor).
+
+    mss grabs the desktop DC with ``CAPTUREBLT``, which includes layered
+    topmost windows such as this one, so without this the overlay would be in
+    every vision frame. Also hides it from OBS / Discord style captures.
+    """
+    if not _capture_exclusion_supported():
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = _user32()
+        user32.GetParent.restype, user32.GetParent.argtypes = wintypes.HWND, [wintypes.HWND]
+        user32.SetWindowDisplayAffinity.restype = wintypes.BOOL
+        user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
+        user32.GetWindowDisplayAffinity.restype = wintypes.BOOL
+        user32.GetWindowDisplayAffinity.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        root.update_idletasks()
+        # Only top-level windows take an affinity: use Tk's wrapper, not its child.
+        hwnd = user32.GetParent(root.winfo_id()) or root.winfo_id()
+        if not user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE):
+            return False
+        current = wintypes.DWORD(0)
+        if not user32.GetWindowDisplayAffinity(hwnd, ctypes.byref(current)):
+            return True  # the set call succeeded; the read back is only a sanity check
+        return current.value == WDA_EXCLUDEFROMCAPTURE
+    except Exception:
+        return False
+
+
 def _pos_file() -> Path:
     return Path(os.path.expanduser("~/.tft_advisor")) / "overlay_pos.json"
 
@@ -264,6 +331,9 @@ class Overlay:
         self._frame: Any = None
         self._toggle: Any = None
         self._bounds: tuple[int, int, int, int] = (0, 0, width, height)
+        self._screen_size: tuple[int, int] = (0, 0)  # primary screen (where the game runs)
+        self._capture_hidden = False  # True once the window is excluded from screen capture
+        self._pos_saved = False  # the position came from overlay_pos.json
 
     # ---------------------------------------------------------------- bus side
     def _on_event(self, topic: str, payload: Any) -> None:
@@ -340,6 +410,11 @@ class Overlay:
         return self._closed.is_set()
 
     @property
+    def capture_hidden(self) -> bool:
+        """True when screenshots (and so the frames sent to Claude) do not show the overlay."""
+        return self._capture_hidden
+
+    @property
     def interrupted(self) -> bool:
         """True when ``run()`` ended because of Ctrl+C (the stop event is set too)."""
         return self._interrupted
@@ -384,8 +459,11 @@ class Overlay:
         # pixel geometry by the same factor or the text no longer fits.
         self._scale = _tk_scale(root)
         self._bounds = _screen_bounds(root)
+        self._screen_size = (int(root.winfo_screenwidth()), int(root.winfo_screenheight()))
+        # Predicted until the window exists, confirmed by _exclude_from_capture below.
+        self._capture_hidden = _capture_exclusion_supported()
         x, y = self._initial_position(root)
-        root.geometry(f"{self._px(self.width)}x{self._px(self.height)}+{x}+{y}")
+        root.geometry(f"{self._px(self.width)}x{min(self._px(self.height), self._max_height())}+{x}+{y}")
 
         frame = tk.Frame(root, bg=BG, highlightthickness=1, highlightbackground="#2a313c")
         frame.pack(fill="both", expand=True)
@@ -406,6 +484,28 @@ class Overlay:
         root.protocol("WM_DELETE_WINDOW", self.toggle_collapsed)  # a WM close only collapses too
         root.report_callback_exception = self._report_exception
         _make_non_activating(root)
+        self._capture_hidden = _exclude_from_capture(root)
+        if not self._capture_hidden:
+            self._keep_off_capture(root)
+
+    def _keep_off_capture(self, root: Any) -> None:
+        """The overlay shows up in screenshots: keep it away from what vision reads."""
+        if not self._pos_saved:
+            x, y = self._default_position(root, capture_safe=True)
+            root.geometry(f"+{x}+{y}")
+        self.log(
+            "注意：置顶小窗会被截图拍到（需 Windows 10 2004 或更新版本才能隐藏）"
+            + ("" if self._pos_saved else "，已放到左上角")
+            + "，别把它拖到棋盘、备战席或商店上"
+        )
+
+    def _max_height(self) -> int:
+        if not self._capture_hidden:
+            # Visible in the frames sent to Claude: never reach down into the board.
+            sh = self._screen_size[1] or (self._bounds[3] - self._bounds[1])
+            return max(self._px(30), int(sh * CAPTURE_SAFE_MAX_HEIGHT))
+        screen_h = self._bounds[3] - self._bounds[1]
+        return max(self._px(self.height), int(screen_h * MAX_HEIGHT_FRACTION))
 
     def _px(self, value: float) -> int:
         return int(round(value * self._scale))
@@ -450,18 +550,28 @@ class Overlay:
             pass
 
     def _initial_position(self, root: Any) -> tuple[int, int]:
-        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
         w = self._px(self.width)
         x0, y0, x1, y1 = self._bounds
+        self._pos_saved = False
         try:
             data = json.loads(_pos_file().read_text(encoding="utf-8"))
             x, y = int(data["x"]), int(data["y"])
             # Any monitor of the desktop (a second screen may have negative coordinates).
             if x0 - w // 2 <= x <= x1 - 40 and y0 <= y <= y1 - 40:
+                self._pos_saved = True
                 return x, y
         except Exception:
             pass
-        # Right side, below the top HUD, left of the player list.
+        return self._default_position(root, capture_safe=not self._capture_hidden)
+
+    def _default_position(self, root: Any, *, capture_safe: bool = False) -> tuple[int, int]:
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        if capture_safe:
+            # Top-left corner: right of the item bench, left of the round
+            # indicator and (with _max_height) above the board.
+            return int(sw * CAPTURE_SAFE_X), 0
+        w = self._px(self.width)
+        # Right side, below the top HUD, left of the player list (hidden from capture).
         return max(0, sw - w - self._px(260)), max(0, int(sh * 0.12))
 
     def _save_position(self) -> None:
@@ -554,9 +664,7 @@ class Overlay:
         try:
             root.update_idletasks()
             need = int(frame.winfo_reqheight())
-            screen_h = self._bounds[3] - self._bounds[1]
-            max_h = max(self._px(self.height), int(screen_h * MAX_HEIGHT_FRACTION))
-            h = max(self._px(30), min(need, max_h))
+            h = max(self._px(30), min(need, self._max_height()))
             root.geometry(f"{self._px(self.width)}x{h}+{root.winfo_x()}+{root.winfo_y()}")
         except Exception:
             pass
