@@ -271,26 +271,101 @@ def _same_advice(a: Advice, b: Advice) -> bool:
     return a.model_dump(exclude={"created_at"}) == b.model_dump(exclude={"created_at"})
 
 
-def _merge_buy_actions(llm: Advice, rules: Optional[Advice]) -> Advice:
-    """Claude's advice with its buy actions (made for an older shop, they may
-    name its slots) replaced by the rules' buy actions for the current shop."""
+def _merge_buy_actions(
+    llm: Advice, rules: Optional[Advice], old_shop: tuple[str, ...] = (), new_shop: tuple[str, ...] = ()
+) -> Advice:
+    """Claude's advice (made for ``old_shop``) with its buy actions fitted to
+    the current shop ``new_shop``.
+
+    * Advice without a buy action (for example 这回合别买牌) gets none: the
+      shop card still shows the engine's picks.
+    * A Claude buy stays when every shop unit it names is still in the same
+      slot (its slot numbers are still right). The others are replaced by the
+      rules' buys for the current shop, placed where the first one was.
+    * A rules buy keeps only the units Claude did not see in its shop and
+      skip (Claude chose not to buy them) and that no kept Claude buy already
+      names; a combined buy that loses some of its units is rewritten for the
+      rest (``买 X（第N格）``), one that loses all is left out. At most
+      ``MAX_ACTIONS`` actions: Claude's come first.
+    """
+    from .advisor.rules import ACTION_MAX, MAX_ACTIONS, clip
     from .models import ActionType
 
-    fresh = [a for a in (rules.actions if rules is not None else []) if a.type == ActionType.BUY]
+    buys = [a for a in llm.actions if a.type == ActionType.BUY]
+    if not buys:
+        return llm
+    old, new = list(old_shop), list(new_shop)
+    seen = {n for n in old if n}  # the units Claude was shown
+    known = seen | {n for n in new if n}
+
+    def names(text: str, pool: set[str]) -> set[str]:
+        return {n for n in pool if n in text}
+
+    def in_place(name: str) -> bool:
+        return all(i < len(new) and new[i] == name for i, o in enumerate(old) if o == name)
+
+    kept_ids: set[int] = set()
+    for a in buys:
+        named = names(a.text, seen)
+        if named and all(in_place(n) for n in named):
+            kept_ids.add(id(a))
+    # Units Claude chose not to buy; unknown when a buy text names no shop unit.
+    claude_named = [names(a.text, seen) for a in buys]
+    skipped = seen - set().union(*claude_named) if all(claude_named) else set()
+    covered = set().union(*(names(a.text, seen) for a in buys if id(a) in kept_ids))
+    def slot_label(name: str) -> str:
+        return f"{name}（第{new.index(name) + 1}格）" if name in new else name
+
+    fresh = []
+    for a in rules.actions if rules is not None else []:
+        if a.type != ActionType.BUY:
+            continue
+        named = names(a.text, known)
+        left = named - skipped - covered
+        if named and not left:
+            continue
+        if left != named:
+            # Per unit: a combined buy keeps the units Claude did not skip.
+            order = sorted(left, key=lambda n: (new.index(n) if n in new else len(new), n))
+            text = clip("买 " + "、".join(slot_label(n) for n in order), ACTION_MAX)
+            a = a.model_copy(update={"text": text})
+        fresh.append(a)
+    others = [a for a in llm.actions if a.type != ActionType.BUY or id(a) in kept_ids]
+    fresh = fresh[: max(0, MAX_ACTIONS - len(others))]
     actions: list[Any] = []
     placed = False
     for a in llm.actions:
-        if a.type == ActionType.BUY:
+        if a.type == ActionType.BUY and id(a) not in kept_ids:
             if not placed:
                 actions.extend(fresh)
                 placed = True
             continue
         actions.append(a)
-    if not placed:
-        actions.extend(fresh)
+    if not placed:  # every Claude buy still fits: new units' buys go after the last one
+        last = max(i for i, a in enumerate(actions) if a.type == ActionType.BUY)
+        actions[last + 1 : last + 1] = fresh
+    actions = actions[:MAX_ACTIONS]
     if [a.model_dump() for a in actions] == [a.model_dump() for a in llm.actions]:
         return llm
     return llm.model_copy(update={"actions": actions, "source": "rules+llm"})
+
+
+#: Hotkey actions the strategist prompt names (the others never reach Claude).
+STRATEGIST_KEYS = ("analyze", "scout")
+
+
+def strategist_hotkeys(hotkeys: Any, live: dict[str, bool]) -> Any:
+    """The ``[hotkeys]`` the strategist may name: a key that does not work for
+    its action (not registered, or repeated in the config) becomes "off", and
+    ``enabled`` is False when none of the keys Claude names works."""
+    from dataclasses import replace
+
+    if not hotkeys.enabled:
+        return hotkeys
+    dead = {action: "off" for action in STRATEGIST_KEYS if not live.get(action)}
+    if len(dead) == len(STRATEGIST_KEYS):
+        return replace(hotkeys, enabled=False)
+    return replace(hotkeys, **dead)
 
 
 class AdvisorApp:
@@ -564,7 +639,10 @@ class AdvisorApp:
     def new_game(self) -> None:
         """Manual reset (dashboard button). The target comp goes back to the
         configured default; jobs already in flight are dropped when they finish."""
-        with self._state_lock:
+        # Lock order: _state_lock, then _advice_lock. Holding _advice_lock makes
+        # the reset atomic with the publish / log step of a running job or
+        # strategy call: it either finished before the reset or is dropped.
+        with self._state_lock, self._advice_lock:
             self._generation += 1
             self._slot.clear()
             self._strategy_slot.clear()
@@ -577,16 +655,16 @@ class AdvisorApp:
             self._last_llm_ts = 0.0
             self.scout_planner.reset()
             self.analyzer.comp_hint = self.cfg.advisor.comp_hint
-        self.info("新对局：已重置" + (f"（目标阵容: {self.analyzer.comp_hint}）" if self.analyzer.comp_hint else ""))
-        self._publish_state(self.tracker.state)
-        # Clear the last game's advice everywhere (dashboard, overlay, voice).
-        # No gold is known yet: no economy plan and no confidence badge.
-        analysis = _dump(Analysis())
-        analysis["econ"] = None
-        self.bus.publish("analysis", analysis)
-        advice = _dump(Advice(headline="新对局，等待第一次分析", source="rules"))
-        advice["confidence"] = None
-        self.bus.publish("advice", advice)
+            self.info("新对局：已重置" + (f"（目标阵容: {self.analyzer.comp_hint}）" if self.analyzer.comp_hint else ""))
+            self._publish_state(self.tracker.state)
+            # Clear the last game's advice everywhere (dashboard, overlay, voice).
+            # No gold is known yet: no economy plan and no confidence badge.
+            analysis = _dump(Analysis())
+            analysis["econ"] = None
+            self.bus.publish("analysis", analysis)
+            advice = _dump(Advice(headline="新对局，等待第一次分析", source="rules"))
+            advice["confidence"] = None
+            self.bus.publish("advice", advice)
         self.bus.publish("answer", None)  # a reload must not show the last game's answer
         self._publish_requests()
         self.publish_status()
@@ -595,14 +673,17 @@ class AdvisorApp:
         """The tracker saw a new game on its own (stage back to 1-x): new log file."""
         if not state.game_id or state.game_id == self._logged_game_id:
             return
-        self._logged_game_id = state.game_id
-        self.game_log.new_game()
-        self.scout_planner.reset()
-        self._last_llm_ts = 0.0
-        self._last_advice = None
-        self._llm_shown = None
-        self._last_rules = None
-        self._strategy_slot.clear()
+        # Called under _state_lock (run_job); _advice_lock keeps a strategy
+        # result of the old game from being published / logged after this.
+        with self._advice_lock:
+            self._logged_game_id = state.game_id
+            self.game_log.new_game()
+            self.scout_planner.reset()
+            self._last_llm_ts = 0.0
+            self._last_advice = None
+            self._llm_shown = None
+            self._last_rules = None
+            self._strategy_slot.clear()
         self.bus.publish("answer", None)
         self.info("检测到新对局，开始新的对局日志")
         if self.analyzer.comp_hint:
@@ -826,18 +907,33 @@ class AdvisorApp:
         who = "对手（没读到名字）" if stored[0] == UNKNOWN_PLAYER else stored[0]
         self.info(f"已记录 {who} 的棋盘")
 
-    def _advise(self, state: GameState, job: Job, generation: Optional[int] = None) -> Advice:
+    def _job_current(self, generation: int) -> bool:
+        """False once 新对局 replaced the game the job belongs to. Called under
+        _advice_lock, which new_game() takes too, so a current job publishes
+        and logs before any reset. (A new game seen by the tracker comes from
+        the worker thread itself, between jobs.)"""
+        return generation == self._generation
+
+    def _drop_stale(self) -> None:
+        self.info("已开始新对局，丢弃上一局的分析结果")
+
+    def _advise(self, state: GameState, job: Job, generation: Optional[int] = None) -> Optional[Advice]:
+        """Analysis + rules advice (+ Claude), published and logged; None when a
+        new game started while it ran (nothing of the old game is shown)."""
         analysis: Analysis = self.analyzer.analyze(state, self.tracker.taken_by_player())
-        if self.cfg.advisor.scout_prompts:
-            analysis.scout_requests = self.scout_planner.plan(state, analysis)
-        advice = self.rules.advise(state, analysis)
         gen = self._generation if generation is None else generation
         key = (gen, state.game_id, _stage_key(state))
         shop = _shop_key(state)
-        self._publish_state(state)
-        self.bus.publish("analysis", _dump(analysis))
-        self._publish_requests()
         with self._advice_lock:
+            if not self._job_current(gen):
+                self._drop_stale()
+                return None
+            if self.cfg.advisor.scout_prompts:
+                analysis.scout_requests = self.scout_planner.plan(state, analysis)
+            advice = self.rules.advise(state, analysis)
+            self._publish_state(state)
+            self.bus.publish("analysis", _dump(analysis))
+            self._publish_requests()
             self._last_rules = (shop, advice)
             # A shop read / scout does not ask Claude: keep Claude's advice for
             # this round on screen instead of replacing it with the rules advice.
@@ -848,21 +944,23 @@ class AdvisorApp:
             if shown is advice or self._last_advice is None or not _same_advice(shown, self._last_advice):
                 self._publish_advice(shown)
 
-        use_llm = (
-            self.strategist is not None
-            and job.purpose in ("auto", "manual", "reanalyze")
-            and state.screen_type not in (ScreenType.LOADING, ScreenType.POST_GAME)
-            and (job.purpose == "manual" or self.clock() - self._last_llm_ts >= self.cfg.advisor.min_seconds_between_llm)
-        )
-        record = {
-            "ts": self.clock(),
-            "game_id": state.game_id,
-            "purpose": job.purpose,
-            "state": _dump(state),
-            "analysis": _dump(analysis),
-            "advice": _dump(shown),
-        }
-        if use_llm:
+            use_llm = (
+                self.strategist is not None
+                and job.purpose in ("auto", "manual", "reanalyze")
+                and state.screen_type not in (ScreenType.LOADING, ScreenType.POST_GAME)
+                and (job.purpose == "manual" or self.clock() - self._last_llm_ts >= self.cfg.advisor.min_seconds_between_llm)
+            )
+            record = {
+                "ts": self.clock(),
+                "game_id": state.game_id,
+                "purpose": job.purpose,
+                "state": _dump(state),
+                "analysis": _dump(analysis),
+                "advice": _dump(shown),
+            }
+            if not use_llm:
+                self.game_log.write(record)
+                return shown
             self._last_llm_ts = self.clock()
             if self._strategy_async:
                 # The rules advice is already on screen; Claude's advice follows
@@ -881,14 +979,18 @@ class AdvisorApp:
                 }
                 self._strategy_slot.put(Job(0, "strategy", extra=task))
                 return shown
-            llm_advice = self._call_strategist(state, analysis, advice)
+        # Inline strategist (replay, tests): the Claude call runs without the lock.
+        llm_advice = self._call_strategist(state, analysis, advice)
+        with self._advice_lock:
+            if not self._job_current(gen):
+                self._drop_stale()
+                return None
             if llm_advice is not None:
-                with self._advice_lock:
-                    self._llm_shown = {"key": key, "advice": llm_advice, "shop": shop}
-                    self._publish_advice(llm_advice)
+                self._llm_shown = {"key": key, "advice": llm_advice, "shop": shop}
+                self._publish_advice(llm_advice)
                 shown = llm_advice
                 record["advice"] = _dump(shown)
-        self.game_log.write(record)
+            self.game_log.write(record)
         return shown
 
     def _kept_llm_advice(self, key: tuple[Any, ...], shop: tuple[str, ...], rules_advice: Advice) -> Optional[Advice]:
@@ -899,7 +1001,7 @@ class AdvisorApp:
             return None
         if shop == cur["shop"]:
             return cur["advice"]
-        return _merge_buy_actions(cur["advice"], rules_advice)
+        return _merge_buy_actions(cur["advice"], rules_advice, cur["shop"], shop)
 
     def _call_strategist(self, state: GameState, analysis: Analysis, advice: Advice) -> Optional[Advice]:
         """Claude's advice, or None (the rules advice stays; the reason goes to last_error)."""
@@ -934,22 +1036,23 @@ class AdvisorApp:
                     # The shop changed (reroll, shop read) while Claude was thinking:
                     # its buy actions name the old shop, use the rules' for the new one.
                     rules = self._last_rules[1] if self._last_rules and self._last_rules[0] == shop_now else None
-                    shown = _merge_buy_actions(llm_advice, rules)
+                    shown = _merge_buy_actions(llm_advice, rules, task.get("shop", ()), shop_now)
                 self._llm_shown = {
                     "key": (task["generation"], task["game_id"], task["stage"]),
                     "advice": llm_advice,
                     "shop": task.get("shop", shop_now),
                 }
                 self._publish_advice(shown)
-            self.game_log.write(
-                {
-                    "ts": self.clock(),
-                    "game_id": task["game_id"],
-                    "purpose": "strategy",
-                    "stage": task["stage"],
-                    "advice": _dump(shown),
-                }
-            )
+                # Under the lock: a reset cannot rotate the log in between.
+                self.game_log.write(
+                    {
+                        "ts": self.clock(),
+                        "game_id": task["game_id"],
+                        "purpose": "strategy",
+                        "stage": task["stage"],
+                        "advice": _dump(shown),
+                    }
+                )
         except Exception as exc:  # the strategy thread must survive anything
             error = f"{type(exc).__name__}: {exc}"
             self._set_error("strategy", error)
@@ -1153,8 +1256,8 @@ class AdvisorApp:
         registered = {str(k).strip().lower() for k in (getattr(self._hotkeys, "registered", None) or [])}
         keys = [self.cfg.hotkeys.analyze, self.cfg.hotkeys.scout, self.cfg.hotkeys.toggle_auto, self.cfg.hotkeys.shop]
         self.rules.unavailable_keys = {k for k in keys if k.strip().lower() not in registered}
-        self.scout_planner.hotkey_available = self.cfg.hotkeys.scout.strip().lower() in registered
-        # Per action for the dashboard: a key repeated in the config only works for its first use.
+        # Per action (dashboard, scout planner, Claude): a key repeated in the
+        # config only works for its first use.
         seen: set[str] = set()
         live_keys: dict[str, bool] = {}
         for action in ("analyze", "scout", "toggle_auto", "shop"):
@@ -1162,14 +1265,13 @@ class AdvisorApp:
             live_keys[action] = norm in registered and norm not in seen
             seen.add(norm)
         self._hotkeys_live = live_keys
-        # Claude must not name keys that do nothing: without any registered
-        # hotkey it points the player to the dashboard buttons instead.
+        self.rules.unavailable_actions = {action for action, ok in live_keys.items() if not ok}
+        self.scout_planner.hotkey_available = live_keys["scout"]
+        # Claude must not name keys that do nothing: a key that does not work
+        # for its action is sent as "off" (the dashboard button instead), and
+        # all of them "off" when neither the analyze nor the scout key works.
         if self.strategist is not None and hasattr(self.strategist, "hotkeys"):
-            live = self._hotkeys is not None and bool(getattr(self._hotkeys, "registered", None))
-            if self.cfg.hotkeys.enabled and not live:
-                from dataclasses import replace as _replace
-
-                self.strategist.hotkeys = _replace(self.cfg.hotkeys, enabled=False)
+            self.strategist.hotkeys = strategist_hotkeys(self.cfg.hotkeys, live_keys)
         if voice if voice is not None else self.cfg.ui.voice:
             from .ui.voice import Speaker
 

@@ -79,7 +79,8 @@ fill the field whenever you disagree with it.
 MISSING INFORMATION
 - hotkeys gives the player's keys: analyze (analyse now) and scout (record the board on screen). Use exactly \
 these keys. When hotkeys is "off" (no global hotkeys, for example on a phone), tell the player to tap the \
-dashboard button 分析 or 记录对手 instead of a key.
+dashboard button 分析 or 记录对手 instead of a key. When only one key is "off" (analyze or scout), that key \
+does not work: for that action name its dashboard button (分析 / 记录对手), and the other key as given.
 - scouting false: the player turned scouting prompts off. Never ask to open another player's board: \
 scout_request null, no scout actions.
 - scouting true: open_scout_requests lists the players the player has already been asked to scout (the \

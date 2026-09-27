@@ -6,7 +6,7 @@ import pytest
 
 from tft_advisor.data.comps import load_comps
 from tft_advisor.engine.analyzer import Analyzer
-from tft_advisor.models import Analysis, EconAction, GameState, ScreenType, ShopSlot, StageRound, Unit
+from tft_advisor.models import Analysis, EconAction, EconPlan, GameState, ScreenType, ShopSlot, StageRound, Unit
 
 from .conftest import make_state
 
@@ -717,3 +717,90 @@ def test_top_comp_is_sticky_through_a_one_frame_dip(mech):
     assert out.comps[0].name != "阿狸 婕拉"  # second frame in a row: switch
     # States without a game id (tests, one-off analyses) are not sticky.
     assert Analyzer(s18_set_data(), mech, s18_comps()).analyze(dip.model_copy(update={"game_id": ""})).comps[0].name != "阿狸 婕拉"
+
+
+# ---------------------------------------------------------------------------
+# Round 4: empty slots, unpaid rolls at low HP, PvE warnings, pool overflow
+# ---------------------------------------------------------------------------
+
+
+
+def _s18_shop(st, names):
+    sd = s18_set_data()
+    champs = [sd.resolve_champion(n) for n in names]
+    st.shop = [ShopSlot(name=c.name, cost=c.cost) for c in champs]
+    st.shop_units = [Unit(api_name=c.api_name, name=c.name, cost=c.cost, traits=list(c.traits)) for c in champs]
+    st.field_age["round"], st.field_age["shop"] = 1.0, 2.0
+    return st
+
+
+def test_s18_empty_team_slots_are_filled_from_the_shop(s18):
+    # 2-1, three units at level 4, nothing in the shop for the comp: one unit
+    # for the empty slot beats "save to 50".
+    st = s18_state("2-1", board=[("卡尔玛", 1, (), 3, 3), ("约里克", 1, (), 0, 3), ("雷克塞", 1, (), 0, 2)],
+                   gold=12, level=4, xp_current=0, hp=94, streak=0)
+    out = s18.analyze(_s18_shop(st, ["蕾欧娜", "韦鲁斯", "凯特琳", "提莫", "慎"]))
+    assert len(out.shop_picks) == 1 and out.shop_picks_cost <= 12
+    # 4-2, six units at level 8: two units, the best trait fit first.
+    st = s18_state("4-2", board=[("厄斐琉斯", 2, ("无尽之刃",)), ("韦鲁斯", 2), ("霞", 2), ("洛", 2), ("深红锋喙鸟", 2), ("阿木木", 1)],
+                   gold=40, level=8, xp_current=0, hp=64, streak=0)
+    out = s18.analyze(_s18_shop(st, ["瑟提", "黛安娜", "莉莉娅", "提莫", "慎"]))
+    assert out.comps[0].name == "厄斐琉斯 迅捷射手"
+    assert len(out.shop_picks) == 2 and out.shop_picks[0] == "黛安娜"
+    # A bench unit fills the slot for free: nothing bought just to fill.
+    st = s18_state("2-1", board=["卡尔玛", "约里克", "雷克塞"], bench=["蕾欧娜"], gold=12, level=4, xp_current=0, hp=94)
+    out = s18.analyze(_s18_shop(st, ["韦鲁斯", "凯特琳", "提莫", "慎", "瑟提"]))
+    assert out.shop_picks == []
+
+
+def test_empty_slot_makes_a_missing_comp_unit_a_roll_target(analyzer):
+    from tft_advisor.models import CompSuggestion, HitOdds
+
+    def odds(api, p_shop):
+        return HitOdds(unit=api, api_name=f"TFT99_{api}", cost=4, owned_copies=0, goal_copies=3, goal_star=2,
+                       seen_elsewhere=0, remaining_in_pool=10, level=8, p_per_slot=p_shop / 5, p_in_shop=p_shop,
+                       p_goal_by_gold={12: 0.01})
+
+    comp = CompSuggestion(name="X", score=0.8, carry="Kayle", missing_units=["Akali", "Draven"])
+    analysis = Analysis(comps=[comp], econ=EconPlan(gold=32, recommendation=EconAction.ROLL, roll_budget=12),
+                        odds=[odds("Akali", 0.09), odds("Draven", 0.09)])
+    # No 2-star within reach and the carry is owned: nothing to roll for...
+    assert not analyzer._has_roll_target(analysis, open_slots=0)
+    # ...unless a team slot is empty: one copy of either missing comp unit
+    # fills it, and 6 rolls show one about two times in three.
+    assert analyzer._has_roll_target(analysis, open_slots=1)
+    analysis.econ.roll_budget = 4
+    assert not analyzer._has_roll_target(analysis, open_slots=1)
+
+
+def test_unpaid_roll_at_low_hp_late_is_hold_not_save(analyzer, mech):
+    econ = EconPlan(gold=20, recommendation=EconAction.ROLL, roll_budget=10, reason="x")
+    picks = [((2, 1, 0, -2, i), n, 2, None) for i, n in enumerate(["A", "B", "C", "D", "E"])]
+    analyzer._fund_picks(econ, picks, hp=35, stage=StageRound.parse("4-3"))
+    assert econ.recommendation == EconAction.HOLD and econ.roll_budget == 0 and "下回合再搜" in econ.reason
+    econ = EconPlan(gold=20, recommendation=EconAction.ROLL, roll_budget=10, reason="x")
+    analyzer._fund_picks(econ, picks, hp=80, stage=StageRound.parse("4-3"))
+    assert econ.recommendation == EconAction.SAVE
+
+
+def test_no_rich_gold_warning_while_the_pve_round_waits(analyzer):
+    st = make_state("4-7", board=["Graves", "Ahri", "Garen", "Braum", "Shen", "Pyke", "Lucian", "Kayle"],
+                    gold=74, level=8, hp=38, xp_current=10)
+    out = analyzer.analyze(st)
+    assert out.econ.reason.startswith("野怪回合")
+    assert not any("太多了" in w for w in out.warnings)
+    out = analyzer.analyze(st.model_copy(update={"stage": StageRound.parse("5-2"), "hp": 80}))
+    assert out.econ.recommendation != EconAction.SAVE or any("太多了" in w for w in out.warnings)
+
+
+def test_scouted_copies_over_the_pool_are_a_misread_star(analyzer, mech):
+    cost = analyzer.set_data.resolve_champion("Akali").cost
+    pool = mech.pool_size[cost]
+    st = make_state("4-5", board=[("Akali", 2), "Graves"], bench=["Akali"], level=8, gold=20, hp=60)
+    taken = {"Star": {"TFT99_Akali": 9}}  # their 2-star read as 3-star
+    assert 4 + 9 > pool
+    out = analyzer.analyze(st, taken)
+    akali = next(o for o in out.odds if o.api_name == "TFT99_Akali")
+    assert akali.seen_elsewhere == 3 and akali.remaining_in_pool == pool - 4 - 3
+    assert any("Star" in w and "超过卡池" in w for w in out.warnings)
+    assert not any("—" in w for w in out.warnings)

@@ -258,6 +258,7 @@ class _Ctx:
     carry_profile: Optional[str] = None
     comp_item_apis: set[str] = field(default_factory=set)
     carry_missing: set[str] = field(default_factory=set)  # carry items the carry does not hold yet
+    carry_held: set[str] = field(default_factory=set)  # items the carry holds (or is given in this plan)
     holder_plan: dict[str, set[str]] = field(default_factory=dict)  # champion api -> item apis (comp library)
     comp_apis: set[str] = field(default_factory=set)
     comp_traits: set[str] = field(default_factory=set)  # traits of the target comp's units
@@ -290,6 +291,12 @@ class _Ctx:
         self.load[id(holder)] = MAX_ITEMS_PER_UNIT if fills_all else self.load.get(id(holder), 0) + 1
         if holder is self.carry_unit:
             self.carry_missing.discard(item.api_name)
+            self.carry_held.add(item.api_name)
+
+    def carry_item(self, api: str) -> bool:
+        """A carry item of the target comp the carry does not hold yet (a
+        second copy of one it holds is just an item)."""
+        return api in self.comp_item_apis and api not in self.carry_held
 
 
 def _carry_items_profile(comp: Optional[CompSuggestion], set_data: SetData) -> Optional[str]:
@@ -362,6 +369,7 @@ def _build_ctx(
                         it = set_data.resolve_item(raw)
                         if it is not None:
                             held.add(it.api_name)
+                    ctx.carry_held = held
                     ctx.carry_missing = {api for api in ctx.comp_item_apis if api not in held}
                 else:
                     ctx.carry_profile = champion_profile(champ, None, set_data, hint=hints.get(champ.api_name))
@@ -398,11 +406,11 @@ def _item_value(item: Item, ctx: _Ctx) -> float:
                 value += 2.0
             elif count:
                 value += 0.5
-        if item.api_name in ctx.comp_item_apis:
+        if ctx.carry_item(item.api_name):
             value += 3.0
         return value
     value = float(tier)
-    if item.api_name in ctx.comp_item_apis:
+    if ctx.carry_item(item.api_name):
         value += 3.0
     if role in ("ad", "ap"):
         other = "ap" if role == "ad" else "ad"
@@ -470,9 +478,13 @@ def _pick_holder(role: str, item: Item, ctx: _Ctx) -> Optional[Unit]:
     units = [u for u in ctx.units if ctx.free(u) and not u.api_name.startswith("?")]
     if not units:
         units = [u for u in ctx.units if ctx.free(u)]
+    if ctx.carry_unit is not None and item.api_name in ctx.carry_held and item.kind == "completed":
+        # A second copy of an item the carry holds goes to a secondary unit
+        # (or waits): the carry's slot is for its missing carry items.
+        units = [u for u in units if u is not ctx.carry_unit]
     if not units:
         return None
-    carry = ctx.carry_unit if ctx.carry_unit is not None and ctx.free(ctx.carry_unit) else None
+    carry = ctx.carry_unit if any(u is ctx.carry_unit for u in units) else None
 
     def best(cands: list[Unit]) -> Optional[Unit]:
         # Fielded units first (items on a bench unit do nothing), then comp units, then power.
@@ -499,7 +511,7 @@ def _pick_holder(role: str, item: Item, ctx: _Ctx) -> Optional[Unit]:
         if spare:
             return min(spare, key=lambda u: (ctx.load.get(id(u), 0), _power(u), u.name))
         return best(units)
-    if item.api_name in ctx.comp_item_apis and carry is not None:
+    if ctx.carry_item(item.api_name) and carry is not None:
         return carry
     # The comp library's own item plan: a unit it gives this item to.
     planned = [u for u in units if item.api_name in ctx.holder_plan.get(u.api_name, ())]
@@ -631,7 +643,7 @@ def plan_items(
     def early_slam(item: Item, role: str, tier: int, holder: Optional[Unit]) -> bool:
         if not early:
             return False
-        if tier >= 3 or item.api_name in ctx.comp_item_apis:
+        if tier >= 3 or ctx.carry_item(item.api_name):
             return True
         return role == "tank" and holder is not None and ctx.on_board(holder) and holder.row == 0
 
@@ -692,11 +704,11 @@ def plan_items(
         used_idx.update((i, j))
         planned.add(item.api_name)
         role, tier = item_role(item)
+        comp_item = ctx.carry_item(item.api_name)  # before the carry is given it
         holder = _pick_holder(role, item, ctx)
         if holder is not None:
             # Thief's Gloves fills every slot of its holder.
             ctx.assign(holder, item, fills_all=_is_named(item, THIEFS_GLOVES))
-        comp_item = item.api_name in ctx.comp_item_apis
         now = slam or early_slam(item, role, tier, holder)
         if role in ("ad", "ap") and holder is None and ctx.units and hp_bucket not in ("low", "critical"):
             now = False  # nobody on this team uses it: keep the components

@@ -12,47 +12,73 @@ Merge rules (every field of a ``ScreenObservation`` is optional):
   are far more common than a paused advisor). An earlier stage is ignored
   once; two consecutive earlier readings that agree with each other (the
   second the same round or later, e.g. ``3-5`` then ``3-6``) confirm it. Then
-  it is either a new game (the run starts in stage 1, or the frames show a
-  new lobby or our HP back up: full reset) or a correction of a misread
-  current stage (history points after it are dropped). Auto mode reads once
-  per round, so a new game is found even when stage 1 and the post-game
-  screen were missed. A stage 1 / 2 reading with that new-game evidence, or
-  after a plausible post-game screen, resets at once.
+  it is either a new game (full reset) or a correction of a misread current
+  stage (history points after it are dropped). A lower reading not below the
+  round we were in before the current one is always a correction (the
+  current stage was a forward misread). New-game evidence: a new lobby (most
+  names unknown, or a full-HP list while the tracked players had lost HP), or
+  our HP back up (read on our row by name, or above our verified own board;
+  at most 100) on both readings: one HP reading is one misread digit away.
+  Stage 1 read twice is a new game unless a frame showed this game going on
+  (our lost HP, opponents at their tracked HP, a level or board stage 1
+  cannot have). Auto mode reads once per round, so a new game is found even
+  when stage 1 and the post-game screen were missed. A stage 1 / 2 reading
+  in a new lobby, or after a plausible post-game screen, resets at once. The
+  stage a reset starts from is not trusted for the jump check.
 * Suspicious numbers wait for a second reading: gold up by more than a
-  round's income can explain, a lower level (levels never go down), and an
-  HP rise or a drop bigger than the fights since the last reading can deal
-  (``Mechanics.max_round_damage``). The HP in our player-list row and the HP
-  above the board are both readings of our HP: when they disagree the
-  plausible one wins.
+  round's income can explain (confirmed by a second big reading not above
+  the first by more than the income since), gold dropping to the old value
+  with a digit lost (69 read as 6: any lower next reading confirms a drop), a
+  lower level (levels never go down; two lower readings confirm the later),
+  a level rise above one per round or, within a round, above what the gold
+  spent since can buy, and an HP rise or a drop bigger than the fights since
+  the last reading can deal (``Mechanics.max_round_damage``). The HP in our
+  player-list row and the HP above our board are one reading when they agree
+  (the vision reads the top HP from our row); when they disagree the
+  plausible one wins. A scout frame's list row counts as a reading.
+  Opponents' HP: a 0 applies at once and is final when read again (a single
+  0 is undone by a next reading of the HP from before it); a confirmed
+  elimination never comes back, and a rise needs the next reading to agree.
 * The local player (``self_name``) is learned from the flagged player-list
   row and switches when another row is flagged on two frames in a row (or
-  once, when that row's HP matches the HP above our own board).
+  once, while the name is unconfirmed, when that row's HP matches the HP
+  above our own board). Once known, our row is found by name, never by a
+  flag. A frame whose flagged row carries an opponent's name with our HP
+  while our name carries that opponent's HP (two names swapped) keeps the
+  list we have.
 * Scouting (``purpose == "scout"`` or ``viewing_own_board is False`` outside
   the carousel / loading / augment screens): the
   board, bench, traits, HP, level and item bench on screen belong to the viewed
   player and are stored as an ``OpponentSnapshot``. Only the stage, the player
   list, our gold and our shop are applied to our own state, because in TFT the
-  bottom HUD shop and gold always show the local player's values. Our level /
-  XP / streak are NOT taken from a scouting frame (conservative: some clients
-  show the viewed player's level near the board, and a wrong own level is
-  worse than a slightly stale one); a non-scout frame still applies them (the
-  bottom HUD is local). The board owner is the named opponent when the banner
-  names a known opponent, except that on a non-scout frame a board that looks
-  like ours (same champions, stars ignored) is ours whatever name was read. A
-  scout frame the vision marks ``viewing_own_board=True`` without another
-  player's name is our own board only when the board looks like ours;
-  otherwise (and on any frame whose top HP contradicts our player-list row
-  while the board is not ours) it is filed under the opponent with that HP,
-  or ``unknown``. A scout frame whose board is identical to ours with no
-  known opponent named is our own board. The
+  bottom HUD shop and gold always show the local player's values. A level on
+  a frame whose arena is not ours only confirms a pending reading (some
+  clients show the viewed player's level near the board, and a wrong own
+  level is worse than a slightly stale one); XP is not taken there, the
+  streak only on a non-scout frame. The board owner is the named opponent
+  when the banner names a known opponent whose listed HP is the HP above the
+  board (otherwise the player that HP belongs to, or ``unknown``), except
+  that on a non-scout frame a board that looks like ours (same champions,
+  stars ignored) is ours whatever name was read. A scout frame the vision
+  marks ``viewing_own_board=True`` without another player's name is our own
+  board only when the board looks like ours; otherwise it is filed under the
+  opponent with that HP (provisionally: dropped when it turns out to be a
+  board we know), or ``unknown``. A non-scout frame
+  called ours whose top HP contradicts our row while the board is not ours
+  is unsure: bottom HUD only, no snapshot. A scout frame whose board is
+  identical to ours with no known opponent named is our own board. The
   opponent's level comes from ``viewed_player_level`` (or the older note
   "对手等级 N"), never from ``level`` (the local HUD). Without a scout request
-  and without a readable owner, ``viewing_own_board=False`` is filed under an
-  opponent only when the board is clearly not ours (no HP-match guess).
+  and without a readable owner, ``viewing_own_board=False`` with our own HP
+  above the board (and no other player's) is our arena, with an HP another
+  player shares it is unsure, otherwise it is filed under ``unknown`` when
+  the board is clearly not ours (no HP-match guess).
 * ``viewing_own_board=None`` (unsure whose arena it is) on an auto / manual
   frame: the bottom HUD (level, XP, streak) applies; the arena fields (board,
   bench, traits, item bench, top level HP) only when the board looks like
-  ours or no own board is known yet.
+  ours or no own board is known yet. A board called ours that shares no
+  champion with our board (3+ units) and names nobody replaces it only when
+  the next frame shows it again.
 * Gold, shop and augment cards are local UI and apply on every frame. An
   empty shop list means the shop was not seen (a visible shop has slots).
   The streak only changes with the round: a 0 read within the round a known
@@ -65,12 +91,15 @@ Merge rules (every field of a ``ScreenObservation`` is optional):
   ignored when ours is known.
 * Eliminated players (HP 0 in the player list) do not count in
   ``taken_copies`` because their units go back to the pool, nor do snapshots
-  of names missing from a full 8-row list. The ``unknown`` snapshot is
-  dropped when its units are mostly ours or a named snapshot's (containment,
-  stars ignored), once the stage moves on, and on any named scout.
-* Combat frames: a board with more units than the level allows (enemy units
-  stand on our arena during a home fight) is ignored, and so is a combat
-  board that does not look like ours. A fielded unit that vanishes for one
+  of names missing from a full 8-row list. The ``unknown`` snapshot and the
+  provisional ones are dropped when their units are mostly ours or another
+  snapshot's (containment, stars ignored), ``unknown`` also once the stage
+  moves on; a named scout replaces ``unknown`` only when it holds the same
+  units.
+* Combat frames: once our board is known a combat frame never changes it (no
+  unit joins or leaves the board mid-fight, fighters walk off their hexes and
+  surviving enemy units stand on our arena); a combat board that does not
+  look like ours is not our arena. A fielded unit that vanishes for one
   frame (not moved to the bench, not sold) is kept for that frame, and hex
   positions are remembered for a few rounds.
 
@@ -81,7 +110,8 @@ shop (the shop refreshes every round).
 
 Manual corrections (``set_field``) accept full-width digits and dashes
 (``３－２``), bound ``xp_current`` by the level's XP table and stage / round
-by 1..7, and are taken at once (no second reading).
+by 1..7, and are taken at once (no second reading). Correcting the stage back
+to the round the current shop was read in keeps that shop current.
 """
 
 from __future__ import annotations
@@ -143,6 +173,17 @@ HP_MISMATCH = 2  # top HP and our player-list row further apart than this disagr
 SELF_SWITCH_VOTES = 2  # frames flagging another row as the local player before switching
 POS_MEMORY_ROUNDS = 4  # rounds a unit's last hex is remembered after it left the board
 NEW_LOBBY_HP_RISE = 15  # our HP read this much above the tracked HP: a new game
+START_HP = 100  # every game starts at 100 HP: a "new game" HP reading is never above it
+STAGE_ONE_MAX_LEVEL = 4  # a stage 1 frame never shows a higher level ...
+STAGE_ONE_MAX_BOARD = 4  # ... or more fielded units
+SAME_GAME_ROWS = 2  # listed opponents still at their tracked (lost) HP: the same lobby
+MIN_BOARD_FOR_HOLD = 3  # a board this big replaced by one sharing no champion waits for a second frame
+
+# ``_opponent_key`` results that are not snapshot keys: the frame is our own
+# arena after all (the vision's "not own" was wrong), or nobody's for sure
+# (apply the bottom HUD only, store no snapshot).
+_OWN_ARENA = "\x00own"
+_UNSURE = "\x00unsure"
 
 
 
@@ -226,10 +267,22 @@ class GameTracker:
 
     def _clear_game_memory(self) -> None:
         """Per-game bookkeeping that is not part of the published state."""
-        self._pending_evidence = False  # the pending lower reading came with new-lobby evidence
+        self._pending_evidence: Optional[str] = None  # new-lobby evidence of the pending lower reading
+        self._pending_same = False  # the pending lower reading's frame showed the current game going on
+        self._fresh_reset = False  # the stage came from a new-game reset: not trusted for the jump check
         self._suspect: dict[str, int] = {}  # field -> suspicious reading waiting for a second one
+        self._suspect_stage: dict[str, Optional[tuple[int, int]]] = {}  # round a suspect was read in
+        self._opp_suspect: dict[str, int] = {}  # opponent -> suspicious HP rise waiting for a second reading
+        self._opp_zero: dict[str, int] = {}  # opponent read at 0 once -> the HP before (not final yet)
+        self._level_mark: Optional[tuple[Optional[tuple[int, int]], Optional[int]]] = None  # (round, gold) of the last level reading
+        self._level_undo: Optional[int] = None  # our level before the last accepted drop
+        self._shop_stage: Optional[tuple[int, int]] = None  # round the current shop was read in
+        self._provisional: set[str] = set()  # own-labeled scouts filed by an HP match (no readable owner)
+        self._pending_board: Optional[dict[str, int]] = None  # an own board sharing nothing with ours, once
+        self._listed_before: dict[str, Optional[int]] = {}  # player HP as listed before the current frame
         self._gold_stage: Optional[tuple[int, int]] = None  # round gold / HP were last accepted in
         self._hp_stage: Optional[tuple[int, int]] = None
+        self._hp_undo: Optional[int] = None  # our HP before the last accepted drop
         self._xp_memo: dict[int, tuple[Optional[int], Optional[int], Optional[tuple[int, int]]]] = {}
         self._self_challenger: Optional[tuple[str, int]] = None  # another flagged row and its votes
         self._self_seen = 0  # frames that flagged the current self_name
@@ -278,10 +331,13 @@ class GameTracker:
                     self._game_over = True
                 return st.model_copy(deep=True)
 
-            stage_changed = self._merge_stage(scr.stage, now, scr)
+            stage_changed = self._merge_stage(scr.stage, now, scr, obs.purpose)
             st = self._state  # may have been replaced by a new-game reset
             st.screen_type = scr.screen_type
             gold_before = st.gold
+            # Listed HP before this frame's list (a name swap on this frame
+            # must not make a correct banner look wrong).
+            self._listed_before = {p.name: p.hp for p in st.players}
 
             row_hp: Optional[int] = None
             if scr.players is not None:
@@ -297,11 +353,16 @@ class GameTracker:
                 scr = self._drop_covered_board(scr)
 
             scouting = self._is_scouting(obs) or self._foreign_arena(scr, obs.purpose)
+            force_own = False
+            key: Optional[str] = None
             if scouting:
                 key = self._opponent_key(scr, obs.purpose)
                 if key is None:  # the "scouted" board is our own board
                     scouting = False
-                else:
+                elif key == _OWN_ARENA:  # "not own" read on our own arena (our HP above it)
+                    scouting = False
+                    force_own = True
+                elif key != _UNSURE:
                     self._store_opponent(key, scr, now)
 
             # Gold, shop and the augment cards always belong to the local player.
@@ -314,11 +375,16 @@ class GameTracker:
 
             top_hp: Optional[int] = None
             if not scouting:
-                top_hp = self._merge_own(scr, now, gold_before)
-            elif obs.purpose != "scout":
-                # A board that is not ours on our own capture: the bottom HUD
-                # (level, XP, streak) is still the local player's.
-                self._merge_hud(scr, now)
+                top_hp = self._merge_own(scr, now, gold_before, force=force_own)
+            else:
+                # A board that is not ours: the bottom HUD is still the local
+                # player's, but some clients show the viewed player's level
+                # near the board, so its level only confirms a pending reading
+                # (never sets one). A scout frame keeps our streak / XP. An
+                # unsure frame of our own capture (maybe our arena) applies
+                # the HUD; its level still goes through the plausibility check.
+                unsure = key == _UNSURE and obs.purpose != "scout"
+                self._merge_hud(scr, now, trusted=unsure, streak=obs.purpose != "scout")
             self._merge_hp(row_hp, top_hp, now)
 
             if stage_changed:
@@ -332,11 +398,14 @@ class GameTracker:
     def taken_by_player(self) -> dict[str, dict[str, int]]:
         """Copies (1-star equivalents) held by each alive opponent, from the latest scout.
 
-        The ``unknown`` snapshot (a scout frame with no readable owner) is
-        dropped when its units are mostly found in a named snapshot or in our
-        own units (containment, stars ignored: a subset of our bench read on
-        the augment screen is ours), or when it is from an earlier stage, so
-        the same copies are not subtracted from the pool twice.
+        The ``unknown`` snapshot (a scout frame with no readable owner) and
+        the provisional ones (a scout the vision called our own board, filed
+        under a player only because the HP above the board matched their
+        listed HP) are dropped when their units are mostly found in another
+        snapshot or in our own units (containment, stars ignored: a subset of
+        our bench read on the augment screen is ours), ``unknown`` also when
+        it is from an earlier stage, so the same copies are not subtracted
+        from the pool twice.
         """
         with self._lock:
             st = self._state
@@ -347,15 +416,40 @@ class GameTracker:
                 counts = self._unit_counts([*snap.board, *snap.bench])
                 if counts:
                     out[name] = counts
-            snap = st.opponents.get(UNKNOWN_PLAYER)
-            if UNKNOWN_PLAYER in out and snap is not None:
+            dropped: set[str] = set()
+            for key in [UNKNOWN_PLAYER, *sorted(self._provisional)]:
+                snap = st.opponents.get(key)
+                if key not in out or snap is None:
+                    continue
                 seen_at = StageRound.parse(snap.stage) if snap.stage else None
                 ident = _identity([*snap.board, *snap.bench])
-                others = [_identity([*o.board, *o.bench]) for n, o in st.opponents.items() if n != UNKNOWN_PLAYER]
+                others = [
+                    _identity([*o.board, *o.bench]) for n, o in st.opponents.items() if n != key and n not in dropped
+                ]
                 others.append(_identity(st.all_units()))
-                stale = seen_at is not None and st.stage is not None and seen_at.stage < st.stage.stage
+                # The ownerless board expires with its stage; an HP-matched
+                # scout (the player pressed F7 on someone) stays until it
+                # turns out to be a board we know.
+                stale = (
+                    key == UNKNOWN_PLAYER
+                    and seen_at is not None
+                    and st.stage is not None
+                    and seen_at.stage < st.stage.stage
+                )
                 if stale or any(_containment(ident, c) >= DUPLICATE_OVERLAP for c in others):
-                    del out[UNKNOWN_PLAYER]
+                    del out[key]
+                    dropped.add(key)
+                    continue
+                if key == UNKNOWN_PLAYER:
+                    # A named board found inside a newer ownerless one: the
+                    # same player seen later (bigger board). Count it once,
+                    # with the newer units.
+                    for n, o in st.opponents.items():
+                        if n == key or n not in out or o.captured_at > snap.captured_at:
+                            continue
+                        if _containment(_identity([*o.board, *o.bench]), ident) >= DUPLICATE_OVERLAP:
+                            del out[n]
+                            dropped.add(n)
             return out
 
     @staticmethod
@@ -395,10 +489,17 @@ class GameTracker:
                 if st.stage is not None and sr.key < st.stage.key:
                     st.history = [h for h in st.history if (StageRound.parse(h.stage) or sr).key <= sr.key]
                 if st.stage is None or sr.key != st.stage.key:
-                    st.field_age["round"] = now
+                    shop_t = st.field_age.get("shop")
+                    if self._shop_stage is not None and shop_t is not None and sr.key <= self._shop_stage:
+                        # Back to the round the shop was read in (the shop was
+                        # read under the misread stage): it is this round's shop.
+                        st.field_age["round"] = min(st.field_age.get("round", shop_t), shop_t)
+                    else:
+                        st.field_age["round"] = now
                 st.stage = sr
                 self._pending_lower = None
                 self._pending_jump = None
+                self._fresh_reset = False
                 self._game_over = False
                 st.field_age["stage"] = now
                 if advanced:
@@ -426,12 +527,16 @@ class GameTracker:
                 key = st.stage.key if st.stage is not None else None
                 if name == "gold":
                     self._gold_stage = key
-                if name == "level" and num != old_level:
-                    self._reset_xp(False, False)
+                if name == "level":
+                    self._level_mark = (key, st.gold)
+                    self._level_undo = None
+                    if num != old_level:
+                        self._reset_xp(False, False)
                 if name == "streak":
                     self._streak_stage = key
                 if name == "hp":
                     self._hp_stage = key
+                    self._hp_undo = None
                     if st.self_name:
                         for p in st.players:
                             if p.name == st.self_name:
@@ -477,52 +582,132 @@ class GameTracker:
                 return True
         return StageRound.parse(scr.stage) is None and not scr.shop
 
-    def _new_lobby_evidence(self, scr: Optional[ScreenObservation]) -> bool:
-        """Does this frame look like a different game? Our HP well above the
-        tracked HP (HP never comes back), most listed names unknown, or a
-        full-HP list while the tracked players had lost HP."""
+    def _own_hp_rows(self, scr: ScreenObservation, purpose: str) -> list[int]:
+        """Our HP as listed in this frame's player list: our row by name once
+        the local name is known (a flag can sit on the viewed player's row, or
+        on a row whose name was swapped), the flagged row only before that and
+        never on a frame whose camera is away."""
+        st = self._state
+        away = purpose == "scout" or scr.viewing_own_board is False
+        out: list[int] = []
+        for p in scr.players or []:
+            if not p.name or not p.name.strip():
+                continue
+            if st.self_name:
+                ours = self._canonical_player(p.name) == st.self_name
+            else:
+                ours = bool(p.is_self) and not away
+            if ours and (h := _to_int(p.hp)) is not None and HP_RANGE[0] <= h <= HP_RANGE[1]:
+                out.append(h)
+        return out
+
+    def _top_hp_is_ours(self, scr: ScreenObservation, purpose: str) -> bool:
+        """Is the HP above the board ours? Only on a frame of our own arena:
+        not a scout, not a "not own" frame, the HP agrees with our row, and
+        the vision called the arena ours or the board looks like ours (a new
+        game's board never looks like the old one)."""
+        if purpose == "scout" or scr.viewing_own_board is False:
+            return False
+        if scr.viewing_own_board is None and scr.board is not None and not self._board_is_ours(scr):
+            return False
+        return not self._hp_contradicts(scr)
+
+    def _new_lobby_evidence(self, scr: Optional[ScreenObservation], purpose: str = "auto") -> Optional[str]:
+        """Does this frame look like a different game?
+
+        ``"names"``: most listed names are unknown, or a full-HP list while
+        the tracked players had lost HP (a new lobby). ``"hp"``: our HP read
+        well above the tracked HP (HP never comes back) and at most the start
+        HP: one reading, which a misread digit can fake, so it counts only
+        when two frames show it (``"start"``: exactly the start HP, enough
+        with an early stage on a frame showing nothing of this game). None:
+        no evidence.
+        """
+        if scr is None:
+            return None
+        st = self._state
+        rows = [p for p in scr.players or [] if p.name and p.name.strip()]
+        if len(rows) >= 4:
+            known = set(self._known_player_names())
+            if known:
+                unknown = [p for p in rows if self._canonical_player(p.name) not in known]
+                if len(unknown) * 2 > len(rows):
+                    return "names"
+            listed = [h for h in (_to_int(p.hp) for p in rows) if h is not None]
+            hurt = any(p.hp is not None and p.hp < START_HP for p in st.players)
+            if hurt and len(listed) >= 4 and all(h == START_HP for h in listed):
+                return "names"
+        mine = self._own_hp_rows(scr, purpose)
+        if self._top_hp_is_ours(scr, purpose) and (h := _to_int(scr.hp)) is not None:
+            mine.append(h)
+        risen = [h for h in mine if st.hp is not None and st.hp + NEW_LOBBY_HP_RISE <= h <= START_HP]
+        if risen:
+            # Exactly the start HP ("start") is stronger than any other rise.
+            return "start" if START_HP in risen else "hp"
+        return None
+
+    def _same_game_evidence(self, scr: Optional[ScreenObservation], purpose: str = "auto") -> bool:
+        """Does this frame show the current game going on? Our HP (well below
+        the start HP) read again, several opponents listed at their tracked
+        lost HP, or a level / board no stage 1 frame can show."""
         if scr is None:
             return False
         st = self._state
-        mine: list[int] = []
-        # The HP above the board is ours on our own arena (or an unsure frame
-        # whose board is not someone else's).
-        own = scr.viewing_own_board is True or (
-            scr.viewing_own_board is None and (scr.board is None or self._board_is_ours(scr))
-        )
-        if own and (h := _to_int(scr.hp)) is not None:
-            mine.append(h)
-        rows = [p for p in scr.players or [] if p.name and p.name.strip()]
-        for p in rows:
-            if (p.is_self or (st.self_name and p.name == st.self_name)) and (h := _to_int(p.hp)) is not None:
+        if st.hp is not None and st.hp <= START_HP - NEW_LOBBY_HP_RISE:
+            mine = self._own_hp_rows(scr, purpose)
+            if self._top_hp_is_ours(scr, purpose) and (h := _to_int(scr.hp)) is not None:
                 mine.append(h)
-        if st.hp is not None and any(h >= st.hp + NEW_LOBBY_HP_RISE for h in mine if 0 <= h <= HP_RANGE[1]):
-            return True
-        if len(rows) < 4:
-            return False
-        known = set(self._known_player_names())
-        if known:
-            unknown = [p for p in rows if self._canonical_player(p.name) not in known]
-            if len(unknown) * 2 > len(rows):
+            if any(abs(h - st.hp) <= HP_MISMATCH for h in mine):
                 return True
-        listed = [h for h in (_to_int(p.hp) for p in rows) if h is not None]
-        hurt = any(p.hp is not None and p.hp < 100 for p in st.players)
-        return hurt and len(listed) >= 4 and all(h == 100 for h in listed)
+        old = {p.name: p.hp for p in st.players if p.name != st.self_name}
+        same = 0
+        for p in scr.players or []:
+            name = self._canonical_player(p.name)
+            hp = _to_int(p.hp)
+            if name in old and hp is not None and old[name] is not None and old[name] < START_HP and hp == old[name]:
+                same += 1
+        if same >= SAME_GAME_ROWS:
+            return True
+        level = _to_int(scr.level)
+        if level is not None and STAGE_ONE_MAX_LEVEL < level <= self._mech.max_level:
+            return True
+        units = [u for u in scr.board or [] if u.name and u.name.strip()]
+        return purpose != "scout" and scr.viewing_own_board is not False and len(units) > STAGE_ONE_MAX_BOARD
 
     def _start_new_game(self, sr: StageRound, now: float) -> None:
         self.reset()
         self._state.stage = sr
         self._state.field_age["stage"] = now
         self._state.field_age["round"] = now
+        # The stage came from the frames that looked like a new game: the next
+        # reading is not judged against it (no "jump over a stage" wait).
+        self._fresh_reset = True
 
-    def _merge_stage(self, text: Optional[str], now: float, scr: Optional[ScreenObservation] = None) -> bool:
+    def _last_stage_before(self, key: tuple[int, int]) -> Optional[tuple[int, int]]:
+        """The latest history round before ``key`` (the round we were in
+        before a jump to ``key``)."""
+        best: Optional[tuple[int, int]] = None
+        for h in self._state.history:
+            sr = StageRound.parse(h.stage)
+            if sr is not None and sr.key < key and (best is None or sr.key > best):
+                best = sr.key
+        return best
+
+    def _merge_stage(
+        self, text: Optional[str], now: float, scr: Optional[ScreenObservation] = None, purpose: str = "auto"
+    ) -> bool:
         """Apply a stage reading. Returns True when the stage advanced / changed."""
         sr = StageRound.parse(text)
         if sr is None:
             return False
         st = self._state
         cur = st.stage
-        if cur is not None and sr.stage > cur.stage + 1 and self._pending_jump != sr.stage:
+        if (
+            cur is not None
+            and sr.stage > cur.stage + 1
+            and self._pending_jump != sr.stage
+            and not self._fresh_reset
+        ):
             # Skipping a whole stage between two reads is almost always a digit
             # misread ("3-2" read as "8-2"): wait for a second reading.
             self._pending_jump = sr.stage
@@ -533,32 +718,62 @@ class GameTracker:
             st.field_age["round"] = now
             self._pending_lower = None
             self._pending_jump = None
+            self._fresh_reset = False
             self._game_over = False  # the game (or a spectated one) goes on
             return True
         self._pending_jump = None
         if sr.key == cur.key:
             st.field_age["stage"] = now
             self._pending_lower = None
+            self._fresh_reset = False
             self._game_over = False  # a post-game frame was a misclassification
             return False
         # Lower than the current stage: a misread (ignored once), a new game or
         # a correction of a misread current stage.
-        evidence = self._new_lobby_evidence(scr)
-        if cur.key >= (2, 1) and sr.stage <= 2 and (evidence or self._game_over):
-            # An early round with our HP back up or a new lobby (or after the
-            # end screen): a new game from its first frame.
+        evidence = self._new_lobby_evidence(scr, purpose)
+        same = self._same_game_evidence(scr, purpose)
+        # Not below the round we were in before the current one: the current
+        # stage was a forward misread ("5-1" read as "5-5") and this is the
+        # game going on, never a new game.
+        before = self._last_stage_before(cur.key)
+        correction = before is not None and sr.key >= before
+        fresh_start = evidence == "start" and not same
+        if (
+            not correction
+            and cur.key >= (2, 1)
+            and sr.stage <= 2
+            and (evidence == "names" or fresh_start or self._game_over)
+        ):
+            # An early round in a new lobby, or with our HP at the start HP
+            # and nothing of this game on screen (or after the end screen): a
+            # new game from its first frame.
             self._start_new_game(sr, now)
             return True
-        if self._game_over and cur.key >= (2, 1) and evidence:
+        if not correction and self._game_over and cur.key >= (2, 1) and evidence:
             self._start_new_game(sr, now)
             return True
         pending = self._pending_lower
         if pending is not None and pending <= sr.key:
             # Two consecutive lower readings that agree (the same round, or a
             # later one: auto mode reads once per round).
-            if cur.key >= (2, 1) and (pending[0] == 1 or evidence or self._pending_evidence):
+            hp_now = evidence in ("hp", "start")
+            hp_before = self._pending_evidence in ("hp", "start")
+            new_game = cur.key >= (2, 1) and not correction and (
+                "names" in (evidence, self._pending_evidence)
+                or (hp_now and hp_before)
+                # Stage 1 twice: a new game unless either frame showed this
+                # game going on (the same stylized digit is often misread
+                # twice on the same pixels).
+                or (pending[0] == 1 and not same and not self._pending_same)
+            )
+            if new_game:
                 self._start_new_game(sr, now)
                 return True
+            if sr.stage == 1 and cur.stage >= 2 and (same or self._pending_same):
+                # Stage 1 on frames showing this game going on (our lost HP,
+                # a level or board stage 1 cannot have): a misread, twice.
+                self._pending_lower = None
+                return False
             st.history = [h for h in st.history if (StageRound.parse(h.stage) or sr).key < sr.key]
             st.stage = sr
             st.field_age["stage"] = now
@@ -567,6 +782,7 @@ class GameTracker:
             return True
         self._pending_lower = sr.key
         self._pending_evidence = evidence
+        self._pending_same = same
         return False
 
     def _append_history(self, now: float) -> None:
@@ -648,12 +864,12 @@ class GameTracker:
         exact = {known_keys[normalize_name(p.name)] for p in players if normalize_name(p.name) in known_keys}
         raw_keys = {normalize_name(p.name) for p in players}
         free = [k for k in known if k not in exact and normalize_name(k) not in raw_keys]
-        merged: list[PlayerObs] = []
+        rows: list[tuple[str, Optional[int], bool]] = []
         seen: set[str] = set()
         flagged: list[str] = []
         read_hp: dict[str, Optional[int]] = {}
         for p in players:
-            if len(merged) >= MAX_PLAYERS:
+            if len(rows) >= MAX_PLAYERS:
                 break  # a garbled read with more rows than a lobby can have
             key = normalize_name(p.name)
             if key and key in known_keys:
@@ -671,11 +887,20 @@ class GameTracker:
             if hp is not None and not HP_RANGE[0] <= hp <= HP_RANGE[1]:
                 hp = None
             read_hp[name] = hp
-            prev = old.get(name)
-            if hp is None and prev is not None:
-                hp = prev.hp
             if p.is_self:
                 flagged.append(name)
+            rows.append((name, hp, bool(p.is_self)))
+        if not away and self._names_swapped(flagged, read_hp):
+            # Two rows' names swapped (the HP stays with the row): every name
+            # on this frame is suspect, keep the list we have.
+            return None
+        merged: list[PlayerObs] = []
+        for name, hp, _flag in rows:
+            prev = old.get(name)
+            if prev is not None and name != st.self_name:
+                hp = self._opponent_hp(name, hp, prev.hp)
+            if hp is None and prev is not None:
+                hp = prev.hp
             merged.append(PlayerObs(name=name, hp=hp, is_self=False))
         # Keep players the frame missed (partly hidden list), up to 8 total.
         for p in st.players:
@@ -690,15 +915,68 @@ class GameTracker:
         st.field_age["players"] = now
         return read_hp.get(st.self_name) if st.self_name else None
 
+    def _names_swapped(self, flagged: list[str], read_hp: dict[str, Optional[int]]) -> bool:
+        """The flagged row carries a known opponent's name with our HP, and our
+        name sits on an unflagged row with that opponent's HP: the vision
+        swapped two names (the highlight and the HP stay with the row)."""
+        st = self._state
+        rows = list(dict.fromkeys(flagged))
+        if len(rows) != 1 or not st.self_name or self._self_seen < 2 or st.hp is None:
+            return False
+        flag = rows[0]
+        if flag == st.self_name or st.self_name not in read_hp:
+            return False
+        theirs = self._player_hp(flag)
+        at_flag, at_ours = read_hp.get(flag), read_hp.get(st.self_name)
+        if theirs is None or at_flag is None or at_ours is None or abs(st.hp - theirs) <= HP_MISMATCH:
+            return False
+        return abs(at_flag - st.hp) <= HP_MISMATCH and abs(at_ours - theirs) <= HP_MISMATCH
+
+    def _opponent_hp(self, name: str, hp: Optional[int], prev: Optional[int]) -> Optional[int]:
+        """An opponent's HP reading. A drop to 0 applies at once (their units
+        go back to the pool now) but is final only when read again: a player
+        whose single 0 was a misread or a name swap comes back when the next
+        reading shows the HP they had before it. A confirmed elimination
+        never comes back, and an HP rise (HP never comes back) counts only
+        when the next reading agrees."""
+        if hp is None or prev is None:
+            return hp
+        if prev == 0:
+            before = self._opp_zero.get(name)
+            if before is None:
+                return 0  # confirmed (or read as 0 from the start)
+            if hp == 0:
+                del self._opp_zero[name]
+                return 0
+            if abs(hp - before) <= HP_MISMATCH:
+                del self._opp_zero[name]
+                return hp  # the 0 was a misread
+            return 0
+        if hp == 0:
+            self._opp_zero[name] = prev
+            self._opp_suspect.pop(name, None)
+            return 0
+        if hp > prev + HP_RISE_MAX:
+            last = self._opp_suspect.get(name)
+            if last is not None and abs(last - hp) <= 1:
+                self._opp_suspect.pop(name, None)
+                return hp
+            self._opp_suspect[name] = hp
+            return prev
+        self._opp_suspect.pop(name, None)
+        return hp
+
     def _update_self_name(
         self, flagged: list[str], read_hp: dict[str, Optional[int]], scr: Optional[ScreenObservation]
     ) -> None:
         """Learn / correct the local player's name from the flagged row.
 
         A known name is not replaced by one stray flag (a hovered row): another
-        row must be flagged on SELF_SWITCH_VOTES frames in a row. The HP above
-        our own board matching that row (and not the current one) counts as a
-        second vote on the same frame.
+        row must be flagged on SELF_SWITCH_VOTES frames in a row. While the
+        name is not confirmed (one flag so far), the HP above our own board
+        matching that row (and not the current one) counts as a second vote
+        on the same frame; once confirmed it does not (the vision reads our
+        top HP from the flagged row, so a swapped name carries it along).
         """
         st = self._state
         rows = list(dict.fromkeys(flagged))
@@ -716,7 +994,7 @@ class GameTracker:
             return
         votes = 1
         own = scr is not None and scr.viewing_own_board is True and scr.board is not None and self._board_is_ours(scr)
-        top = _to_int(scr.hp) if own and scr is not None else None
+        top = _to_int(scr.hp) if own and scr is not None and self._self_seen < 2 else None
         if top is not None and read_hp.get(flag) == top and read_hp.get(st.self_name) != top:
             votes += 1
         prev = self._self_challenger
@@ -761,11 +1039,15 @@ class GameTracker:
         )
 
     def _frame_self_hp(self, scr: ScreenObservation) -> Optional[int]:
-        """Our HP in this frame's player list (flagged row, or our known name)."""
+        """Our HP in this frame's player list: our row by name once the local
+        name is known (a flag may sit on a swapped or viewed row), the
+        flagged row before that."""
         st = self._state
         for p in scr.players or []:
-            name = self._canonical_player(p.name)
-            if p.is_self or (st.self_name and name == st.self_name):
+            if st.self_name:
+                if self._canonical_player(p.name) == st.self_name:
+                    return _to_int(p.hp)
+            elif p.is_self:
                 return _to_int(p.hp)
         return None
 
@@ -787,13 +1069,15 @@ class GameTracker:
             bool(st.board) and bool(scr.board) and self._hp_contradicts(scr) and not self._board_is_ours(scr, lenient=True)
         )
 
-    def _hp_match(self, scr: ScreenObservation) -> Optional[str]:
+    def _hp_match(self, scr: ScreenObservation, exclude: Optional[str] = None) -> Optional[str]:
         """The unique opponent whose listed HP is the HP shown above the board."""
         st = self._state
         hp = _to_int(scr.hp)
         if hp is None:
             return None
-        matches = [p.name for p in st.players if not p.is_self and p.hp == hp and p.name != st.self_name]
+        matches = [
+            p.name for p in st.players if not p.is_self and p.hp == hp and p.name not in (st.self_name, exclude)
+        ]
         return matches[0] if len(matches) == 1 else None
 
     def _opponent_key(self, scr: ScreenObservation, purpose: str = "scout") -> Optional[str]:
@@ -814,27 +1098,71 @@ class GameTracker:
                 # Our name on a clearly different board: the local name is
                 # probably a mis-flagged row. Keep the board under that name;
                 # it counts once the local player's name is corrected.
-                return name
+                return self._named_key(name)
             return None
         if purpose != "scout" and looks_ours:
             return None  # our own board with a model-read name or a false placeholder
         opponents = {p.name for p in st.players if p.name != st.self_name and not p.is_self}
         if name and name in opponents:
-            return name
+            listed = [h for h in (self._player_hp(name), self._listed_before.get(name)) if h is not None]
+            top = _to_int(scr.hp)
+            mine = self._frame_self_hp(scr)
+            if mine is None:
+                mine = st.hp
+            if (
+                listed
+                and top is not None
+                and all(abs(top - h) > HP_MISMATCH for h in listed)
+                and top != mine  # our own HP copied from our row: says nothing about the board
+            ):
+                # The HP above the board is not the named player's: the banner
+                # name was misread. File it under the player that HP belongs
+                # to, never over the named player's snapshot.
+                return self._hp_match(scr, exclude=name) or UNKNOWN_PLAYER
+            return self._named_key(name)
         if scr.viewing_own_board is True and not name:
             if not st.board or not scr.board or self._board_is_ours(scr, lenient=True):
                 return None  # the camera never left home (scout key pressed too early)
-            return self._hp_match(scr) or UNKNOWN_PLAYER
+            if purpose != "scout":
+                # Our own capture, called our arena, whose top HP disagrees
+                # with our row: a misread HP after a roll-down is as likely as
+                # another arena. Unsure: bottom HUD only, no snapshot.
+                return _UNSURE
+            return self._provisional_key(self._hp_match(scr))
         if scr.board and st.board and self._same_units(scr.board, st.board):
             return None  # identical to our board: the camera never left home
         if name:
-            return name
+            return self._named_key(name)
         if purpose != "scout":
             # viewing_own_board=False without a scout request or a readable
-            # owner, and a board that does not look like ours.
+            # owner, and a board that does not look like ours: our own arena
+            # when the HP above it is ours (and nobody else's), unsure when an
+            # opponent has the same HP, otherwise an unknown opponent.
+            top = _to_int(scr.hp)
+            mine = self._frame_self_hp(scr)
+            if mine is None:
+                mine = st.hp
+            if top is not None and mine is not None and top == mine:
+                return _UNSURE if any(p.hp == top for p in st.players if p.name != st.self_name) else _OWN_ARENA
             return UNKNOWN_PLAYER
         # Fallback: a unique opponent with the HP shown on the board.
         return self._hp_match(scr) or UNKNOWN_PLAYER
+
+    def _named_key(self, name: str) -> str:
+        """Snapshot key read from the banner: a board filed there earlier by
+        its HP only is confirmed (or replaced) now."""
+        self._provisional.discard(name)
+        return name
+
+    def _provisional_key(self, name: Optional[str]) -> str:
+        """Snapshot key for a scout the vision called our own board that is
+        not ours, filed by its HP only: provisional (dropped like ``unknown``
+        when it turns out to be a board we know), or ``unknown`` when no
+        single player has that HP."""
+        if name is None:
+            return UNKNOWN_PLAYER
+        self._provisional.add(name)
+        return name
 
     def _same_units(self, seen: list[UnitObs], own: list[Unit]) -> bool:
         a = Counter((self._resolve_unit(u).api_name, max(1, u.star)) for u in seen if u.name.strip())
@@ -869,9 +1197,13 @@ class GameTracker:
         if scr.item_bench is not None:
             snap.items = [self._item_name(x) for x in scr.item_bench if x and x.strip()]
         st.opponents[key] = snap
-        if key != UNKNOWN_PLAYER:
-            # A named scout supersedes the ownerless one (often the same board).
-            st.opponents.pop(UNKNOWN_PLAYER, None)
+        unknown = st.opponents.get(UNKNOWN_PLAYER)
+        if key != UNKNOWN_PLAYER and unknown is not None:
+            # A named scout supersedes the ownerless one when it is the same
+            # board (a different board is another player's: keep it).
+            ident = _identity([*unknown.board, *unknown.bench])
+            if _containment(ident, _identity([*snap.board, *snap.bench])) >= DUPLICATE_OVERLAP:
+                st.opponents.pop(UNKNOWN_PLAYER, None)
 
     def _viewed_level(self, scr: ScreenObservation) -> Optional[int]:
         """The viewed player's level: the dedicated field, or the older
@@ -903,7 +1235,11 @@ class GameTracker:
 
     def _merge_gold(self, value: Any, now: float) -> None:
         """Gold cannot jump by much more than a round's income: a big rise
-        (a digit misread, 42 read as 142) waits for a second reading."""
+        (a digit misread, 42 read as 142) waits for a second reading, which
+        confirms it when it is also a big rise and not above the first one by
+        more than the income since (gold only goes down within a round). A
+        drop to the old value with one digit lost (69 read as 6) waits too:
+        any next reading below the old value confirms a drop."""
         st = self._state
         num = _to_int(value)
         if num is None or not GOLD_RANGE[0] <= num <= GOLD_RANGE[1]:
@@ -913,31 +1249,89 @@ class GameTracker:
             cap = GOLD_JUMP_ROUND + GOLD_JUMP_PER_ROUND * _rounds_between(self._gold_stage, key)
             if self._mech.is_augment(st.stage):
                 cap += GOLD_JUMP_ROUND  # gold augments (Invested++ gives 45)
-            if num > st.gold + cap and not self._confirmed("gold", num, GOLD_CONFIRM_TOL):
+            if num > st.gold + cap:
+                prev = self._suspect.get("gold")
+                income = GOLD_JUMP_PER_ROUND * _rounds_between(self._suspect_stage.get("gold"), key)
+                if prev is None or num > prev + income + GOLD_CONFIRM_TOL:
+                    self._suspect["gold"] = num
+                    self._suspect_stage["gold"] = key
+                    return
+            elif self._digit_lost(st.gold, num) and "gold_drop" not in self._suspect:
+                self._suspect["gold_drop"] = num
                 return
         self._suspect.pop("gold", None)
+        self._suspect.pop("gold_drop", None)
         st.gold = num
         st.field_age["gold"] = now
         self._gold_stage = key
 
-    def _merge_level(self, value: Any, now: float) -> Optional[bool]:
-        """True: applied, False: held back (a lower level needs a second
-        reading, levels never go down), None: nothing readable."""
+    @staticmethod
+    def _digit_lost(old: int, new: int) -> bool:
+        """``new`` is ``old`` with one digit dropped (69 -> 6 or 9)."""
+        a, b = str(old), str(new)
+        return len(a) >= 2 and len(b) == len(a) - 1 and any(a[:i] + a[i + 1 :] == b for i in range(len(a)))
+
+    def _level_plausible(self, num: int) -> bool:
+        """A level reading above the tracked level: at most one level per
+        round since the last level reading, and within the round no more
+        than the gold spent since then can buy (augment rounds excepted:
+        some augments grant XP)."""
+        st = self._state
+        level = st.level
+        if level is None or num <= level:
+            return num == level or level is None
+        if num == self._level_undo:
+            return True  # back to the level before the last drop: that drop was the misread
+        key = self._stage_key()
+        mark = self._level_mark
+        if mark is None or mark[0] is None or key is None or mark[0] != key:
+            # Another round (or a stage corrected since): a level per round.
+            return num - level <= max(1, _rounds_between(mark[0] if mark else None, key))
+        if mark is not None and mark[1] is not None and st.gold is not None and st.xp_current is not None:
+            if not self._mech.is_augment(st.stage):
+                cost = self._mech.gold_to_reach(level, st.xp_current, num)
+                return cost is not None and mark[1] - st.gold >= cost
+        return num - level <= 1
+
+    def _merge_level(self, value: Any, now: float, trusted: bool = True) -> Optional[bool]:
+        """True: applied, False: held back, None: nothing readable.
+
+        Levels never go down: a lower reading counts once a second reading is
+        lower too (the later one is taken). A rise more than one level per
+        round (or more than the gold spent within the round buys) waits for
+        the same reading again. ``trusted=False`` (a frame whose arena is not
+        ours): the reading only confirms a pending one, it never sets one.
+        """
         st = self._state
         num = _to_int(value)
         if num is None or not 1 <= num <= self._mech.max_level:
             return None
-        if st.level is not None and num < st.level and not self._confirmed("level", num):
-            return False
+        prev = self._suspect.get("level")
+        if not trusted:
+            if st.level is not None and num == st.level:
+                self._suspect.pop("level", None)  # the pending reading was the misread
+                return True
+            if prev is None or prev != num:
+                return False
+        elif not self._level_plausible(num):
+            lower = st.level is not None and num < st.level
+            if prev is None or not (prev == num or (lower and prev < st.level)):
+                self._suspect["level"] = num
+                return False
         self._suspect.pop("level", None)
+        if st.level is not None and num != st.level:
+            self._level_undo = st.level if num < st.level else None
         st.level = num
         st.field_age["level"] = now
+        self._level_mark = (self._stage_key(), st.gold)
         return True
 
     def _hp_plausible(self, hp: int) -> bool:
         st = self._state
         if st.hp is None:
             return True
+        if self._hp_undo is not None and abs(hp - self._hp_undo) <= 1 and hp > st.hp:
+            return True  # back to the HP before the last drop: that drop was the misread
         if hp > st.hp + HP_RISE_MAX:
             return False  # HP never comes back in TFT (a few points from augments at most)
         rounds = max(1, _rounds_between(self._hp_stage, self._stage_key()))
@@ -946,21 +1340,27 @@ class GameTracker:
 
     def _merge_hp(self, row_hp: Optional[int], top_hp: Optional[int], now: float) -> None:
         """Apply our HP from this frame: our player-list row and the HP above
-        our own board are two readings. When they agree the value is taken;
-        otherwise the first plausible one, and an implausible value only when
-        it is read again on the next frame."""
+        our own board. When they agree they are one reading (the vision reads
+        the top HP from our row); otherwise the first plausible one is taken.
+        An implausible value counts only when the next frame reads it again
+        (a scout frame's list row counts as that reading)."""
         st = self._state
         cands = [h for h in (row_hp, top_hp) if h is not None and HP_RANGE[0] <= h <= HP_RANGE[1]]
+        if row_hp is not None and top_hp is not None and abs(row_hp - top_hp) <= 1:
+            # The vision reads our top HP from our list row: the same pixels,
+            # so an agreeing pair is one reading (a misread lands in both).
+            cands = [row_hp]
         value: Optional[int] = None
+        single = False  # taken on one plausible reading (a drop that one reading of the old HP undoes)
         if cands:
-            if row_hp is not None and top_hp is not None and abs(row_hp - top_hp) <= 1:
-                value = row_hp
-            else:
-                value = next((h for h in cands if self._hp_plausible(h)), None)
-                if value is None and self._confirmed("hp", cands[0], 1):
-                    value = cands[0]
+            value = next((h for h in cands if self._hp_plausible(h)), None)
+            single = value is not None
+            if value is None and self._confirmed("hp", cands[0], 1):
+                value = cands[0]
         if value is not None:
             self._suspect.pop("hp", None)
+            undo = self._hp_undo is not None and abs(value - self._hp_undo) <= 1 and st.hp is not None and value > st.hp
+            self._hp_undo = st.hp if single and not undo and st.hp is not None and value < st.hp else None
             st.hp = value
             st.field_age["hp"] = now
             self._hp_stage = self._stage_key()
@@ -969,18 +1369,26 @@ class GameTracker:
                 if p.name == st.self_name:
                     p.hp = st.hp
 
-    def _merge_hud(self, scr: ScreenObservation, now: float) -> None:
-        """The bottom HUD of our own screen: level, XP and streak."""
+    def _merge_hud(self, scr: ScreenObservation, now: float, trusted: bool = True, streak: bool = True) -> None:
+        """The bottom HUD of our own screen: level, XP and streak.
+
+        ``trusted=False`` (a frame whose arena is someone else's): the level
+        only confirms a pending reading and the XP is not taken; ``streak``
+        False skips the streak too (scout frames)."""
         st = self._state
         old_level = st.level
-        level_set = self._merge_level(scr.level, now)
-        if level_set is False:
+        level_set = self._merge_level(scr.level, now, trusted)
+        if level_set is False and trusted:
             return  # the XP shown next to a rejected level belongs to that reading
-        xp_set = self._set_int("xp_current", scr.xp_current, (0, XP_MAX), now)
-        need_set = self._set_int("xp_needed", scr.xp_needed, (0, XP_MAX), now)
+        if trusted:
+            xp_set = self._set_int("xp_current", scr.xp_current, (0, XP_MAX), now)
+            need_set = self._set_int("xp_needed", scr.xp_needed, (0, XP_MAX), now)
+        else:
+            xp_set = need_set = False
         if level_set and st.level != old_level:
             self._reset_xp(xp_set, need_set)
-        self._merge_streak(scr.streak, now)
+        if streak:
+            self._merge_streak(scr.streak, now)
         self._remember_xp()
 
     def _arena_is_ours(self, scr: ScreenObservation) -> bool:
@@ -1001,16 +1409,66 @@ class GameTracker:
             return scr.model_copy(update={"board": None})
         return scr
 
-    def _merge_own(self, scr: ScreenObservation, now: float, gold_before: Optional[int] = None) -> Optional[int]:
-        """Apply a frame of our own screen. The bottom HUD (level, XP, streak)
-        always applies; the arena fields (board, bench, traits, item bench and
-        the top level HP, which belongs to the viewed player) only when the
-        vision said the arena is ours or the board looks like ours (or none is
-        known yet). Returns the top HP to use as a reading of our HP."""
+    def _combat_board(self, scr: ScreenObservation) -> ScreenObservation:
+        """During a fight no unit joins or leaves our board (units cannot be
+        placed, the dead come back) and fighters walk off their hexes, while
+        surviving enemy units stand on our arena: once our board is known a
+        combat frame never changes it (bench and items still apply)."""
+        if scr.screen_type != ScreenType.COMBAT or not self._state.board or scr.board is None:
+            return scr
+        return scr.model_copy(update={"board": None})
+
+    def _hold_foreign_looking_board(self, scr: ScreenObservation) -> bool:
+        """A board called ours that shares no champion with our (sizable)
+        board and names nobody: often the camera on an opponent whose HP is
+        close to ours. It replaces our board only when the next frame shows
+        the same board again."""
         st = self._state
-        self._merge_hud(scr, now)
-        scr = self._drop_oversized_board(scr)
-        if not self._arena_is_ours(scr):
+        if scr.board is None or scr.viewed_player_name or len(st.board) < MIN_BOARD_FOR_HOLD:
+            self._pending_board = None
+            return False
+        seen = _identity(self._resolve_units(scr.board, on_board=True))
+        if not seen or _overlap(seen, _identity(st.board)) > 0:
+            self._pending_board = None
+            return False
+        if self._pending_board is not None and _overlap(seen, self._pending_board) >= DUPLICATE_OVERLAP:
+            self._pending_board = None
+            return False
+        self._pending_board = seen
+        return True
+
+    def _drop_own_snapshots(self) -> None:
+        """Ownerless / HP-matched snapshots that turn out to be our own board
+        (read with a wrong "not own" flag before our board was updated)."""
+        st = self._state
+        own = _identity(st.all_units())
+        for key in [UNKNOWN_PLAYER, *sorted(self._provisional)]:
+            snap = st.opponents.get(key)
+            if snap is None:
+                continue
+            ident = _identity([*snap.board, *snap.bench])
+            if ident and _containment(ident, own) >= DUPLICATE_OVERLAP:
+                del st.opponents[key]
+                self._provisional.discard(key)
+
+    def _merge_own(
+        self, scr: ScreenObservation, now: float, gold_before: Optional[int] = None, force: bool = False
+    ) -> Optional[int]:
+        """Apply a frame of our own screen. The bottom HUD (level, XP, streak)
+        applies (the level only as a confirming reading when the frame shows
+        a board that is not ours); the arena fields (board, bench, traits,
+        item bench and the top level HP, which belongs to the viewed player)
+        only when the vision said the arena is ours or the board looks like
+        ours (or none is known yet), or ``force`` (our HP above the board).
+        Returns the top HP to use as a reading of our HP."""
+        st = self._state
+        arena = self._drop_oversized_board(scr)
+        ours = force or self._arena_is_ours(arena)
+        if ours and not force and self._hold_foreign_looking_board(arena):
+            ours = False
+        self._merge_hud(scr, now, trusted=ours or arena.board is None)
+        scr = self._combat_board(arena)
+        if not ours:
             return None
         top_hp = _to_int(scr.hp)
         if st.self_name is None and scr.viewing_own_board is True and scr.viewed_player_name:
@@ -1036,6 +1494,8 @@ class GameTracker:
         if scr.augments is not None and scr.viewing_own_board is True:
             st.augments = [a.strip() for a in scr.augments if a and a.strip()]
             st.field_age["augments"] = now
+        if scr.board is not None or scr.bench is not None:
+            self._drop_own_snapshots()
         return top_hp
 
     def _remember_xp(self) -> None:
@@ -1203,6 +1663,7 @@ class GameTracker:
         st.shop = shop
         st.shop_units = units
         st.field_age["shop"] = now
+        self._shop_stage = self._stage_key()
 
     # ---- resolution -----------------------------------------------------------
     def _resolve_champion(self, name: str, cost: Optional[int] = None) -> Optional[Champion]:

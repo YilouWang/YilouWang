@@ -19,6 +19,7 @@ from tft_advisor.models import (
     ItemSuggestion,
     ScoutRequest,
     ScreenType,
+    ShopSlot,
     StageRound,
     Unit,
 )
@@ -532,7 +533,9 @@ def test_long_texts_are_cut_at_clause_boundaries(advisor):
         stage=StageRound.parse("3-3"), gold=30, level=6, hp=70, bench=[unit("Morgana", 3), unit("Morgana", 3)], shop_units=shop
     )
     buy = action(advisor.advise(state, Analysis(shop_picks=["Morgana", "Volibear", "Katarina"])), ActionType.BUY)
-    assert buy.text.endswith("能升星") and "Morgana（第1格）" in buy.text and len(buy.text) <= 40
+    # Every pick is still named (the slot labels go first).
+    assert buy.text.endswith("能升星") and len(buy.text) <= 40
+    assert all(n in buy.text for n in ("Morgana", "Volibear", "Katarina"))
 
 
 def test_carousel_item_slam_waits_until_after(advisor):
@@ -767,7 +770,8 @@ def test_fast_line_behind_schedule_still_hears_level_8(advisor):
         state = GameState(stage=StageRound.parse(sr), gold=38, level=7, hp=70)
         adv = advisor.advise(state, Analysis(econ=EconPlan(style="fast8", **save)))
         check_contract(adv)
-        assert "尽快升 8 找 4 费主C" in adv.plan and "5-5 升 9" in adv.plan
+        # Not affordable yet (38 gold): the plan names the gold for the level, not "save to 50".
+        assert "升 8 找 4 费主C" in adv.plan and "5-5 升 9" in adv.plan and "先存到" not in adv.plan
     # Fast 9 at 6 after 4-2: catch up to 8, then 9 at 5-1 (healthy HP).
     state = GameState(stage=StageRound.parse("4-2"), gold=30, level=6, hp=70)
     adv = advisor.advise(state, Analysis(econ=EconPlan(style="fast9", **save)))
@@ -775,7 +779,7 @@ def test_fast_line_behind_schedule_still_hears_level_8(advisor):
     # Level 7 after 5-5: one level at a time, 9 named once.
     state = GameState(stage=StageRound.parse("5-6"), gold=38, level=7, hp=70)
     adv = advisor.advise(state, Analysis(econ=EconPlan(style="standard", **save)))
-    assert "尽快升 8" in adv.plan and "再升 9 找 5 费" in adv.plan
+    assert "升 8" in adv.plan and "再升 9 找 5 费" in adv.plan
     assert adv.plan.count("升 9") == 1 and "补到 9" not in adv.plan
     # Econ levels to 7 now while the fast 8 line wants 8: 8 is still named.
     state = GameState(stage=StageRound.parse("4-2"), gold=40, level=6, hp=70)
@@ -1052,7 +1056,7 @@ def test_level_8_tag_follows_the_carry(advisor):
     reroll = CompSuggestion(name="Warwick Reroll", score=0.8, carry="Warwick", style="reroll2")
     state = GameState(stage=StageRound.parse("4-5"), gold=30, level=7, hp=60, board=[unit("Warwick", 1, 3, row=0, col=2)])
     plan = advisor.advise(state, Analysis(econ=save, comps=[reroll])).plan
-    assert "尽快升 8 补 4 费" in plan and "找 4 费主C" not in plan
+    assert "升 8 补 4 费" in plan and "找 4 费主C" not in plan
     # A 4 cost carry already 2-star: level 8 adds 4 costs, not the carry.
     std = CompSuggestion(name="Draven", score=0.8, carry="Draven", style="standard")
     state = GameState(stage=StageRound.parse("4-1"), gold=30, level=7, hp=60, board=[unit("Draven", 4, 2, row=3, col=0)])
@@ -1078,8 +1082,10 @@ def test_save_headline_names_every_unit_the_buy_action_buys(advisor):
     long = ["Aurelion Sol Prime", "Miss Fortune Prime", "Tahm Kench Prime"]
     adv = advisor.advise(state, Analysis(econ=econ, shop_picks=long))
     assert len(adv.headline) <= 30 and "其余存钱" in adv.headline
-    n = len(adv.actions[0].text.split("、")) if adv.actions[0].type == ActionType.BUY else 0
-    assert f"等{n}张" in adv.headline or f"买{n}张牌" in adv.headline
+    # Neither the action nor the headline hides a pick.
+    buy = action(adv, ActionType.BUY).text
+    assert "等 3 张" in buy or "3 张牌" in buy or all(n in buy for n in long)
+    assert "等3张" in adv.headline or "买3张牌" in adv.headline
     # One pick: unchanged; level headline lists both units.
     assert advisor.advise(state, Analysis(econ=econ, shop_picks=["Karma"])).headline == "买Karma，其余存钱"
     level = EconPlan(recommendation=EconAction.LEVEL, target_level=6)
@@ -1159,3 +1165,229 @@ def test_long_augment_action_drops_english_name_instead_of_cutting():
     act = [a for a in adv.advise(state, Analysis()).actions if a.type == ActionType.AUGMENT][0]
     assert act.text.startswith("海克斯选 ") and len(act.text) <= 40
     assert act.text.endswith("）") or "（" not in act.text  # never cut inside the parentheses
+
+
+# ---------------------------------------------------------------------------
+# Regression tests (tft-domain review, round 4)
+# ---------------------------------------------------------------------------
+
+
+def test_completed_item_for_a_benched_holder_is_never_a_p1_equip(advisor):
+    """A built item the planner gives to a bench unit: field it first (p2,
+    never the headline); a holder the engine wants sold keeps the item."""
+    board = [unit("Draven", 4, 2, ["A", "B", "C"], row=3, col=0), unit("Braum", 2, 1, ["D", "E", "F"], row=0, col=3)]
+    state = GameState(stage=StageRound.parse("4-3"), gold=38, level=7, hp=70, item_bench=["Gargoyle Stoneplate"],
+                      board=board, bench=[unit("Vi", 2)])
+    built = ItemSuggestion(item="Gargoyle Stoneplate", components=[], holder="Vi", priority=1)
+    adv = advisor.advise(state, Analysis(items=[built]))
+    check_contract(adv)
+    item = action(adv, ActionType.ITEM)
+    assert item.text == "先把 Vi 上场再装 Gargoyle Stoneplate" and item.priority == 2
+    assert "Gargoyle" not in adv.headline and all("装给" not in t for t in all_text(adv))
+    # Only a unit the engine sells: keep the item.
+    adv = advisor.advise(state, Analysis(items=[built], sell_candidates=["Vi"]))
+    item = action(adv, ActionType.ITEM)
+    assert item.priority == 2 and item.text.endswith("先留着") and "Vi" not in item.text
+    assert adv.items == "Gargoyle Stoneplate 先留着" and "Gargoyle" not in adv.headline
+    # A fielded copy with a free slot takes it right away (unchanged).
+    fielded = state.model_copy(update={"board": board + [unit("Vi", 2, row=0, col=4)], "bench": []})
+    adv = advisor.advise(fielded, Analysis(items=[built]))
+    assert adv.headline == "把Gargoyle Stoneplate装给Vi"
+    assert action(adv, ActionType.ITEM).text == "把 Gargoyle Stoneplate 装给 Vi"
+    # The only fielded copy is full: the bench copy is the holder.
+    full_vi = unit("Vi", 2, 1, ["X", "Y", "Z"], row=0, col=4)
+    both = state.model_copy(update={"board": board + [full_vi]})
+    assert action(advisor.advise(both, Analysis(items=[built])), ActionType.ITEM).text.startswith("先把 Vi 上场")
+
+
+def test_real_item_plan_never_equips_off_board_at_p1(real_sd):
+    """The reported 5-3 state: a full board, a full bench and an AD item on
+    the item bench of an AP comp."""
+    from tft_advisor.data.comps import load_comps
+    from tft_advisor.engine.analyzer import Analyzer
+    from tft_advisor.models import Unit as U
+
+    mech = load_mechanics()
+
+    def u(name, star=1, items=(), row=None, col=None):
+        c = real_sd.resolve_champion(name)
+        return U(api_name=c.api_name, name=c.name, cost=c.cost, star=star, items=list(items), row=row, col=col,
+                 traits=list(c.traits))
+
+    board = [u("维迦", 2, ["珠光护手", "蓝霸符"], 3, 0), u("提莫", 1, [], 3, 1), u("费德提克", 1, [], 2, 2),
+             u("索拉卡", 1, [], 3, 3), u("拉莫斯", 1, ["石像鬼石板甲"], 0, 3), u("雷克塞", 1, [], 0, 2),
+             u("可酷伯", 1, [], 0, 4), u("纳尔", 1, [], 0, 5)]
+    bench = [u(n) for n in ("绯红印记树怪", "阿利斯塔", "拉克丝", "约里克", "慎", "卡蜜尔", "阿卡丽", "暗影狼", "韦鲁斯")]
+    state = GameState(stage=StageRound.parse("5-3"), gold=30, level=8, hp=55, board=board, bench=bench, item_bench=["海妖之怒"])
+    analysis = Analyzer(real_sd, mech, load_comps(None, real_sd)).analyze(state, {})
+    out = RulesAdvisor(mech=mech, set_data=real_sd).advise(state, analysis)
+    check_contract(out)
+    fielded = {x.name for x in board}
+    for a in out.actions:
+        if a.type == ActionType.ITEM and "装给" in a.text:
+            assert a.text.split("装给", 1)[1].strip() in fielded, a.text
+    if "装给" in out.headline:
+        assert out.headline.split("装给", 1)[1] in fielded, out.headline
+    for name in analysis.sell_candidates:
+        assert all(f"装给 {name}" not in t and f"装给{name}" not in t for t in all_text(out))
+
+
+def test_behind_the_curve_in_stage_4_saves_for_the_level_not_for_50(advisor, mech):
+    """Stage 4+, below the line's level and the level not affordable yet: the
+    gold is for the catch-up level (the econ buys it as soon as it can)."""
+    state = GameState(stage=StageRound.parse("4-1"), gold=14, level=6, xp_current=14, hp=72)
+    econ = plan_economy(state, mech, "fast8")
+    assert econ.recommendation == EconAction.SAVE
+    adv = advisor.advise(state, Analysis(econ=econ))
+    check_contract(adv)
+    assert adv.headline == "攒够24金币升7级"
+    assert adv.plan.startswith("攒够 24 金币就升 7，尽快补到 8 级") and "先存到" not in adv.plan
+    # The number is exactly where the econ engine levels (it keeps 10 gold
+    # when the catch-up is not urgent: 4-3 at the standard level 7).
+    for sr, lvl, xp, gold, style in (("4-1", 6, 14, 14, "fast8"), ("4-3", 7, 0, 30, "fast8"), ("5-1", 7, 10, 20, "standard")):
+        st = GameState(stage=StageRound.parse(sr), gold=gold, level=lvl, xp_current=xp, hp=72)
+        e = plan_economy(st, mech, style)
+        head = advisor.advise(st, Analysis(econ=e)).headline
+        assert head.startswith("攒够") and head.endswith(f"升{lvl + 1}级"), head
+        need = int(head[2:head.index("金币")])
+        levels = (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL)
+        assert plan_economy(st.model_copy(update={"gold": need - 1}), mech, style).recommendation not in levels
+        assert plan_economy(st.model_copy(update={"gold": need}), mech, style).recommendation in levels
+    # On schedule, or in stage 3: the save to 50 is unchanged.
+    on_time = GameState(stage=StageRound.parse("4-3"), gold=30, level=7, hp=72)
+    std = plan_economy(on_time, mech, "standard")
+    adv = advisor.advise(on_time, Analysis(econ=std))
+    assert adv.headline == "存钱到50" and adv.plan.startswith("先存到 50")
+    early = GameState(stage=StageRound.parse("3-5"), gold=30, level=5, hp=72)
+    adv = advisor.advise(early, Analysis(econ=EconPlan(recommendation=EconAction.SAVE)))
+    assert adv.headline == "存钱到50" and adv.plan.startswith("先存到 50")
+
+
+def test_team_size_items_and_emblems_do_not_make_a_carry(advisor, real_sd):
+    settt = unit("Sett", 2, 2, ["斗士纹章", "金铲铲冠冕"], row=0, col=3)
+    karma = unit("Karma", 2, 2, ["无尽之刃"], row=3, col=3)
+    state = GameState(stage=StageRound.parse("3-3"), gold=30, level=7, hp=70, board=[settt, karma])
+    for sd in (real_sd, None):
+        assert find_carry(state, Analysis(), sd) is None
+    english = settt.model_copy(update={"items": ["Brawler Emblem", "Tactician's Crown"]})
+    assert find_carry(GameState(board=[english, karma]), Analysis()) is None
+    krug = unit("Kobuko", 2, 1, ["金锅铲冠冕", "冕卫"], row=0, col=0)
+    assert find_carry(GameState(board=[krug]), Analysis(), real_sd) is None
+    assert find_carry(GameState(board=[krug]), Analysis()) is None
+    # Flex damage items still make a carry.
+    yunara = unit("Yunara", 2, 2, ["鬼索的狂暴之刃", "正义之手"], row=3, col=6)
+    assert find_carry(GameState(board=[settt, yunara]), Analysis(), real_sd).name == "Yunara"
+    adv = RulesAdvisor(set_data=real_sd).advise(state, Analysis())
+    assert "Sett" not in (adv.positioning or "")
+
+
+def test_wisp_hint_needs_this_rounds_shop_and_spare_gold(advisor):
+    from tft_advisor.models import ShopSlot
+
+    shop = [ShopSlot(name="Vi", cost=3), ShopSlot(name="Garen", cost=1), ShopSlot(), ShopSlot(), ShopSlot(name="Wisp: Golden Wisp", cost=3)]
+    base = GameState(stage=StageRound.parse("3-3"), gold=20, level=6, hp=80, shop=shop,
+                     field_age={"shop": 100.0, "round": 90.0})
+
+    def hint(state, analysis=None):
+        return [a.text for a in advisor.advise(state, analysis or Analysis()).actions if "精灵" in a.text]
+
+    assert hint(base) == ["第5格精灵「Golden Wisp」（3金币）：前期经济或经验类值得买"]
+    # Last round's shop (read before this round started), or the augment screen.
+    stale = base.model_copy(update={"stage": StageRound.parse("3-5"), "field_age": {"shop": 100.0, "round": 200.0}})
+    assert hint(stale) == []
+    assert hint(base.model_copy(update={"screen_type": ScreenType.AUGMENT_SELECT})) == []
+    # The plan already spends the gold: all-in rolls, or buys that leave 2.
+    all_in = EconPlan(recommendation=EconAction.ALL_IN, roll_budget=20)
+    assert hint(base.model_copy(update={"hp": 20}), Analysis(econ=all_in)) == []
+    assert hint(base, Analysis(shop_picks=["Vi"], shop_picks_cost=18)) == []
+    assert hint(base, Analysis(shop_picks=["Vi"], shop_picks_cost=17)) != []
+    # An XP Wisp at the max level is worthless.
+    xp = [*shop[:4], ShopSlot(name="精灵：经验精灵", cost=2)]
+    top = GameState(stage=StageRound.parse("5-3"), gold=40, level=10, hp=60, shop=xp)
+    assert hint(top) == []
+    assert hint(top.model_copy(update={"level": 9})) != []
+
+
+def test_pve_wait_plan_never_says_save_to_50(real_sd):
+    from tft_advisor.data.comps import load_comps
+    from tft_advisor.engine.analyzer import Analyzer
+
+    mech = load_mechanics()
+    analyzer = Analyzer(real_sd, mech, load_comps(None, real_sd))
+    rules = RulesAdvisor(set_data=real_sd, mech=mech)
+    for sr, hp, gold, level in (("3-7", 15, 12, 6), ("3-7", 30, 34, 6), ("4-7", 15, 30, 7), ("4-7", 35, 30, 7)):
+        state = GameState(stage=StageRound.parse(sr), gold=gold, hp=hp, level=level, xp_current=2)
+        analysis = analyzer.analyze(state, {})
+        assert analysis.econ.recommendation == EconAction.SAVE
+        out = rules.advise(state, analysis)
+        check_contract(out)
+        nxt = f"{int(sr[0]) + 1}-1"
+        assert out.headline == f"野怪回合先存着，{nxt}再搜"
+        assert "先存到" not in out.plan and out.plan.startswith("野怪回合先存着"), out.plan
+        assert f"{nxt} " in out.plan and "搜牌稳血" in out.plan
+    # A plain save on a PvE round at low HP (stage 2): no "save to 50" either.
+    state = GameState(stage=StageRound.parse("2-7"), gold=20, hp=30, level=5)
+    out = rules.advise(state, Analysis(econ=EconPlan(recommendation=EconAction.SAVE, reason="存钱吃利息")))
+    assert "先存到" not in out.plan and out.headline == "野怪回合先存着，3-1再搜"
+    # Healthy PvE save: unchanged.
+    state = GameState(stage=StageRound.parse("3-7"), gold=30, hp=80, level=6)
+    out = rules.advise(state, Analysis(econ=EconPlan(recommendation=EconAction.SAVE, reason="存钱吃利息")))
+    assert out.headline == "存钱到50" and out.plan.startswith("先存到 50")
+
+
+def test_buy_action_names_every_shop_pick(advisor):
+    """Budget, roll budget and odds count every pick: the action and the
+    headline must not hide any of them."""
+    names = ["Varus", "Leona", "Karma", "Akali", "Camille"]
+    shop = [unit(n, 1) for n in names]
+    state = GameState(stage=StageRound.parse("2-3"), gold=30, level=4, hp=80,
+                      bench=[unit(n, 1) for n in names] + [unit(n, 1) for n in names[:4]], shop_units=shop)
+    econ = EconPlan(recommendation=EconAction.SAVE, reason="存钱吃利息")
+    adv = advisor.advise(state, Analysis(econ=econ, shop_picks=names, shop_picks_cost=5))
+    check_contract(adv)
+    buy = action(adv, ActionType.BUY)
+    assert buy.priority == 1 and buy.text.endswith("能升星")
+    assert all(n in buy.text for n in names) or "第1、2、3、4、5格" in buy.text or "等 5 张" in buy.text, buy.text
+    assert all(n in adv.headline for n in names) or "等5张" in adv.headline or "买5张牌" in adv.headline
+    # Chinese names fit with every name and no slot label is lost for three picks.
+    zh = ["韦鲁斯", "蕾欧娜", "卡尔玛", "阿卡丽", "卡蜜尔"]
+    zstate = state.model_copy(update={"shop_units": [unit(n, 1) for n in zh], "bench": []})
+    buy = action(advisor.advise(zstate, Analysis(econ=econ, shop_picks=zh)), ActionType.BUY).text
+    assert all(n in buy for n in zh), buy
+    three = advisor.advise(zstate, Analysis(econ=econ, shop_picks=zh[:3]))
+    assert action(three, ActionType.BUY).text == "买 韦鲁斯（第1格）、蕾欧娜（第2格）、卡尔玛（第3格）"
+
+
+def test_fill_empty_slots_leads_the_headline_and_is_not_a_footnote(advisor, mech):
+    """The analyzer buys units for empty team slots: the headline says so and
+    the slot warning is a priority 2 action, not the priority 3 tail."""
+    shop = [ShopSlot(name="Garen", cost=1), ShopSlot(name="Ashe", cost=2)]
+    state = GameState(stage=StageRound.parse("3-3"), gold=30, level=6, hp=60, shop=shop)
+    warn = "场上只有 4 个英雄，还有 2 个空位，买英雄补满"
+    econ = plan_economy(state, mech, "standard")
+    adv = advisor.advise(state, Analysis(econ=econ, shop_picks=["Garen", "Ashe"], shop_picks_cost=3, warnings=[warn]))
+    check_contract(adv)
+    assert adv.headline == "买Garen、Ashe补满空位"
+    assert (warn, 2) in [(a.text, a.priority) for a in adv.actions]
+
+
+def test_gold_above_the_cap_headline_names_the_xp_not_saving(advisor, mech):
+    state = GameState(stage=StageRound.parse("3-3"), gold=62, level=6, xp_current=0, hp=60)
+    econ = plan_economy(state, mech, "standard")
+    assert econ.recommendation == EconAction.SAVE and "次经验" in econ.reason
+    assert advisor.advise(state, Analysis(econ=econ)).headline == "利息已满，多的钱买3次经验"
+    shop = state.model_copy(update={"shop": [ShopSlot(name="Garen", cost=1)]})
+    adv = advisor.advise(shop, Analysis(econ=econ, shop_picks=["Garen"], shop_picks_cost=1))
+    assert adv.headline == "买Garen，多的钱买经验"
+
+
+def test_level_plan_names_the_round_a_two_star_carry_goes_nine(advisor, mech):
+    comp = CompSuggestion(name="金克丝", carry="Jinx", score=0.9, style="fast8", core_units=["Jinx"])
+    for star, nine in ((1, "5-5 升 9"), (2, "5-1 升 9")):
+        jinx = unit("Jinx", 4, star, [], row=3, col=3)
+        state = GameState(stage=StageRound.parse("4-5"), gold=40, level=8, xp_current=10, hp=60, board=[jinx])
+        econ = plan_economy(state, mech, "fast8", key_star=star, carry_cost=4)
+        adv = advisor.advise(state, Analysis(econ=econ, comps=[comp]))
+        assert nine in adv.plan, (star, adv.plan)
+        if star == 2:
+            assert "5-1" in econ.reason

@@ -274,3 +274,16 @@ def test_itemized_tank_does_not_trigger_contest():
     carry = Unit(api_name="TFT99_Braum", name="Braum", cost=2, star=2, items=["Deathblade", "Giant Slayer"], row=3, col=0)
     reqs = ScoutPlanner(max_per_stage=1, clock=Clock()).plan(state_at("3-5", plist, opponents, board=[carry]), Analysis())
     assert targets(reqs) == ["Weak"]
+
+
+def test_team_size_items_and_emblems_do_not_make_a_contest_key():
+    """A tank holding Tactician's items / an emblem is not the carry: its
+    name is no contest key (same find_carry as the rules)."""
+    sett = Unit(api_name="TFT99_Sett", name="Sett", cost=2, star=2, items=["斗士纹章", "金铲铲冠冕"], row=0, col=3)
+    planner = ScoutPlanner(clock=Clock())
+    _comp, carry_keys, _contested = planner._targets(state_at("3-5", P7, board=[sett]), Analysis())
+    assert not carry_keys
+    english = sett.model_copy(update={"items": ["Brawler Emblem", "Tactician's Crown"]})
+    assert not planner._targets(state_at("3-5", P7, board=[english]), Analysis())[1]
+    carry = sett.model_copy(update={"items": ["Infinity Edge", "Guinsoo's Rageblade"]})
+    assert "sett" in planner._targets(state_at("3-5", P7, board=[carry]), Analysis())[1]

@@ -17,7 +17,9 @@ from typing import Iterable, NamedTuple, Optional
 from ..config import HotkeyConfig
 from ..data.mechanics import Mechanics, load_mechanics
 from ..data.setdata import SetData, normalize_name
-from ..engine.economy import REROLL_END, ROLLDOWN_ROUNDS, _wanted_level, hp_bucket, reroll_level
+from ..engine.analyzer import Analyzer
+from ..engine.economy import REROLL_END, ROLLDOWN_ROUNDS, _wanted_level, catch_up_keep, hp_bucket, reroll_level
+from ..engine.items import item_role
 from ..engine.tracker import WISP_PREFIXES, is_wisp_name
 from ..vision.base import is_unknown_item
 from ..models import (
@@ -67,8 +69,16 @@ AUGMENT_MORE = "，详细对比看 Claude 建议"
 NO_ROLL_GOLD = "金币不够搜牌，先存钱"
 DEFAULT_HEADLINE = "按节奏运营，稳住血量"
 NO_ROLL_GOLD_ACTION = "金币不够搜牌，这回合先存钱吃利息"
+# Start of the econ reason for a roll turned into a wait on a PvE round
+# (economy.plan_economy: "野怪回合先不搜，下回合 X-1 再搜稳血").
+PVE_WAIT_PREFIX = "野怪回合先不搜"
+# Markers of the analyzer's empty team slot warnings ("还有 N 个空位，买英雄补满",
+# "还能再上 N 个，把备战席的棋子放上去").
+FILL_MARKS = ("个空位", "还能再上")
 
 _WISP_PREFIX = re.compile(r"^\s*(?:" + "|".join(re.escape(p) for p in WISP_PREFIXES) + r")\s*[:：]?\s*", re.I)
+# A Wisp whose name says it gives XP / levels (no use at the max level).
+_XP_WISP = re.compile(r"经验|等级|升级|\b(?:xp|exp|experience|level(?:\s*up)?)\b", re.I)
 _DASHES = re.compile(r"\s*[\u2014\u2015\u2E3A\u2E3B]+\s*")
 # An em dash between digits is a range or a round ("4—1", "10——20"): keep it
 # as a hyphen, like vision.base.clean_text does for rounds.
@@ -192,16 +202,51 @@ def is_tank_item(name: str, set_data: Optional[SetData] = None) -> bool:
     return False
 
 
+# Items that say nothing about who carries: +1 team size items and Thief's
+# Gloves (parked on a spare unit), emblems (given for the trait). Fallback
+# names for when the set data cannot resolve them (normalized).
+_NON_CARRY_ITEM_NAMES = {
+    normalize_name(n)
+    for n in (
+        "Tactician's Crown", "Tactician's Cape", "Tactician's Shield", "Thief's Gloves",
+        "金铲铲冠冕", "金锅铲冠冕", "金锅锅冠冕", "窃贼手套",
+    )
+}
+_EMBLEM_WORDS = ("emblem", "纹章")
+
+
+def _is_carry_item(name: str, set_data: Optional[SetData]) -> bool:
+    """A damage item (or one the role table does not know): not a tank,
+    utility or team size item, not an emblem, not Thief's Gloves."""
+    key = _norm(name)
+    if key in _NON_CARRY_ITEM_NAMES or any(w in name.lower() for w in _EMBLEM_WORDS):
+        return False
+    if is_tank_item(name, set_data):
+        return False
+    item = None
+    if set_data is not None:
+        try:
+            item = set_data.resolve_item(name)
+        except Exception:
+            item = None
+    if item is not None and _norm(item.name_en) in _NON_CARRY_ITEM_NAMES:
+        return False
+    role = item_role(item, name)[0]
+    # Flex covers damage items like Guinsoo's Rageblade and Hand of Justice.
+    return role in ("ad", "ap", "flex")
+
+
 def _carry_items(u: Unit, set_data: Optional[SetData]) -> int:
     # "?" (an icon vision could not name) is neutral: it may be a tank item.
-    return sum(1 for i in u.items if i and not is_unknown_item(i) and not is_tank_item(i, set_data))
+    return sum(1 for i in u.items if i and not is_unknown_item(i) and _is_carry_item(i, set_data))
 
 
 def find_carry(state: GameState, analysis: Analysis, set_data: Optional[SetData] = None) -> Optional[Unit]:
     """The main carry on the board: the top comp's carry if fielded, else the
     board unit holding the most damage items (at least 2; tank items such as
-    Warmog's or Bramble Vest do not count, so an itemized tank is never taken
-    for the carry). Ties: higher cost, then star."""
+    Warmog's or Bramble Vest, utility and +1 team size items and emblems do
+    not count, so an itemized tank is never taken for the carry). Ties:
+    higher cost, then star."""
     board = list(state.board)
     if not board:
         return None
@@ -297,6 +342,11 @@ def _buy_headline(picks: list[str], prefix: str = "", suffix: str = "") -> str:
     return prefix + option + suffix
 
 
+def _fill_warning(analysis: Analysis) -> Optional[str]:
+    """The analyzer's "empty team slot" warning (buy or field a unit), if any."""
+    return next((w for w in analysis.warnings if FILL_MARKS[0] in w or FILL_MARKS[1] in w), None)
+
+
 def _low_hp(hp: Optional[int]) -> bool:
     """Low or critical HP (the econ engine's buckets)."""
     return hp_bucket(hp) in ("low", "critical")
@@ -333,6 +383,9 @@ class RulesAdvisor:
         self.claude_enabled = claude_enabled
         # Keys that could not be registered as global hotkeys (set by the app).
         self.unavailable_keys: set[str] = set()
+        # Actions ("analyze", "scout", ...) whose key does not work for them,
+        # for example a key repeated in the config (set by the app).
+        self.unavailable_actions: set[str] = set()
         # Static augment reference of the set (names, effects, tier snapshot).
         self.augments = None  # Optional[AugmentData], set by the app
 
@@ -416,7 +469,12 @@ class RulesAdvisor:
     def _press(self, kind: str) -> str:
         """'按 F7' when the hotkey works, otherwise the dashboard button to tap."""
         key = str(getattr(self.hotkeys, kind, "") or "")
-        usable = self.hotkeys.enabled and key and key.strip().lower() not in {k.strip().lower() for k in self.unavailable_keys}
+        usable = (
+            self.hotkeys.enabled
+            and key
+            and kind not in self.unavailable_actions
+            and key.strip().lower() not in {k.strip().lower() for k in self.unavailable_keys}
+        )
         return f"按 {key} " if usable else self._BUTTONS.get(kind, "点看板按钮")
 
     # ------------------------------------------------------------------ public
@@ -486,10 +544,14 @@ class RulesAdvisor:
             who = req.target_player or "对手"
             add(ActionType.SCOUT, f"点开「{who}」的棋盘后{self._press('scout').rstrip()}", 2 if i == 0 else 3)
 
-        if analysis.warnings:
+        fill = _fill_warning(analysis)
+        if fill:
+            # An empty team slot is free strength: this round, not "nice to have".
+            add(ActionType.OTHER, fill, 2)
+        if analysis.warnings and analysis.warnings[0] != fill:
             add(ActionType.OTHER, analysis.warnings[0], 3)
 
-        wisp = "" if carousel else self._wisp(state)
+        wisp = "" if carousel else self._wisp(state, analysis)
         if wisp:
             add(ActionType.BUY, wisp, 3)
 
@@ -586,7 +648,16 @@ class RulesAdvisor:
             target = econ.target_level or ((state.level or 0) + 1)
             return _buy_headline(picks, prefix=f"升到{target}级，") if pick else f"升到{target}级"
         # A built item nobody can take is not headline material.
-        slam = next((s for s in analysis.items if s.priority == 1 and (s.components or s.holder)), None)
+        # Neither is an item for a benched holder (field it first, see _item_actions).
+        slam = next(
+            (
+                s
+                for s in analysis.items
+                if s.priority == 1
+                and (s.components or (s.holder and self._holder_spot(state, analysis, s.holder) == "board"))
+            ),
+            None,
+        )
         if slam:
             if not slam.components:
                 return f"把{slam.item}装给{slam.holder}"
@@ -597,11 +668,22 @@ class RulesAdvisor:
             gold = self._gold(state, analysis)
             cap = self._cap_gold()
             if pick:
-                return _buy_headline(picks, suffix="，其余存钱")
-            if (econ.reason or "").startswith("野怪回合先不搜"):
+                if _fill_warning(analysis):
+                    return _buy_headline(picks, suffix="补满空位")
+                # Gold above the cap goes into XP (economy: "买 N 次经验"), not "save".
+                spare_xp = "次经验" in (econ.reason or "") and gold > cap
+                return _buy_headline(picks, suffix="，多的钱买经验" if spare_xp else "，其余存钱")
+            if self._pve_wait(state, analysis):
                 # PvE round: the gold waits for the next player round, it is not a "save to 50".
-                nxt = f"{state.stage.stage + 1}-1" if state.stage else "下回合"
-                return f"野怪回合先存着，{nxt}再搜"
+                return f"野怪回合先存着，{state.stage.stage + 1}-1再搜"
+            catch = self._catch_up(state, analysis)
+            if catch is not None:
+                # Behind the line in stage 4+: the level comes as soon as it is affordable.
+                lvl, cost = catch
+                return f"攒够{cost}金币升{lvl}级" if cost and gold < cost else f"存钱，准备升{lvl}级"
+            xp = re.search(r"买 (\d+) 次经验", econ.reason or "")
+            if xp and gold > cap:
+                return f"利息已满，多的钱买{xp.group(1)}次经验"
             return f"存钱到{cap}" if gold < cap else f"保持{cap}金币吃满利息"
         if pick:
             return _buy_headline(picks)
@@ -636,15 +718,10 @@ class RulesAdvisor:
         picks = [p for p in analysis.shop_picks if p]
         if not picks:
             return "", 2, []
+        # Every pick is named: the analyzer's budget, roll budget and odds
+        # count all of them, so a shorter form is used before one is dropped.
         used: set[int] = set()
-        parts: list[str] = []
-        for name in picks[:3]:
-            slot = self._slot_of(state, name, used)
-            part = f"{name}（第{slot}格）" if slot else name
-            candidate = "买 " + _join(parts + [part])
-            if parts and len(candidate) > ACTION_MAX:
-                break
-            parts.append(part)
+        slots = [self._slot_of(state, name, used) for name in picks]
         owned: Counter[str] = Counter()
         for u in state.all_units():
             for k in _unit_keys(u):
@@ -654,16 +731,22 @@ class RulesAdvisor:
             EconAction.LEVEL_AND_ROLL,
             EconAction.ALL_IN,
         )
-        while True:
-            bought = Counter(_norm(p) for p in picks[: len(parts)])
-            # Three copies of the same star level merge: only the leftover
-            # one-star copies (total copies mod 3) count toward the next upgrade.
-            makes_upgrade = any(k and owned.get(k, 0) % 3 + n >= 3 for k, n in bought.items())
-            text = "买 " + _join(parts) + ("，能升星" if makes_upgrade else "")
-            if len(text) <= ACTION_MAX or len(parts) <= 1:
-                break
-            parts.pop()  # keep the upgrade note rather than a low-priority third unit
-        return text, 1 if (makes_upgrade or rolling) else 2, picks[: len(parts)]
+        bought = Counter(_norm(p) for p in picks)
+        # Three copies of the same star level merge: only the leftover
+        # one-star copies (total copies mod 3) count toward the next upgrade.
+        makes_upgrade = any(k and owned.get(k, 0) % 3 + n >= 3 for k, n in bought.items())
+        note = "，能升星" if makes_upgrade else ""
+        counts = Counter(picks)
+        options = [
+            "买 " + _join(f"{n}（第{s}格）" if s else n for n, s in zip(picks, slots)),
+            "买 " + _join(f"{counts[u]}张{u}" if counts[u] > 1 else u for u in counts),
+        ]
+        if len(picks) > 1:
+            if all(slots):
+                options.append(f"买第{_join(str(s) for s in sorted(slots))}格")
+            options += [f"买 {picks[0]} 等 {len(picks)} 张", f"买 {len(picks)} 张牌"]
+        text = next((o + note for o in options if len(o + note) <= ACTION_MAX), options[-1] + note)
+        return text, 1 if (makes_upgrade or rolling) else 2, picks
 
     def _roll_text(self, state: GameState, analysis: Analysis) -> str:
         base = f"最多花 {analysis.econ.roll_budget} 金币搜牌"
@@ -799,15 +882,34 @@ class RulesAdvisor:
             return f"装备格都满了，{item} 先留着"
         return f"现在的阵容没人适合用 {item}，先留着"
 
+    @staticmethod
+    def _holder_spot(state: GameState, analysis: Analysis, name: Optional[str]) -> str:
+        """Where a completed item's holder is: "board" (a fielded copy with a
+        free slot, or the board is unknown), "sell" (only on the bench and
+        the engine wants it sold) or "bench"."""
+        key = _norm(name)
+        if not key or not state.board:
+            return "board"
+        if any(key in _unit_keys(u) and len([i for i in u.items if i]) < MAX_UNIT_ITEMS for u in state.board):
+            return "board"
+        if key in {_norm(n) for n in analysis.sell_candidates}:
+            return "sell"
+        return "bench"
+
     def _item_actions(self, state: GameState, analysis: Analysis) -> list[tuple[str, int]]:
         out: list[tuple[str, int]] = []
         for s in [s for s in analysis.items if s.priority == 1][:2]:
+            spot = "board" if s.components else self._holder_spot(state, analysis, s.holder)
             if s.components:
                 out.append((f"合成 {s.item} 给 {s.holder}" if s.holder else f"合成 {s.item}", 1))
-            elif s.holder:
+            elif s.holder and spot == "board":
                 # Already built (sitting on the bench): equip, do not "combine".
                 out.append((f"把 {s.item} 装给 {s.holder}", 1))
+            elif s.holder and spot == "bench":
+                # An item on a bench unit does nothing this round.
+                out.append((f"先把 {s.holder} 上场再装 {s.item}", 2))
             else:
+                # No holder, or only a unit the engine wants sold.
                 out.append((self._stuck_item_text(state, s.item), 2))
         if not out:
             nxt = next((s for s in analysis.items if s.priority == 2 and s.components), None)
@@ -815,16 +917,26 @@ class RulesAdvisor:
                 out.append((f"准备合成 {nxt.item}" + (f" 给 {nxt.holder}" if nxt.holder else ""), 3))
         return out
 
-    def _wisp(self, state: GameState) -> str:
+    def _wisp(self, state: GameState, analysis: Analysis) -> str:
         """Hint for a Set 18 Wisp in the shop. Its effect is unknown here, so
         judge it like a small augment (set notes): cheap econ / XP Wisps
-        early, combat Wisps when stabilizing."""
+        early, combat Wisps when stabilizing. Only for this round's shop, and
+        only with gold the plan leaves after its level, buys and rolls."""
+        if state.screen_type == ScreenType.AUGMENT_SELECT or Analyzer.shop_is_stale(state):
+            return ""
+        spare: Optional[int] = None
+        if state.gold is not None:
+            level_first = analysis.econ.recommendation in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL)
+            spare = self._gold_left_after(state, analysis, level_first)
+        max_level = state.level is not None and state.level >= self.mech.max_level
         for i, slot in enumerate(state.shop):
             if not (slot.name and is_wisp_name(slot.name)):
                 continue
-            if slot.cost is not None and state.gold is not None and state.gold < slot.cost:
-                return ""
+            if slot.cost is not None and spare is not None and spare < slot.cost:
+                continue
             name = _WISP_PREFIX.sub("", slot.name).strip()
+            if max_level and _XP_WISP.search(name):
+                continue  # XP is worth nothing at the max level
             price = f"（{slot.cost}金币）" if slot.cost is not None else ""
             sr = state.stage
             early = sr is not None and sr.stage <= 3 and not _low_hp(state.hp)
@@ -997,9 +1109,25 @@ class RulesAdvisor:
                 parts.append(f"停在 {stay} 级慢搜三星，只花 {cap} 以上的钱")
             parts.append("三星成型或 4-5 后再升级补强")
         else:
-            parts.extend(self._level_steps(sr, level, econ, state.hp, self._level_tags(state, analysis)))
             gold = self._gold(state, analysis)
-            if econ.recommendation == EconAction.SAVE and gold < self._cap_gold() and sr.stage <= 4:
+            catch = self._catch_up(state, analysis)
+            save_for = catch[1] if catch is not None and catch[1] and gold < catch[1] else None
+            top = analysis.comps[0] if analysis.comps else None
+            key_star = self._carry_star(top, state) if top is not None and top.carry else None
+            steps = self._level_steps(sr, level, econ, state.hp, self._level_tags(state, analysis), save_for, key_star)
+            parts.extend(steps)
+            if self._pve_wait(state, analysis):
+                # The gold waits for the next player round's roll, not for 50.
+                nxt = f"{sr.stage + 1}-1"
+                rolls_next = any(s.startswith(f"{nxt} ") and "搜牌稳血" in s for s in steps)
+                parts.insert(0, "野怪回合先存着" if rolls_next else f"野怪回合先存着，{nxt} 搜牌稳血")
+            elif (
+                econ.recommendation == EconAction.SAVE
+                and gold < self._cap_gold()
+                and sr.stage <= 4
+                and catch is None
+                and not _low_hp(state.hp)
+            ):
                 parts.insert(0, f"先存到 {self._cap_gold()}")
         if state.hp and _low_hp(state.hp) and econ.recommendation != EconAction.ALL_IN:
             parts.append("血量偏低，优先稳血别贪经济")
@@ -1008,10 +1136,13 @@ class RulesAdvisor:
             parts.append(f"目标 {comp.name}")
         return "，".join(parts)
 
-    def _milestones(self, style: str, hp: Optional[int] = None) -> list[tuple[StageRound, int]]:
+    def _milestones(
+        self, style: str, hp: Optional[int] = None, key_star: Optional[int] = None
+    ) -> list[tuple[StageRound, int]]:
         """(round, level) milestones of the line being played, sorted: the
         level the econ engine wants at each round (``economy._wanted_level``:
-        the standard curve, fast 8 / fast 9 earlier, earliest at healthy HP)."""
+        the standard curve, fast 8 / fast 9 earlier, earliest at healthy HP;
+        ``key_star``: a fast line with a 2-star carry goes 9 from 5-1)."""
         bucket = hp_bucket(hp)
         listed = {r.key for r in map(StageRound.parse, self.mech.standard_levels) if r is not None}
         rounds = sorted(listed | {(s, n) for s in range(2, 8) for n in range(1, 8)})
@@ -1020,7 +1151,7 @@ class RulesAdvisor:
         for stage, rnd in rounds:
             r = StageRound(stage=stage, round=rnd)
             std = self.mech.standard_level_at(r)
-            want = _wanted_level(r, std, style, bucket) if std else 0
+            want = _wanted_level(r, std, style, bucket, key_star) if std else 0
             if want > prev:
                 out.append((r, want))
                 prev = want
@@ -1061,16 +1192,66 @@ class RulesAdvisor:
         tags = tags or {8: " 找 4 费主C", 9: " 找 5 费"}
         return tags.get(min(lvl, 9), "") if lvl >= 8 else ""
 
+    def _due_level(self, sr: StageRound, style: str, hp: Optional[int] = None) -> int:
+        """Level the line should already have at ``sr`` (milestones passed so far)."""
+        return max((lvl for r, lvl in self._milestones(style, hp) if r.key <= sr.key), default=0)
+
+    def _catch_up(self, state: GameState, analysis: Analysis) -> Optional[tuple[int, Optional[int]]]:
+        """(next level, gold the econ engine levels at, or None) when a SAVE
+        plan in stage 4+ is behind the line's level: the engine buys that
+        level as soon as it is affordable, so the gold is for the level, not
+        for 50. The gold kept after the level is ``economy.catch_up_keep``,
+        the same amount plan_economy keeps."""
+        sr = state.stage
+        econ = analysis.econ
+        level = state.level
+        if sr is None or sr.stage < 4 or econ.recommendation != EconAction.SAVE or not level:
+            return None
+        if level >= self.mech.max_level or _is_reroll_plan(econ, sr) or self._pve_wait(state, analysis):
+            return None
+        if level >= self._due_level(sr, econ.style, state.hp):
+            return None
+        cost = self.mech.gold_to_reach(level, state.xp_current, level + 1)
+        if cost is None:
+            cost = econ.gold_to_next_level
+        if cost is None:
+            return level + 1, None
+        std = self.mech.standard_level_at(sr) or level
+        return level + 1, cost + catch_up_keep(sr, level, std, econ.style, state.hp)
+
+    def _pve_wait(self, state: GameState, analysis: Analysis) -> bool:
+        """A SAVE on a PvE round (x-7) while the gold waits for the next player
+        fight: the econ engine turned a roll into a wait (economy.done), or HP
+        is low (a low HP player rolls at (x+1)-1, never "saves to 50")."""
+        sr = state.stage
+        econ = analysis.econ
+        if sr is None or econ.recommendation != EconAction.SAVE:
+            return False
+        if (econ.reason or "").startswith(PVE_WAIT_PREFIX):
+            return True
+        return sr.stage >= 2 and self.mech.is_pve(sr) and _low_hp(state.hp)
+
     def _level_steps(
-        self, sr: StageRound, level: int, econ, hp: Optional[int] = None, tags: Optional[dict[int, str]] = None
+        self,
+        sr: StageRound,
+        level: int,
+        econ,
+        hp: Optional[int] = None,
+        tags: Optional[dict[int, str]] = None,
+        save_for: Optional[int] = None,
+        key_star: Optional[int] = None,
     ) -> list[str]:
         """Plan steps for a standard / fast 8 / fast 9 line: the level up the
         econ plans now, a catch-up when the line is behind (a fast 8 player
-        still at 7 after 4-2 must hear "升 8"), then the next milestones."""
+        still at 7 after 4-2 must hear "升 8"), then the next milestones.
+        ``save_for``: gold the next level costs when the catch-up cannot be
+        paid yet ("攒够 N 金币就升 X"). ``key_star``: star level of the
+        carry, for the upcoming milestones only (the round the econ engine
+        levels a fast line with a 2-star carry to 9)."""
         steps: list[str] = []
-        sched = self._milestones(econ.style, hp)
+        sched = self._milestones(econ.style, hp, key_star)
         # Level the line should already have (milestones passed so far).
-        due = max((lvl for r, lvl in sched if r.key <= sr.key), default=0)
+        due = self._due_level(sr, econ.style, hp)
         now = level or due  # unknown level: assume the line is on schedule
         if econ.recommendation in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL) and econ.target_level:
             text = f"现在升 {econ.target_level}"
@@ -1085,6 +1266,12 @@ class RulesAdvisor:
             for i, lvl in enumerate(targets):
                 if i:
                     verb = f"再升 {lvl}"
+                elif save_for:
+                    # Not affordable yet: name the gold, then any further catch-up.
+                    verb = f"攒够 {save_for} 金币就升 {now + 1}"
+                    if lvl > now + 1:
+                        steps.append(verb)
+                        verb = f"尽快补到 {lvl} 级"
                 else:
                     verb = f"尽快升 {lvl}" if lvl == now + 1 else f"尽快补到 {lvl} 级"
                 tag = self._level_tag(lvl, tags)
@@ -1129,9 +1316,18 @@ class RulesAdvisor:
             if not (state is not None and s.components and s.priority >= 3 and self._holder_full(state, s.holder))
         ]
         if sugs:
+
+            def holder(s) -> Optional[str]:
+                # A built item is not planned for a unit the engine wants sold.
+                if s.holder and not s.components and state is not None:
+                    if self._holder_spot(state, analysis, s.holder) == "sell":
+                        return None
+                return s.holder
+
             parts = [
-                f"{s.item} 给 {s.holder}" if s.holder else (s.item if s.components else f"{s.item} 先留着")
+                f"{s.item} 给 {h}" if h else (s.item if s.components else f"{s.item} 先留着")
                 for s in sugs[:3]
+                for h in (holder(s),)
             ]
             return clip(_join(parts, "，"), FIELD_MAX)
         names = [n for n in (comp.carry_items if comp else []) if is_display_name(n)]

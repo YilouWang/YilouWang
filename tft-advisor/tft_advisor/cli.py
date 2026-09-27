@@ -447,11 +447,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print("  " + _mechanics_line(cfg))
     print("截图:")
     try:
-        from .capture.screen import ScreenCapturer, find_window_rect, set_dpi_awareness
+        from .capture.screen import KNOWN_PROCESS_NAMES, ScreenCapturer, find_window_rect, set_dpi_awareness
 
         set_dpi_awareness()
         rect = find_window_rect(cfg.capture.window_title)
-        _check("游戏窗口", rect is not None, str(rect) if rect else f"没找到窗口 '{cfg.capture.window_title}'（游戏没开时正常）")
+        missing = (
+            f"没找到窗口 '{cfg.capture.window_title}' 或游戏进程 {' / '.join(KNOWN_PROCESS_NAMES[:2])}"
+            "（游戏没开时正常；游戏开着也找不到时，把 [capture] window_title 改成游戏窗口的标题）"
+        )
+        _check("游戏窗口", rect is not None, str(rect) if rect else missing)
         cap = ScreenCapturer(cfg.capture)
         try:
             img = cap.grab()

@@ -480,3 +480,77 @@ def test_max_round_damage_uses_stage_damage(mech):
     assert mech.max_round_damage(4) == mech.stage_damage[4] + 20
     assert mech.max_round_damage(None) >= 20
     assert not hasattr(mech, "xp_needed")
+
+
+# ---------------------------------------------------------------------------
+# Level plans: fast lines behind their level, gold above the cap, the 9 round
+# ---------------------------------------------------------------------------
+
+
+def test_fast_line_behind_its_level_levels_instead_of_slow_rolling_at_7(mech):
+    for hp in (82, 60):
+        plan = plan_economy(gs("4-3", gold=62, level=7, hp=hp), mech, "fast8", key_star=1)
+        assert plan.recommendation == EconAction.LEVEL and plan.target_level == 8, hp
+    # Not affordable yet: the gold above 50 goes into XP, never a roll at 7.
+    plan = plan_economy(gs("4-3", gold=54, level=7, hp=82), mech, "fast8", key_star=1)
+    assert plan.recommendation == EconAction.SAVE and plan.roll_budget == 0
+    assert "经验" in plan.reason and "升 8 级" in plan.reason
+
+
+def test_gold_above_the_cap_is_never_idle_in_stages_2_and_3(mech):
+    # 94 gold at 3-3, level 5: the catch-up level, then XP down to 50.
+    plan = plan_economy(gs("3-3", gold=94, level=5, xp=8, hp=80, streak=-5), mech, "fast8", key_star=0)
+    assert plan.recommendation == EconAction.LEVEL and plan.target_level == 6
+    spend = mech.gold_to_reach(5, 8, 6)
+    buys = (94 - spend - 50) // mech.buy_xp_cost
+    assert f"再买 {buys} 次经验" in plan.reason
+    # Enough for two levels while keeping 50: both.
+    plan = plan_economy(gs("3-3", gold=110, level=5, xp=8, hp=80), mech)
+    assert plan.recommendation == EconAction.LEVEL and plan.target_level == 7
+    # 78 gold at 3-5, level 6, the level not affordable above 50: explicit XP buys.
+    plan = plan_economy(gs("3-5", gold=78, level=6, xp=4, hp=62), mech, "fast8", key_star=0)
+    assert plan.recommendation == EconAction.SAVE and "买 7 次经验" in plan.reason
+
+
+def test_fast_line_nine_round_matches_the_level_plan(mech):
+    from tft_advisor.engine.economy import FAST_NINE_ROUND, _wanted_level
+
+    sr = StageRound.parse("4-3")
+    for style in ("fast8", "fast9"):
+        plan = plan_economy(gs("4-3", gold=30, level=8, hp=60), mech, style, key_star=2)
+        rnd = f"{FAST_NINE_ROUND[0]}-{FAST_NINE_ROUND[1]}"
+        assert f"{rnd} 升 9 级" in plan.reason, plan.reason
+        # The level plan with the carry's star says the same round.
+        nine = StageRound(stage=FAST_NINE_ROUND[0], round=FAST_NINE_ROUND[1])
+        std = mech.standard_level_at(nine)
+        assert _wanted_level(nine, std, style, "medium", key_star=2) == 9
+        assert _wanted_level(sr, mech.standard_level_at(sr), style, "medium", key_star=2) < 9
+    # Short enough to survive the 40 character action clip.
+    plan = plan_economy(gs("4-5", gold=80, level=8, hp=60), mech, "fast9", key_star=2)
+    assert "5-1 升 9 级" in plan.reason and len(plan.reason) <= 40
+
+
+@pytest.mark.parametrize("hp", [90, 50, 35])
+def test_pve_round_treats_a_level_the_same_in_every_hp_bucket(mech, hp):
+    plan = plan_economy(gs("4-7", gold=60, level=7, hp=hp), mech)
+    # The level costs this round's interest: it waits for 5-1 like the roll.
+    assert plan.recommendation == EconAction.SAVE and plan.roll_budget == 0 and plan.target_level is None
+    assert plan.reason.startswith("野怪回合先不搜") and "5-1" in plan.reason and "8 级" in plan.reason
+    # One round later (or earlier) the level is bought.
+    for stage in ("4-6", "5-1"):
+        after = plan_economy(gs(stage, gold=60, level=7, hp=hp), mech)
+        assert after.recommendation in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL) and after.target_level == 8
+    # A level that costs no interest stays on the PvE round.
+    rich = plan_economy(gs("4-7", gold=110, level=7, hp=hp), mech)
+    assert rich.recommendation == EconAction.LEVEL and rich.target_level == 8 and rich.roll_budget == 0
+
+
+def test_catch_up_keep_is_shared_with_the_level_texts(mech):
+    from tft_advisor.engine.economy import CATCH_UP_KEEP, catch_up_keep
+
+    for stage, level, style, hp, keep in (
+        ("4-3", 7, "fast8", 72, 0), ("4-3", 7, "standard", 72, CATCH_UP_KEEP), ("4-1", 6, "fast8", 72, 0),
+        ("5-1", 7, "standard", 72, 0), ("4-3", 7, "standard", 30, 0),
+    ):
+        sr = StageRound.parse(stage)
+        assert catch_up_keep(sr, level, mech.standard_level_at(sr), style, hp) == keep, stage

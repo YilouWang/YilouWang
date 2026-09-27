@@ -148,13 +148,18 @@ reached, the last augment round) or pay out too late at low HP score lower.
   `.taken_copies()`, `.taken_by_player()`, `.set_field(name, value)`, `.reset()`,
   `.self_name_confirmed` (the local name was flagged on 2+ frames: only then is it
   sent to vision as a hint). `field_age["round"]` is when the current round started.
-  Suspicious readings (a lower stage, a gold jump, a lower level, an HP drop larger
-  than the fights since can deal) need a second consistent reading.
+  Suspicious readings (a lower stage, a gold jump or a lost digit, a lower level,
+  an HP drop larger than the fights since can deal) need a second consistent
+  reading; a level rises at most once per round and only as far as the gold spent
+  since can buy. Combat frames never change a known board, and a double stage-1
+  reading resets the game only when nothing on screen shows the old game going on.
 * `analyzer.py`: `Analyzer(set_data, mech, comps).analyze(state, taken) -> Analysis`;
   `Analyzer.shop_is_stale(state)` (carousel frame, or a shop read before the round
   started: no shop picks; the dashboard labels it 上回合的商店).
   Shop picks are paid from the roll budget (`Analysis.shop_picks_cost`), and the
-  odds count the copies they buy. `CompSuggestion` carries the library's `style`,
+  odds count the copies they buy. Team slots neither the board nor the bench can
+  fill get fill picks first (comp units, then trait fit, then cost; inside the hard
+  gold limit, not the interest limit); the rules headline then says 补满空位. `CompSuggestion` carries the library's `style`,
   `tier`, `positions` (unit -> [row, col]) and `item_holders`.
 * The tracker takes an opponent's level only from `ScreenObservation.viewed_player_level`
   (or the note "对手等级 N"), never from the local HUD `level`.
@@ -196,10 +201,16 @@ records requests and returns scripted replies, so the real SDK path runs offline
 
 ### `tft_advisor/advisor/`
 * `rules.py`: `RulesAdvisor().advise(state, analysis) -> Advice` (Chinese, offline).
+  The app sets `unavailable_keys` / `unavailable_actions` from the registered hotkeys,
+  so a key that does not work for an action is never named (the dashboard button is).
+  Level plans use `economy._wanted_level(..., key_star)` and a save for a catch-up
+  level quotes `economy.catch_up_keep`, so the texts match when the econ levels.
 * `strategist.py`: `ClaudeStrategist(llm, cfg, set_data, *, clock=time.time, extra_reference="", hotkeys=None, scout_enabled=True, augments=None)`
   `.advise(state, analysis, rules_advice, question=None) -> Advice` and `.ask(question, state, analysis) -> str`.
-  `AdvisorApp` passes `[hotkeys]` (reported as "off" when no global hotkey could be
-  registered) and `[advisor] scout_prompts` (False: scout requests are dropped).
+  `AdvisorApp` passes `[hotkeys]` per key (`app.strategist_hotkeys`: a key that does not
+  work for its action, not registered or repeated in the config, is sent as "off"; the
+  whole field is "off" when neither the analyze nor the scout key works) and
+  `[advisor] scout_prompts` (False: scout requests are dropped).
 * `scouting.py`: `ScoutPlanner(max_per_stage).plan(state, analysis) -> list[ScoutRequest]`.
 
 ### `tft_advisor/ui/`
@@ -247,7 +258,8 @@ advice; advice-only `purpose="strategy"` records update that round's
 advice; `level_timing` with `standard_round` / `rounds_late` (a lower bound
 backed by logged rounds, None when a log gap hides it);
 `interest_short_on_save_rounds` counts only stage 3+ rounds where the
-assistant said save; `augments` with the round first seen;
+assistant said save for interest (PvE rounds, low / critical HP and rounds
+whose plan buys shop units, `shop_picks_cost > 0`, are left out); `augments` with the round first seen;
 `final_item_bench`), `format_summary`, `llm_review` (`REVIEW_SYSTEM` explains
 every field and asks to skip categories without data; em dashes removed).
 
@@ -270,12 +282,19 @@ every field and asks to skip categories without data; em dashes removed).
   kept as one follow-up. A job that must be dropped is reported as
   `命令 <按钮> 失败：...`, so the dashboard toast says 未执行. Each job
   remembers the 新对局 generation it was created in; a result from before a
-  reset is dropped.
+  reset is dropped. The check is made before ingest and again, under
+  `_advice_lock`, right before publishing and logging (new_game() and a
+  tracker-detected new game take that lock too, lock order `_state_lock` then
+  `_advice_lock`), so nothing of the old game is shown or logged after a reset.
 * strategy thread (when a strategist exists and `start()` ran): single slot,
   runs the Claude strategist after auto / manual / reanalyze jobs and
   publishes its advice only if the game, round and request are still current.
-  If the shop changed while Claude was thinking, its buy actions are replaced
-  by the rules' buy actions for the current shop (`source="rules+llm"`).
+  If the shop changed while Claude was thinking, its buy actions are fitted to
+  the current shop (`_merge_buy_actions`, `source="rules+llm"`): a Claude buy
+  whose units are all still in the same slots stays; the others are replaced
+  by the rules' buys, minus buys of units Claude saw and did not buy; advice
+  without a buy action gets none; at most `MAX_ACTIONS` actions. The publish
+  and the log line happen under `_advice_lock`.
   Without `start()` (replay, tests) the strategist runs inline in `run_job`.
 * Shop reads and scouts never ask Claude, and they do not replace Claude's
   advice for the same game and round: it stays up (buy actions redone for a

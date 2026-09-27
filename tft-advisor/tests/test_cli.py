@@ -809,6 +809,37 @@ def test_interest_metric_counts_only_rounds_the_assistant_said_to_save():
     assert "(第3阶段起，累计): 2（3-5）" in format_summary(s)
 
 
+def test_interest_metric_skips_saves_that_are_not_about_interest():
+    """The econ also says "save" on a PvE round (wait to roll at the next player
+    round), at low HP, and when a roll budget went to shop units: following
+    that plan is not an interest mistake."""
+    mech = load_mechanics()
+
+    def rec(stage, gold, econ, hp=80, picks_cost=0):
+        r = _full_rec(stage, gold, 8, econ=econ, hp=hp)
+        r["analysis"]["shop_picks_cost"] = picks_cost
+        return r
+
+    recs = [
+        rec("4-5", 40, "roll", hp=30),
+        rec("4-6", 30, "all_in", hp=22),
+        rec("4-7", 22, "save", hp=18),  # PvE wait after the all-in plan (low HP too)
+    ]
+    s = summarize_log(recs, mech)
+    assert s["interest_short_on_save_rounds"] == 0 and s["interest_short_rounds"] == []
+    for row in (
+        rec("3-7", 30, "save", hp=90),  # PvE round, any HP
+        rec("4-2", 30, "save", hp=40),  # low HP: the gold is meant for the board
+        rec("4-1", 30, "save", hp=90, picks_cost=6),  # the plan buys shop units
+    ):
+        s = summarize_log([row], mech)
+        assert s["interest_short_on_save_rounds"] == 0, row["state"]["stage"]
+    # A plain interest save at healthy HP still counts.
+    s = summarize_log([rec("4-3", 30, "save", hp=60)], mech)
+    assert s["interest_short_on_save_rounds"] == 2 and s["interest_short_rounds"] == ["4-3"]
+    assert "PvE" in REVIEW_SYSTEM and "low HP" in REVIEW_SYSTEM
+
+
 def test_review_payload_has_items_augments_comp_and_explains_fields():
     from tft_advisor.config import AnthropicConfig
     from tft_advisor.llm import LLM

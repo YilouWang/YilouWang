@@ -1408,3 +1408,228 @@ def test_shop_reads_keep_the_reserve_when_ocr_falls_back_to_claude(cfg, sample):
     assert not app._shop_read_allowed()
     app.perceiver = app.fast_perceiver  # OCR only: free
     assert app._shop_read_allowed()
+
+
+# ---------------------------------------------------------------------------
+# Regression round 4: partial hotkeys reach Claude, resets vs in-flight work,
+# Claude's advice fitted to a changed shop
+# ---------------------------------------------------------------------------
+
+
+def _hotkeys_json(strategist, sample):
+    from tft_advisor.advisor.prompts import build_state_message
+    from tft_advisor.models import Advice, Analysis, GameState
+
+    msg = build_state_message(GameState(), Analysis(), Advice(headline="x"), hotkeys=strategist.hotkeys)
+    start = msg.index('"hotkeys":') + len('"hotkeys":')
+    return json.JSONDecoder().raw_decode(msg[start:])[0]
+
+
+@pytest.mark.parametrize(
+    "failed, config, expected",
+    [
+        ({"F7": "taken"}, {}, {"analyze": "F6", "scout": "off"}),
+        ({"F6": "taken"}, {}, {"analyze": "off", "scout": "F7"}),
+        ({"F6": "taken", "F7": "taken"}, {}, "off"),
+        ({"F8": "taken", "F9": "taken"}, {}, {"analyze": "F6", "scout": "F7"}),  # keys Claude never names
+        ({}, {"scout": "f6"}, {"analyze": "F6", "scout": "off"}),  # repeated key: F6 analyses
+    ],
+)
+def test_claude_names_only_hotkeys_that_work_for_their_action(cfg, sample, hotkeys_stub, failed, config, expected):
+    from tft_advisor.advisor.strategist import ClaudeStrategist
+
+    hotkeys_stub.failed_keys = failed
+    for action, key in config.items():
+        setattr(cfg.hotkeys, action, key)
+    strat = ClaudeStrategist(object(), cfg.anthropic, sample, hotkeys=cfg.hotkeys)
+    app = make_app(cfg, sample, [], strategist=strat)
+    app.start(dashboard=False, hotkeys=True, voice=False, capture=False)
+    try:
+        live = app.bus.latest("status")["hotkeys_live"]
+        assert _hotkeys_json(strat, sample) == expected
+        # Same answer as the rules / scout planner / dashboard for each action.
+        for action in ("analyze", "scout"):
+            assert (expected != "off" and expected[action] != "off") is live[action], action
+            # The rules text names the key only when it works for this action.
+            assert app.rules._press(action).startswith("按 ") is live[action], (action, app.rules._press(action))
+        assert app.scout_planner.hotkey_available is live["scout"]
+    finally:
+        app.stop()
+    assert cfg.hotkeys.scout != "off"  # the config itself is untouched
+
+
+def test_strategist_hotkeys_off_when_config_disables_them(cfg, sample):
+    from tft_advisor.advisor.strategist import ClaudeStrategist
+
+    strat = ClaudeStrategist(object(), cfg.anthropic, sample)  # default keys, enabled
+    app = make_app(cfg, sample, [], strategist=strat)
+    app.start(dashboard=False, hotkeys=True, voice=False, capture=False)
+    try:
+        assert _hotkeys_json(strat, sample) == "off"
+    finally:
+        app.stop()
+
+
+def _events(app):
+    seen: list = []
+    for topic in ("state", "analysis", "advice"):
+        app.bus.subscribe(topic, lambda t, p: seen.append((t, p)))
+    return seen
+
+
+def _log_records(cfg):
+    out = []
+    for path in sorted((cfg.cache_dir / "logs").glob("game-*.jsonl"), key=lambda p: p.stem):
+        out.append([json.loads(x) for x in path.read_text(encoding="utf-8").splitlines()])
+    return out
+
+
+def test_new_game_while_a_job_is_analysed_publishes_and_logs_nothing_of_the_old_game(cfg, sample):
+    app = app_with(cfg, sample, RecordingPerceiver())
+    seen = _events(app)
+    real = app.analyzer.analyze
+
+    def analyze_then_reset(state, taken):
+        app.new_game()  # 新对局 pressed while the job is being analysed
+        return real(state, taken)
+
+    app.analyzer.analyze = analyze_then_reset
+    assert app.run_job(Job(4, "manual")) is None
+    assert seen[-1][0] == "advice" and seen[-1][1]["headline"] == "新对局，等待第一次分析"
+    assert all(p is None or p.get("stage") is None for t, p in seen if t == "state")
+    assert app.bus.latest("state")["stage"] is None
+    assert not any(r for recs in _log_records(cfg) for r in recs)
+    assert "已开始新对局，丢弃上一局的分析结果" in log_texts(app)
+
+
+def test_new_game_during_inline_claude_call_drops_its_advice(cfg, sample):
+    class ResettingStrategist(StubStrategist):
+        def advise(self, state, analysis, rules_advice, question=None, recent_history=None):
+            app.new_game()
+            return super().advise(state, analysis, rules_advice)
+
+    app = app_with(cfg, sample, RecordingPerceiver(), strategist=ResettingStrategist())
+    assert app.run_job(Job(4, "manual")) is None
+    assert app.bus.latest("advice")["headline"] == "新对局，等待第一次分析"
+    assert app._llm_shown is None
+    assert not any(r for recs in _log_records(cfg) for r in recs)
+
+
+def test_new_game_waits_for_a_strategy_result_being_published(cfg, sample):
+    """A reset pressed while Claude's advice is being published must not let
+    that advice land in the new game's log file (or after the reset)."""
+    app = app_with(cfg, sample, RecordingPerceiver(), strategist=StubStrategist())
+    app._strategy_async = True  # queue the strategy call, run it by hand below
+    app.run_job(Job(4, "manual"))
+    task = app._strategy_slot.get(timeout=0.01)
+    assert task is not None
+    publish = app._publish_advice
+    resets: list = []
+
+    def publish_then_reset(advice):
+        if advice.source == "llm" and not resets:
+            t = threading.Thread(target=app.new_game)
+            resets.append(t)
+            t.start()
+            t.join(0.3)  # blocked until the strategy result is published and logged
+        publish(advice)
+
+    app._publish_advice = publish_then_reset
+    app._run_strategy(task.extra)
+    resets[0].join(3)
+    logs = _log_records(cfg)
+    assert [[r["purpose"] for r in recs] for recs in logs] == [["manual", "strategy"]]
+    assert app.bus.latest("advice")["headline"] == "新对局，等待第一次分析"
+
+
+def _act(kind, text):
+    from tft_advisor.models import ActionType, AdviceAction
+
+    return AdviceAction(type=ActionType(kind), text=text, priority=1)
+
+
+def _advice(actions, headline="Claude", source="llm"):
+    from tft_advisor.models import Advice
+
+    return Advice(headline=headline, actions=actions, source=source)
+
+
+OLD_SHOP = ("德莱厄斯", "阿狸", "卡尔玛", "艾希", "凯尔")
+
+
+def test_merge_never_adds_buys_to_advice_without_any():
+    from tft_advisor.app import _merge_buy_actions
+
+    claude = _advice([_act("save", "这回合别买牌，存到50")], headline="别买牌，存到50")
+    rules = _advice([_act("buy", "买 盖伦（第2格）")], source="rules")
+    new_shop = ("阿狸", "盖伦", "布隆", "艾希", "凯尔")
+    assert _merge_buy_actions(claude, rules, OLD_SHOP, new_shop) is claude
+
+
+def test_merge_keeps_claude_skipping_a_unit_it_saw():
+    """Claude: buy Ahri, save the rest. The player bought Ahri; the rules would
+    buy Karma, which Claude saw and chose not to buy."""
+    from tft_advisor.app import _merge_buy_actions
+
+    claude = _advice(
+        [_act("buy", "买 阿狸（第2格）升二星"), _act("save", "其余存钱，保持利息")], headline="买阿狸升二星，其余存钱"
+    )
+    rules = _advice([_act("buy", "买 卡尔玛（第3格）")], source="rules")
+    new_shop = ("德莱厄斯", "", "卡尔玛", "艾希", "凯尔")
+    merged = _merge_buy_actions(claude, rules, OLD_SHOP, new_shop)
+    assert [a.text for a in merged.actions] == ["其余存钱，保持利息"]
+    assert merged.headline == "买阿狸升二星，其余存钱" and merged.source == "rules+llm"
+
+
+def test_merge_replaces_old_slots_after_a_reroll_and_keeps_buys_still_in_place():
+    from tft_advisor.app import _merge_buy_actions
+
+    claude = _advice([_act("level", "升到 7 级"), _act("buy", "买 德莱厄斯（第1格）"), _act("roll", "搜到 30")])
+    rules = _advice([_act("buy", "买 盖伦（第2格）"), _act("level", "升级")], source="rules")
+    rerolled = ("阿狸", "盖伦", "布隆", "艾希", "凯尔")
+    merged = _merge_buy_actions(claude, rules, OLD_SHOP, rerolled)
+    assert [a.text for a in merged.actions] == ["升到 7 级", "买 盖伦（第2格）", "搜到 30"]
+    # Another slot was bought: Claude's buy still names the right slot and stays;
+    # the rules' buy of the same unit is not added twice.
+    bought_other = ("德莱厄斯", "", "卡尔玛", "艾希", "凯尔")
+    same = _merge_buy_actions(claude, _advice([_act("buy", "买 德莱厄斯（第1格）")], source="rules"), OLD_SHOP, bought_other)
+    assert same is claude
+
+
+def test_merge_stays_within_max_actions():
+    from tft_advisor.advisor.rules import MAX_ACTIONS
+    from tft_advisor.app import _merge_buy_actions
+
+    claude = _advice(
+        [_act("buy", "买 德莱厄斯（第1格）")] + [_act("item", f"装备 {i}") for i in range(MAX_ACTIONS - 1)]
+    )
+    rules = _advice([_act("buy", "买 盖伦（第2格）"), _act("buy", "买精灵 迅捷（3 金）")], source="rules")
+    merged = _merge_buy_actions(claude, rules, OLD_SHOP, ("阿狸", "盖伦", "布隆", "艾希", "凯尔"))
+    assert len(merged.actions) == MAX_ACTIONS
+    assert merged.actions[0].text == "买 盖伦（第2格）" and merged.actions[-1].text == f"装备 {MAX_ACTIONS - 2}"
+
+
+def test_merge_with_unparsed_claude_buy_text_does_not_guess_skips():
+    from tft_advisor.app import _merge_buy_actions
+
+    # Claude's buy names no shop unit as written: it is replaced, and no unit
+    # counts as "skipped by Claude".
+    claude = _advice([_act("buy", "买第三格的那张 3 费")])
+    rules = _advice([_act("buy", "买 卡尔玛（第3格）")], source="rules")
+    merged = _merge_buy_actions(claude, rules, OLD_SHOP, ("阿狸", "盖伦", "卡尔玛", "艾希", "凯尔"))
+    assert [a.text for a in merged.actions] == ["买 卡尔玛（第3格）"]
+
+
+def test_merge_filters_a_combined_rules_buy_per_unit():
+    """Claude saw Karma and Kayle and skipped them; the rules buy Garen, Karma
+    and Kayle in one action after a reroll: Garen stays, the skipped ones go."""
+    from tft_advisor.app import _merge_buy_actions
+
+    claude = _advice([_act("level", "升到 7 级"), _act("buy", "买 德莱厄斯（第1格）")])
+    rules = _advice([_act("buy", "买 凯尔（第5格）、盖伦（第2格）、卡尔玛（第3格）")], source="rules")
+    merged = _merge_buy_actions(claude, rules, OLD_SHOP, ("阿狸", "盖伦", "卡尔玛", "艾希", "凯尔"))
+    assert [a.text for a in merged.actions] == ["升到 7 级", "买 盖伦（第2格）"]
+    # Every unit skipped: the combined buy is left out.
+    only_skipped = _advice([_act("buy", "买 凯尔（第5格）、卡尔玛（第3格）")], source="rules")
+    merged = _merge_buy_actions(claude, only_skipped, OLD_SHOP, ("阿狸", "盖伦", "卡尔玛", "艾希", "凯尔"))
+    assert [a.text for a in merged.actions] == ["升到 7 级"]

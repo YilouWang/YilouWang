@@ -2,7 +2,8 @@
 
 ``summarize_log`` is deterministic (no API): per-round HP / gold / level /
 streak / board (with items) / target comp timeline, level timing vs the
-standard curve, interest below the cap on rounds the assistant said to save,
+standard curve, interest below the cap on rounds the assistant said to save
+for interest (not PvE waits, low HP or rounds that buy shop units),
 augments, HP lost per stage. ``llm_review`` asks Claude for a short Chinese
 coaching summary on top of it.
 """
@@ -136,11 +137,22 @@ def _level_timing(timeline: list[dict[str, Any]], mech: Mechanics) -> list[dict[
     return out
 
 
+def _save_not_for_interest(sr: StageRound, hp: Any, picks_cost: int, mech: Mechanics) -> bool:
+    """A "save" call that is not an interest save: a PvE round (the econ waits
+    to roll at the next player round), low / critical HP, or a round whose
+    advice bought shop units out of a roll budget."""
+    from .engine.economy import hp_bucket
+
+    low = isinstance(hp, int) and not isinstance(hp, bool) and hp_bucket(hp) in ("low", "critical")
+    return mech.is_pve(sr) or low or picks_cost > 0
+
+
 def summarize_log(records: list[dict[str, Any]], mech: Mechanics) -> dict[str, Any]:
     """Collapse the log to one row per round (last record of each round wins)."""
     rounds: dict[tuple[int, int], dict[str, Any]] = {}
     item_bench: dict[tuple[int, int], list[str]] = {}
     augments: dict[tuple[int, int], list[str]] = {}
+    picks_cost: dict[tuple[int, int], int] = {}  # gold the round's shop picks cost
     for rec in last_game(records):
         state = rec.get("state")
         if not isinstance(state, dict):
@@ -174,19 +186,26 @@ def summarize_log(records: list[dict[str, Any]], mech: Mechanics) -> dict[str, A
         item_bench[sr.key] = [str(x) for x in bench if x] if isinstance(bench, list) else []
         augs = state.get("augments")
         augments[sr.key] = [str(x) for x in augs if x] if isinstance(augs, list) else []
+        cost = analysis.get("shop_picks_cost")
+        picks_cost[sr.key] = cost if isinstance(cost, int) and not isinstance(cost, bool) else 0
     keys = sorted(rounds)
     timeline = [rounds[k] for k in keys]
 
     # Interest below the cap, only where the assistant itself said to save from
     # stage 3 on: stage 2 cannot reach the cap, and gold spent on a level or a
-    # roll the assistant asked for is not an econ mistake.
+    # roll the assistant asked for is not an econ mistake. Its "save" is not
+    # about interest on a PvE round (waiting to roll at (x+1)-1), at low HP
+    # (the gold is meant for the board, the save is a short wait) or when it
+    # asked to buy shop units (a roll plan whose budget went to those units).
     cap_gold = mech.interest_step * mech.interest_cap
     interest_short = 0
     short_rounds: list[str] = []
-    for row in timeline:
+    for key, row in zip(keys, timeline):
         g = row.get("gold")
         sr = StageRound.parse(row["stage"])
         if row.get("econ") != "save" or not isinstance(g, int) or sr is None or sr.stage < 3 or g >= cap_gold:
+            continue
+        if _save_not_for_interest(sr, row.get("hp"), picks_cost.get(key, 0), mech):
             continue
         miss = max(0, mech.interest_cap - mech.interest(g))
         if miss:
@@ -269,9 +288,10 @@ analysed it, so gaps between rounds are normal.
   means on time or early, null means the log cannot tell. Reroll styles stay at a low
   level on purpose, so late levels on a reroll line are not a mistake.
 - interest_short_on_save_rounds: from stage 3 on, only on rounds where the assistant
-  said "save", how much interest the player was short of the cap. Rounds where the
-  assistant said level or roll are not econ mistakes. Right after a planned level or
-  roll a small number is normal.
+  said "save" to keep interest, how much interest the player was short of the cap.
+  Rounds where the assistant said level or roll are not econ mistakes, and neither are
+  PvE rounds, low HP rounds or rounds where it asked to buy shop units (left out).
+  Right after a planned level or roll a small number is normal.
 - augments (with the round first seen), final_item_bench, hp_lost_by_stage.
 Write a short post-game review in Simplified Chinese: up to 3 things done well, up to 3
 biggest mistakes, and up to 3 concrete habits to practice next game. Only criticise

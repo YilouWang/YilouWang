@@ -424,3 +424,28 @@ def test_fielded_unit_of_the_right_profile_beats_a_benched_one(set_data):
     only_bench = make_state("3-2", board=[("Braum", 1, (), 0, 3)], bench=[("Draven", 2)], item_bench=["B.F. Sword", "Recurve Bow"])
     out = plan_items(only_bench, set_data, hp_bucket="medium")
     assert out[0].holder == "Draven" and out[0].priority == 2 and "上场" in out[0].reason
+
+
+def test_s18_duplicate_of_a_held_carry_item_goes_to_another_unit():
+    # Aphelios holds Infinity Edge + Striker's Flail and still misses Kraken's
+    # Fury: a second Flail must not take the carry's last slot.
+    st = s18_state(
+        "4-3",
+        board=[("厄斐琉斯", 2, ("无尽之刃", "强袭者的链枷"), 3, 6), ("韦鲁斯", 2), ("霞", 2), ("洛", 2, (), 0, 3),
+               ("深红锋喙鸟", 2), ("苍蓝雕纹魔像", 1, (), 0, 2), ("阿木木", 1, (), 0, 4), ("凯特琳", 1)],
+        items=["巨人腰带", "拳套"], gold=30, level=8, hp=60, xp_current=0,
+    )
+    out = _s18_plan(st)
+    assert out.comps[0].carry == "厄斐琉斯"
+    flail = next(s for s in out.items if s.item == "强袭者的链枷")
+    assert flail.holder and flail.holder != "厄斐琉斯"
+    assert "主C核心装备" not in flail.reason
+    # The carry's free slot stays open for its missing carry item.
+    from tft_advisor.advisor.rules import RulesAdvisor
+    from tft_advisor.data.mechanics import load_mechanics
+    from tft_advisor.models import ScreenType, StageRound
+
+    carousel = st.model_copy(deep=True)
+    carousel.stage, carousel.screen_type = StageRound.parse("4-4"), ScreenType.CAROUSEL
+    adv = RulesAdvisor(mech=load_mechanics(), set_data=s18_set_data()).advise(carousel, _s18_plan(carousel))
+    assert "装备已满" not in adv.headline and "海妖之怒" in " ".join(a.text for a in adv.actions)

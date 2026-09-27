@@ -25,6 +25,7 @@ from ..models import (
     HitOdds,
     ItemSuggestion,
     ScreenType,
+    StageRound,
     Unit,
 )
 from .comps_engine import (
@@ -35,7 +36,7 @@ from .comps_engine import (
     star_of_copies,
     suggest_comps,
 )
-from .economy import ROLLDOWN_ROUNDS, STYLES, hp_bucket, plan_economy, reroll_cost, reroll_level
+from .economy import ROLLDOWN_ROUNDS, STYLES, hp_bucket, no_roll, plan_economy, reroll_cost, reroll_level
 from .items import plan_items, profile_hints_from_comps
 from .probability import GOLD_BUDGETS, compute_hit_odds
 
@@ -51,6 +52,8 @@ HOPELESS_P = 0.05  # a target below this at both levels does not decide the leve
 LEVEL_SLOT_BONUS = 0.05  # odds a level may cost at critical HP (it also adds a unit)
 COMP_POOL = 6  # comps scored per frame (the shown top 3 plus candidates for the sticky top)
 STICKY_MARGIN = 0.15  # a new top comp replaces the current one at once only with this lead
+FILL_TIER = 5  # shop pick only to fill an empty team slot
+UNKNOWN_OWNER = "unknown"  # tracker.UNKNOWN_PLAYER: a scouted board with no readable owner
 
 T = TypeVar("T")
 
@@ -117,6 +120,8 @@ class Analyzer:
         guard: Callable,
     ) -> Analysis:
         taken_by_player = guard("taken", lambda: _clean_taken(taken_by_player, state.self_name), {})
+        pool_notes: list[str] = []
+        taken_by_player = guard("pool", lambda: self._fit_pool(state, taken_by_player, pool_notes), taken_by_player)
         taken_total: dict[str, int] = {}
         for counts in taken_by_player.values():
             for api, n in counts.items():
@@ -149,15 +154,16 @@ class Analyzer:
         guard("critical_level", lambda: self._critical_level(est, analysis, top, taken_total, style), None)
         # Shop picks come first (the cheapest copies there are): they are paid
         # from the roll budget, and the odds count the copies they buy.
+        open_slots = guard("slots", lambda: self.open_slots(state, est), 0)
         picks = guard("shop", lambda: self._pick_shop(state, est, top, analysis.econ), [])
-        guard("fund_picks", lambda: self._fund_picks(analysis.econ, picks), None)
+        guard("fund_picks", lambda: self._fund_picks(analysis.econ, picks, state.hp, state.stage), None)
         # Odds at the level the next shops will be rolled at (after leveling).
         odds_state = guard("odds_level", lambda: self._odds_state(est, analysis.econ, picks), est)
         analysis.odds = guard(
             "odds", lambda: self._odds(odds_state, top, taken_total, style, analysis.econ.roll_budget), []
         )
         before = (analysis.econ.recommendation, analysis.econ.target_level)
-        guard("roll_check", lambda: self._drop_pointless_roll(est, analysis, style), None)
+        guard("roll_check", lambda: self._drop_pointless_roll(est, analysis, style, open_slots), None)
         if (analysis.econ.recommendation, analysis.econ.target_level) != before:
             # No roll after all: the shop budget and the roll level changed.
             new_picks = guard("shop", lambda: self._pick_shop(state, est, top, analysis.econ), picks)
@@ -190,6 +196,7 @@ class Analyzer:
         analysis.warnings = guard(
             "warnings", lambda: self._warnings(state, analysis.items, econ_style, analysis.econ, est), []
         )
+        analysis.warnings.extend(pool_notes)
         return analysis
 
     # --------------------------------------------------------------- helpers
@@ -231,6 +238,38 @@ class Analyzer:
             if frame != prev["frame"] or prev["challenger"] is None:
                 self._sticky = {"key": key, "top": cur, "challenger": new.name, "frame": frame}
             return [old, *[c for c in comps if c is not old]]
+
+    def _fit_pool(
+        self, state: GameState, taken: dict[str, dict[str, int]], notes: list[str]
+    ) -> dict[str, dict[str, int]]:
+        """Our copies plus the scouted ones can never exceed a champion's pool:
+        when they do, a scouted star was misread (a 2-star read as 3-star).
+        The largest holder's count is taken one star lower (a third), or down
+        to what the pool leaves when that is lower still, and the player is
+        asked to scout that board again."""
+        ours = {api: o.copies for api, o in owned_units(state, self.set_data).items()}
+        out = {p: dict(c) for p, c in taken.items()}
+        apis = {api for counts in out.values() for api in counts}
+        for api in sorted(apis):
+            champ = self.set_data.champions.get(api)
+            pool = self.mech.pool_size.get(champ.cost) if champ is not None else None
+            if not pool:
+                continue
+            excess = ours.get(api, 0) + sum(c.get(api, 0) for c in out.values()) - pool
+            for player in sorted(out, key=lambda p: (-out[p].get(api, 0), p)):
+                if excess <= 0:
+                    break
+                have = out[player].get(api, 0)
+                if have <= 0:
+                    continue
+                left = max(0, have - excess)
+                if have >= 3:
+                    left = min(left, have // 3)  # one star lower
+                out[player][api] = left
+                excess -= have - left
+                who = "未知对手" if player == UNKNOWN_OWNER else player
+                notes.append(f"{who}的{champ.name}张数超过卡池，星级可能读错了，请再看一次{who}的棋盘")
+        return {p: {a: n for a, n in c.items() if n > 0} for p, c in out.items() if any(n > 0 for n in c.values())}
 
     def estimate_level(self, state: GameState) -> Optional[int]:
         """Best guess of an unread level: the fielded unit count is a lower
@@ -420,15 +459,19 @@ class Analyzer:
             econ.roll_budget = 0
             econ.reason = f"血量 {state.hp}，危险：升到 {level + 1} 级多上一个人"
 
-    def _has_roll_target(self, analysis: Analysis) -> bool:
+    def _has_roll_target(self, analysis: Analysis, open_slots: int = 0) -> bool:
         """Does the roll budget have something realistic to find? A unit whose
         next star is reachable with at least ROLL_TARGET_FLOOR (the same bar
-        the rules use to name a roll target), or a missing comp carry the
-        rolls will probably show."""
+        the rules use to name a roll target), a missing comp carry the rolls
+        will probably show, or, with a team slot empty, any missing comp unit
+        the rolls will probably show (one copy fills the slot)."""
         budget = analysis.econ.roll_budget
         roll = max(1, self.mech.roll_cost)
+        rolls = budget // roll
         top = analysis.comps[0] if analysis.comps else None
         carry = self._resolve_api(top.carry) if top else None
+        missing = {self._resolve_api(n) for n in top.missing_units} if top is not None and open_slots > 0 else set()
+        none_found = 1.0  # chance the rolls show none of the missing comp units
         for o in analysis.odds:
             need = o.goal_copies - o.owned_copies
             if need <= 0 or o.remaining_in_pool < need:
@@ -436,11 +479,13 @@ class Analyzer:
             if o.p_at(budget) >= ROLL_TARGET_FLOOR:
                 return True
             if o.owned_copies == 0 and o.api_name == carry:
-                if 1.0 - (1.0 - o.p_in_shop) ** (budget // roll) >= FIND_ONE_FLOOR:
+                if 1.0 - (1.0 - o.p_in_shop) ** rolls >= FIND_ONE_FLOOR:
                     return True  # the carry is missing: finding one copy is the point
-        return False
+            if o.owned_copies == 0 and o.api_name in missing:
+                none_found *= (1.0 - o.p_in_shop) ** rolls
+        return bool(missing) and 1.0 - none_found >= FIND_ONE_FLOOR
 
-    def _drop_pointless_roll(self, state: GameState, analysis: Analysis, style: str) -> None:
+    def _drop_pointless_roll(self, state: GameState, analysis: Analysis, style: str, open_slots: int = 0) -> None:
         """Turn a roll with no realistic target into save / level.
 
         Only where rolling is optional: a win streak (the board already wins),
@@ -468,7 +513,7 @@ class Analyzer:
         rolldown = sr is not None and sr.key in ROLLDOWN_ROUNDS
         if streak < WIN_STREAK_CHECK and not late_fast and not rolldown and not reroll_chase:
             return
-        if self._has_roll_target(analysis):
+        if self._has_roll_target(analysis, open_slots):
             return
         econ.roll_budget = 0
         if econ.recommendation == EconAction.LEVEL_AND_ROLL and econ.target_level:
@@ -680,6 +725,11 @@ class Analyzer:
         # From stage 4 an off-comp unit is only worth a free team slot when it
         # reaches a new breakpoint (never with a committed comp).
         free_slots = max(0, (est.level or 0) - self.team_slots_used(state))
+        # Team slots neither the board nor the bench can fill: playing a unit
+        # short is the worst tempo loss, so any unit beats an empty slot.
+        open_slots = self.open_slots(state, est)
+        board_traits = {t for u in state.board for t in u.traits}
+        comp_traits = self._comp_traits(top)
         upgrade_left: dict[str, int] = {}  # copies still needed for the next star
 
         picks: list[tuple[tuple, str, int, Optional[Unit]]] = []
@@ -697,6 +747,7 @@ class Analyzer:
                 upgrade_left[u.api_name] = 3 - ones if ones + in_shop[u.api_name] >= 3 else 0
             upgrade = upgrade_left[u.api_name] > 0
             three_star = upgrade and twos == 2
+            fit = 0
             if upgrade:
                 upgrade_left[u.api_name] -= 1
                 tier = 0
@@ -706,16 +757,23 @@ class Analyzer:
                 tier = 2  # a first copy, or a 3-star nobody would roll for
             elif copies and early:
                 tier = 3
-            elif u.api_name not in board_apis and any(t in active for t in u.traits):
+            elif (
+                u.api_name not in board_apis
+                and any(t in active for t in u.traits)
+                and (early or (not committed and free_slots > 0 and self._adds_breakpoint(state, u)))
+            ):
                 if not early:
-                    if committed or free_slots <= 0 or not self._adds_breakpoint(state, u):
-                        continue
                     free_slots -= 1
                 tier = 4
+            elif not copies and open_slots > 0:
+                # Only to fill an empty slot: the best fit with the board and
+                # the target comp's traits, then the highest cost.
+                tier = FILL_TIER
+                fit = len(set(u.traits) & board_traits) + len(set(u.traits) & comp_traits)
             else:
                 continue
             bought = Unit(api_name=u.api_name, name=u.name, cost=u.cost, traits=list(u.traits))
-            picks.append(((tier, 0 if three_star else 1, -cost, idx), u.name, cost, bought))
+            picks.append(((tier, 0 if three_star else 1, -fit, -cost, idx), u.name, cost, bought))
         picks.sort(key=lambda p: p[0])
 
         hard, soft = self._pick_budget(est, econ)
@@ -724,26 +782,59 @@ class Analyzer:
         bench_free = self.mech.bench_size - len(state.bench)
         out: list[tuple[tuple, str, int, Optional[Unit]]] = []
         spent = 0
+        filled = 0
+        new_units: set[str] = set()
         for pick in picks:
             cost = pick[2]
             tier = pick[0][0]
+            api = pick[3].api_name if pick[3] is not None else ""
+            fills = api not in owned and api not in new_units and filled < open_slots
+            if tier == FILL_TIER and not fills:
+                continue
             if hard is not None and spent + cost > hard:
                 continue
-            # An upgrade now or a copy of an owned comp unit may dip into the
-            # reserve; anything else must fit the plan's spare gold.
-            exempt = tier <= 1
+            # An upgrade now, a copy of an owned comp unit or a unit for an
+            # empty slot may dip into the reserve; anything else must fit the
+            # plan's spare gold.
+            exempt = tier <= 1 or fills
             if not exempt and soft is not None and spent + cost > soft:
                 continue
             if tier >= 3 and bench_free <= 0:
                 continue
             if tier > 0:
                 bench_free -= 1
+            if fills:
+                filled += 1
+                new_units.add(api)
             spent += cost
             out.append(pick)
         return out
 
-    def _fund_picks(self, econ: EconPlan, picks: list[tuple]) -> None:
-        """Shop picks are paid from the roll budget of a rolling plan."""
+    def open_slots(self, state: GameState, est: Optional[GameState] = None) -> int:
+        """Team slots neither the board nor the bench can fill (from stage 2,
+        a known board): units to buy just to play a full team."""
+        level = (est or state).level
+        if not level or state.stage is None or state.stage.stage < 2 or "board" not in state.field_age:
+            return 0
+        if state.screen_type not in (ScreenType.PLANNING, ScreenType.OTHER, ScreenType.COMBAT):
+            return 0
+        return max(0, level - self.team_slots_used(state) - len(state.bench))
+
+    def _comp_traits(self, top: Optional[CompSuggestion]) -> set[str]:
+        out: set[str] = set()
+        for api in self._comp_apis(top):
+            champ = self.set_data.champions.get(api)
+            if champ is not None:
+                out.update(champ.traits)
+        return out
+
+    def _fund_picks(
+        self, econ: EconPlan, picks: list[tuple], hp: Optional[int] = None, stage: Optional[StageRound] = None
+    ) -> None:
+        """Shop picks are paid from the roll budget of a rolling plan. A roll
+        the picks leave no budget for becomes what the econ engine makes of
+        an unpaid roll (``economy.no_roll``): at low HP late never "save",
+        buy the shop and reposition instead."""
         cost = sum(p[2] for p in picks)
         if not cost or econ.recommendation not in (
             EconAction.ROLL,
@@ -759,9 +850,14 @@ class Analyzer:
         if econ.recommendation == EconAction.LEVEL_AND_ROLL and econ.target_level:
             econ.recommendation = EconAction.LEVEL
             econ.reason = f"升到 {econ.target_level} 级，买完商店里的牌，剩下的钱不够再搜"
+            return
+        action, _reason = no_roll(econ.recommendation, hp, stage, max(0, econ.gold - cost), self.mech)
+        econ.target_level = None
+        if action == EconAction.HOLD:
+            econ.recommendation = EconAction.HOLD
+            econ.reason = "先买商店里的牌，调整站位卖闲置，下回合再搜"
         else:
             econ.recommendation = EconAction.SAVE
-            econ.target_level = None
             econ.reason = "先买商店里的牌，剩下的金币不够再搜"
 
     # ------------------------------------------------------------------ sell
@@ -856,10 +952,13 @@ class Analyzer:
             if loose:
                 out.append(f"成装还没装备：{', '.join(loose)}，记得给英雄装上")
 
+        # PvE round (x-7): the plan waits for the next player fight to roll.
+        pve = sr is not None and stage >= 2 and mech.is_pve(sr)
         rich = state.gold is not None and state.gold >= RICH_GOLD and stage >= LATE_STAGE
         # The plan itself leaves the gold unspent (the level it pays for counted
-        # at the estimated level when the level was not read).
-        if rich and self._gold_after(est or state, econ) >= RICH_GOLD:
+        # at the estimated level when the level was not read). Not on a PvE
+        # round: the plan spends it at (x+1)-1 on purpose.
+        if rich and not pve and self._gold_after(est or state, econ) >= RICH_GOLD:
             cap = mech.interest_step * mech.interest_cap
             out.append(f"金币 {state.gold} 太多了，利息最多只算到 {cap}，多出来的钱拿去升级或搜牌")
 
@@ -869,8 +968,6 @@ class Analyzer:
                 out.append(f"没识别到等级，暂按 {est} 级估算，可以在面板里手动修正")
 
         bucket = hp_bucket(state.hp)
-        # PvE round (x-7): the plan waits for the next player fight to roll.
-        pve = sr is not None and stage >= 2 and mech.is_pve(sr)
         when = f"下回合 {stage + 1}-1 " if pve else "这回合"
         if bucket == "critical":
             out.append(f"血量只剩 {state.hp}，非常危险，{when}必须全力补强阵容")
