@@ -1,9 +1,11 @@
 """Claude vision perceiver: screenshot -> ``ScreenObservation`` via structured output.
 
-Per call we send the full frame (downscaled) plus high-resolution crops of the
-small, number-heavy HUD parts (bottom HUD, player list, stage, and for scouting
-the top banner), each preceded by a text label so the model knows what it sees.
-For ``purpose="shop"`` only the bottom HUD crop is sent (fast and cheap).
+Per call we send the full frame (downscaled) plus crops of the same frame at
+native resolution: the number-heavy HUD parts (bottom HUD, player list, stage),
+the board with the bench (star pips, item icons under units), the trait panel
+and the item column, and for scouting the top banner. Each image is preceded
+by a text label so the model knows what it sees. For ``purpose="shop"`` only
+the bottom HUD crop is sent (fast and cheap).
 
 The large system prompt (HUD guide + set name lists) is identical for every call
 of a set, so the prompt cache in ``tft_advisor.llm`` makes repeated calls cheap.
@@ -20,9 +22,10 @@ from typing import TYPE_CHECKING, Any, Optional
 from pydantic import ValidationError
 
 from ..config import AnthropicConfig
+from ..engine.tracker import is_wisp_name
 from ..llm import LLM, LLMError, image_block, text_block
-from ..models import Observation, ScreenObservation, StageRound, UnitObs
-from .base import PerceptionError, PerceptionHint, clean_name, clean_text, crop_region, normalize_purpose
+from ..models import Observation, ScreenObservation, ScreenObservationWire, StageRound, UnitObs
+from .base import PerceptionError, PerceptionHint, clean_name, clean_text, crop_region, normalize_purpose, region_box
 from .prompts import build_user_text, build_vision_system
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -30,14 +33,32 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
     from ..data.setdata import SetData
 
-# Crops for the non-shop purposes: (region name, label shown to the model).
-_CROPS_DEFAULT: tuple[tuple[str, str], ...] = (
-    ("hud_bottom", "bottom HUD crop (shop, gold, level, XP, streak) of the LOCAL player"),
-    ("players", "player list crop (names and HP, right side)"),
-    ("stage", "stage / round indicator crop (top center)"),
+# Crops for the non-shop purposes: (region names, label shown to the model, JPEG).
+# Several region names mean "crop their union". The board with the bench is a
+# busy 3D scene: JPEG at high quality with full color resolution keeps the star
+# pip colors and item icons while staying a few hundred KB (PNG would be MBs);
+# the text-heavy crops stay lossless PNG.
+_CROPS_DEFAULT: tuple[tuple[tuple[str, ...], str, bool], ...] = (
+    (("hud_bottom",), "bottom HUD crop (shop, gold, level, XP, streak) of the LOCAL player", False),
+    (("players",), "player list crop (names and HP, right side)", False),
+    (("stage",), "stage / round indicator crop (top center)", False),
+    (
+        ("board", "bench"),
+        "board and bench crop (units, star pips above the health bars, item icons under them) "
+        "of the player whose board is shown",
+        True,
+    ),
+    (("traits",), "trait panel crop (left side) of the player whose board is shown", False),
+    (("items",), "item bench crop (column of unequipped items at the far left) of the player whose board is shown", False),
 )
-_CROP_SCOUT_BANNER = ("top_banner", "top banner crop (name of the board owner while scouting)")
+_CROP_SCOUT_BANNER = (("top_banner",), "top banner crop (name of the board owner while scouting)", False)
 _SHOP_LABEL = "bottom HUD crop (shop, gold, level, XP, streak) of the LOCAL player"
+_CROP_JPEG_QUALITY = 92
+
+# Opus 4.7+ / Sonnet 5 read up to 2576 px on the long edge; anything larger is
+# resized by the API anyway, so sending more only costs upload time.
+_API_MAX_EDGE = 2576
+_DEFAULT_EDGE = AnthropicConfig.max_image_edge
 
 # Anthropic's per-image limit is 5 MB of base64; stay well below it.
 _MAX_IMAGE_BYTES = 3_500_000
@@ -65,12 +86,12 @@ _MIN_FRAME_EDGE = 64
 
 
 def _image_edge(configured: Any) -> int:
-    """Configured long-edge limit, clamped: <= 0 / garbage means the default, never above the API's 8000 px."""
+    """Configured long-edge limit, clamped: <= 0 / garbage means the config default, never above 2576 px."""
     try:
         edge = int(configured)
     except (TypeError, ValueError):
         edge = 0
-    return min(edge, 8000) if edge > 0 else 1568
+    return min(edge, _API_MAX_EDGE) if edge > 0 else min(_DEFAULT_EDGE, _API_MAX_EDGE)
 
 
 def _to_rgb(img: "Image.Image") -> "Image.Image":
@@ -89,6 +110,12 @@ def fit_long_edge(img: "Image.Image", max_edge: int) -> "Image.Image":
     return img.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS)
 
 
+def _union_box(size: tuple[int, int], regions: tuple[str, ...]) -> tuple[int, int, int, int]:
+    """Pixel box covering every named HUD region (one crop instead of overlapping ones)."""
+    boxes = [region_box(size, r) for r in regions]
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+
 def prepare_crop(img: "Image.Image", max_edge: int, small_edge: int = 500) -> "Image.Image":
     """Keep crops at native resolution; shrink when too large, 2x-upscale tiny ones (small text)."""
     from PIL import Image
@@ -102,17 +129,23 @@ def prepare_crop(img: "Image.Image", max_edge: int, small_edge: int = 500) -> "I
     return img
 
 
-def encode_image(img: "Image.Image", optimize: bool = True, prefer_jpeg: bool = False) -> tuple[bytes, str]:
+def encode_image(
+    img: "Image.Image", optimize: bool = False, prefer_jpeg: bool = False, jpeg_quality: int = 90
+) -> tuple[bytes, str]:
     """PNG (lossless, best for small HUD text); JPEG fallback if the PNG is too large for the API.
 
-    ``prefer_jpeg`` is used for the downscaled full frame: it carries layout, not
-    small text (the crops do), and a noisy 3D scene is several MB as PNG but a
-    few hundred KB as JPEG, which matters for upload latency every round.
+    ``prefer_jpeg`` is used for the downscaled full frame and the board crop:
+    a noisy 3D scene is several MB as PNG but a few hundred KB as JPEG, which
+    matters for upload latency every round. ``jpeg_quality`` >= 92 also keeps
+    full color resolution (4:4:4) for small colored details like star pips.
+    ``optimize`` makes PNGs only about 5 to 10 % smaller for about 3x the
+    encoding time, so it is off on the real-time path.
     """
     img = _to_rgb(img)
     if prefer_jpeg:
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=90)
+        extra = {"subsampling": 0} if jpeg_quality >= 92 else {}
+        img.save(buf, format="JPEG", quality=jpeg_quality, **extra)
         if len(buf.getvalue()) <= _MAX_IMAGE_BYTES:
             return buf.getvalue(), "image/jpeg"
     buf = io.BytesIO()
@@ -232,7 +265,9 @@ def sanitize_screen(
         for slot in s.shop:
             if slot.name is not None and not slot.name.strip():
                 slot.name = None
-            if slot.cost is not None and not 1 <= slot.cost <= 10:
+            # Set 18 Wisps cost 0 up to a few dozen gold; champions 1 to 10.
+            lo, hi = (0, 60) if is_wisp_name(slot.name) else (1, 10)
+            if slot.cost is not None and not lo <= slot.cost <= hi:
                 slot.cost = None
 
     s.board = _clean_units(s.board, on_board=True, notes=notes)
@@ -280,8 +315,13 @@ def sanitize_screen(
             s.viewing_own_board = False
         named = clean_name(hint.scouting_player) if hint is not None else None
         if s.viewed_player_name is None and named:
-            s.viewed_player_name = named
-            notes.append("对手名字来自玩家指定，画面中未读到")
+            if s.viewing_own_board is True:
+                # Pressed too early or the camera went back: this is the local
+                # player's board, never file it under the named opponent.
+                notes.append(f"画面仍是自己的棋盘，没有当作 {named} 的阵容")
+            else:
+                s.viewed_player_name = named
+                notes.append("对手名字来自玩家指定，画面中未读到")
 
     s.notes = [clean_text(n) for n in notes if (n or "").strip()][:12]
     return s
@@ -300,7 +340,7 @@ class ClaudeVisionPerceiver:
         self.cfg = cfg
         self.set_data = set_data
         self.name = name
-        self.png_optimize = True
+        self.png_optimize = False  # see encode_image: ~3x encoding time for 5 to 10 % smaller PNGs
         self.system = build_vision_system(set_data)
 
     def set_set_data(self, set_data: "SetData") -> None:
@@ -309,35 +349,44 @@ class ClaudeVisionPerceiver:
         self.system = build_vision_system(set_data)
 
     # ---- images -------------------------------------------------------------
-    def build_images(self, image: "Image.Image", purpose: str = "auto") -> list[tuple[str, "Image.Image"]]:
-        """(label, image) pairs to send, in order. Labels do not include the ``IMAGE n:`` prefix."""
+    def _image_specs(self, image: "Image.Image", purpose: str) -> list[tuple[str, "Image.Image", Optional[int]]]:
+        """(label, image, JPEG quality or None for PNG) to send, in order."""
         mode = normalize_purpose(purpose)
         max_edge = _image_edge(self.cfg.max_image_edge)
         frame = _to_rgb(image)
         if mode == "shop":
-            return [(_SHOP_LABEL, prepare_crop(crop_region(frame, "hud_bottom"), max_edge))]
+            return [(_SHOP_LABEL, prepare_crop(crop_region(frame, "hud_bottom"), max_edge), None)]
         full = fit_long_edge(frame, max_edge)
-        out: list[tuple[str, "Image.Image"]] = [
-            (f"full screenshot, downscaled to {full.size[0]}x{full.size[1]}", full)
+        out: list[tuple[str, "Image.Image", Optional[int]]] = [
+            (f"full screenshot, downscaled to {full.size[0]}x{full.size[1]}", full, 90)
         ]
         crops = list(_CROPS_DEFAULT)
         if mode == "scout":
             crops.append(_CROP_SCOUT_BANNER)
-        for region, label in crops:
-            out.append((label, prepare_crop(crop_region(frame, region), max_edge)))
+        for regions, label, jpeg in crops:
+            crop = frame.crop(_union_box(frame.size, regions))
+            out.append((label, prepare_crop(crop, max_edge), _CROP_JPEG_QUALITY if jpeg else None))
         return out
+
+    def build_images(self, image: "Image.Image", purpose: str = "auto") -> list[tuple[str, "Image.Image"]]:
+        """(label, image) pairs to send, in order. Labels do not include the ``IMAGE n:`` prefix."""
+        return [(label, img) for label, img, _ in self._image_specs(image, purpose)]
 
     def build_content(
         self, image: "Image.Image", purpose: str = "auto", hint: Optional[PerceptionHint] = None
     ) -> list[dict[str, Any]]:
-        pairs = self.build_images(image, purpose)
+        specs = self._image_specs(image, purpose)
         content: list[dict[str, Any]] = []
         labels: list[str] = []
-        for idx, (label, img) in enumerate(pairs, start=1):
+        for idx, (label, img, jpeg_quality) in enumerate(specs, start=1):
             full_label = f"IMAGE {idx}: {label}"
             labels.append(full_label)
-            is_full_frame = idx == 1 and normalize_purpose(purpose) != "shop"
-            data, media_type = encode_image(img, optimize=self.png_optimize, prefer_jpeg=is_full_frame)
+            data, media_type = encode_image(
+                img,
+                optimize=self.png_optimize,
+                prefer_jpeg=jpeg_quality is not None,
+                jpeg_quality=jpeg_quality or 90,
+            )
             content.append(text_block(full_label))
             content.append(image_block(data, media_type=media_type))
         content.append(text_block(build_user_text(purpose, hint, labels)))
@@ -362,14 +411,18 @@ class ClaudeVisionPerceiver:
         except Exception as exc:  # corrupt image, PIL errors
             raise PerceptionError(f"截图处理失败: {_short_error(exc)}") from exc
         try:
-            screen = self.llm.parse(
+            # The rich ScreenObservation is over the structured-output schema
+            # limits (optional / union parameters); the all-required wire model
+            # carries the same information and converts back.
+            wire = self.llm.parse(
                 model=self.cfg.vision_model,
                 effort=self.cfg.vision_effort,
                 system=self.system,
                 content=content,
-                schema=ScreenObservation,
+                schema=ScreenObservationWire,
                 purpose="shop" if mode == "shop" else "vision",
             )
+            screen = wire.to_screen() if isinstance(wire, ScreenObservationWire) else wire
         except LLMError as exc:
             raise PerceptionError(str(exc)) from exc
         except (ValidationError, ValueError) as exc:  # malformed structured output

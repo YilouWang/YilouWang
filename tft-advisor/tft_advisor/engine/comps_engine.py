@@ -35,6 +35,8 @@ CONTEST_CAP = 0.30
 HINT_NAME_BOOST = 0.25
 HINT_CARRY_BOOST = 0.20
 HINT_UNIT_BOOST = 0.10
+HINT_TRAIT_PER_UNIT = 0.05  # per comp unit of the hinted trait
+HINT_TRAIT_CAP = 0.25
 HINT_CAP = 0.40
 
 
@@ -112,11 +114,56 @@ def _item_fit(state: GameState, set_data: SetData, carry_items: list[str]) -> Op
     return done, len(targets)
 
 
-def _level_fit(state: GameState, style: str) -> float:
+def star_of_copies(copies: int) -> int:
+    """Star level a number of 1-star copies reaches (0 = none owned)."""
+    return 3 if copies >= 9 else 2 if copies >= 3 else 1 if copies >= 1 else 0
+
+
+def reroll_key_apis(comp: CompDef, set_data: SetData) -> list[str]:
+    """Units a reroll comp slow rolls for first (api names).
+
+    The carry when it is one of the comp's reroll units, otherwise the reroll
+    units of the highest cost (the 3-costs of a 3-cost reroll). Many bundled
+    reroll comps give their items to a pricier unit (a 4-cost "carry" on a
+    3-cost reroll), so the carry alone does not say whether the player is
+    rerolling. Empty for non-reroll comps.
+    """
+    cap = {"reroll1": 1, "reroll2": 2, "reroll3": 3}.get(comp.style)
+    if cap is None:
+        return []
+    names = list(comp.reroll_units)
+    if not names:
+        starred = [u for u, st in comp.stars.items() if st >= 3]
+        names = starred or [*([comp.carry] if comp.carry else []), *comp.units]
+    units: list[Champion] = []
+    for n in names:
+        champ = set_data.resolve_champion(n)
+        if champ is not None and champ.cost <= cap and all(c.api_name != champ.api_name for c in units):
+            units.append(champ)
+    if not units:
+        return []
+    carry = set_data.resolve_champion(comp.carry) if comp.carry else None
+    if carry is not None and any(c.api_name == carry.api_name for c in units):
+        return [carry.api_name]
+    top = max(c.cost for c in units)
+    return [c.api_name for c in units if c.cost == top]
+
+
+def reroll_key_copies(comp: CompDef, owned: dict[str, Owned], set_data: SetData) -> Optional[int]:
+    """Most copies held of any reroll key unit (None when the comp is not a reroll)."""
+    keys = reroll_key_apis(comp, set_data)
+    if not keys:
+        return None
+    return max((owned[a].copies for a in keys if a in owned), default=0)
+
+
+def _level_fit(state: GameState, style: str, reroll_done: bool = False) -> float:
     lvl = state.level
     if lvl is None:
         return 0.8
     rr = reroll_level(style)
+    if rr is not None and reroll_done:
+        return 1.0  # 3-star reached: leveling past the reroll level is the plan
     if rr is not None:
         if lvl > rr + 1:
             return 0.3
@@ -134,26 +181,94 @@ def _hint_tokens(hint: str) -> list[str]:
     return [t for t in re.split(r"[\s,，、/;；|]+", hint or "") if t.strip()]
 
 
-def hint_boost(comp_name: str, champs: list[Champion], carry: Optional[Champion], hint: str, set_data: SetData) -> float:
+def _exact_trait(token: str, set_data: SetData) -> Optional[Trait]:
+    """A trait named exactly by the token (zh / en / api), no fuzzy match."""
+    key = normalize_name(token)
+    if not key:
+        return None
+    for t in set_data.traits.values():
+        if key in {normalize_name(n) for n in (t.name, t.name_en, t.api_name) if n}:
+            return t
+    return None
+
+
+def _exact_champion(token: str, set_data: SetData) -> Optional[Champion]:
+    key = normalize_name(token)
+    if not key:
+        return None
+    champ = set_data.resolve_champion(token)
+    if champ is not None and key in {normalize_name(n) for n in (champ.name, champ.name_en, champ.api_name) if n}:
+        return champ
+    return champ if champ is not None and len(key) >= 3 else None
+
+
+def hint_boost(
+    comp_name: str,
+    champs: list[Champion],
+    carry: Optional[Champion],
+    hint: str,
+    set_data: SetData,
+    alt_names: tuple[str, ...] = (),
+) -> float:
+    """Score bonus for a comp matching what the player asked for.
+
+    The hint is matched against the comp name (and ``alt_names``, e.g. the
+    English name), champions (zh or en: 艾希 == Ashe, also inside the comp
+    name) and traits (法师 / Spellweaver: comps with several units of it).
+    """
     h = normalize_name(hint)
     if not h:
         return 0.0
     boost = 0.0
-    n = normalize_name(comp_name)
+    names = [n for n in (normalize_name(x) for x in (comp_name, *alt_names)) if n]
     tokens = [normalize_name(t) for t in _hint_tokens(hint)]
     tokens = [t for t in tokens if t]
-    if n and (h in n or n in h or any(len(t) >= 2 and (t in n or n in t) for t in tokens)):
-        boost += HINT_NAME_BOOST
-    hinted: set[str] = set()
-    for t in [hint, *_hint_tokens(hint)]:
-        champ = set_data.resolve_champion(t)
+
+    def in_name(t: str) -> bool:
+        return any(len(t) >= 2 and (t in n or n in t) for n in names)
+
+    hinted: dict[str, Champion] = {}
+    traits: dict[str, Trait] = {}
+    for t in dict.fromkeys([hint, *_hint_tokens(hint)]):
+        trait = _exact_trait(t, set_data)
+        if trait is not None:
+            traits[trait.api_name] = trait
+            continue
+        champ = _exact_champion(t, set_data)
         if champ is not None:
-            hinted.add(champ.api_name)
+            hinted[champ.api_name] = champ
+    champ_in_name = any(in_name(normalize_name(c.name_en)) or in_name(normalize_name(c.name)) for c in hinted.values())
+    if any(h in n or n in h for n in names) or any(in_name(t) for t in tokens) or champ_in_name:
+        boost += HINT_NAME_BOOST
     if carry is not None and carry.api_name in hinted:
         boost += HINT_CARRY_BOOST
-    elif hinted & {c.api_name for c in champs}:
+    elif set(hinted) & {c.api_name for c in champs}:
         boost += HINT_UNIT_BOOST
+    for trait in traits.values():
+        keys = {normalize_name(n) for n in (trait.name, trait.name_en, trait.api_name) if n}
+        count = sum(
+            1
+            for c in champs
+            if keys & {normalize_name(x) for x in [*c.traits, *getattr(c, "traits_en", [])]}
+        )
+        need = min([b for b in trait.breakpoints if b > 0] or [2])
+        if count >= max(1, min(2, need)):
+            boost += min(HINT_TRAIT_CAP, HINT_TRAIT_PER_UNIT * count)
     return min(HINT_CAP, boost)
+
+
+def _alt_names(comp: CompDef) -> tuple[str, ...]:
+    other = getattr(comp, "name_en", "") or ""
+    return (other,) if other and other != comp.name else ()
+
+
+def comp_hint_boost(comp: CompDef, hint: str, set_data: SetData) -> float:
+    """hint_boost for a CompDef (resolves its units and carry)."""
+    champs = _resolve_units(comp.units, set_data)
+    carry = set_data.resolve_champion(comp.carry) if comp.carry else None
+    if carry is not None and carry.api_name not in {c.api_name for c in champs}:
+        champs.insert(0, carry)
+    return hint_boost(comp.name, champs, carry, hint, set_data, alt_names=_alt_names(comp))
 
 
 def _contested(core: set[str], carry_api: Optional[str], taken_by_player: dict[str, dict[str, int]]) -> list[str]:
@@ -201,7 +316,8 @@ def score_comp(
         carry_score = overlap
     fit = _item_fit(state, set_data, comp.carry_items)
     item_score = 0.5 if fit is None else fit[0] / fit[1]
-    level_score = _level_fit(state, comp.style)
+    key_copies = reroll_key_copies(comp, owned, set_data)
+    level_score = _level_fit(state, comp.style, reroll_done=key_copies is not None and key_copies >= 9)
     tier_score = TIER_SCORE.get(comp.tier.upper()[:1] if comp.tier else "", 0.5)
 
     core = {c.api_name for c in champs if c.cost >= 3}
@@ -211,7 +327,7 @@ def score_comp(
         core = {c.api_name for c in champs}
     contested = _contested(core, carry.api_name if carry else None, taken_by_player)
     penalty = min(CONTEST_CAP, CONTEST_PENALTY * len(contested))
-    boost = hint_boost(comp.name, champs, carry, hint, set_data)
+    boost = hint_boost(comp.name, champs, carry, hint, set_data, alt_names=_alt_names(comp))
 
     score = _clamp(
         W_OVERLAP * overlap

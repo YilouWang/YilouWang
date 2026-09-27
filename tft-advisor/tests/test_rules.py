@@ -117,7 +117,12 @@ def test_level_and_roll_at_4_1(advisor, mech):
                 p_goal_by_gold={10: 0.12, 20: 0.35, 30: 0.55},
             )
         ],
-        comps=[CompSuggestion(name="决斗大师", score=0.8, carry="Draven", missing_units=["Aatrox", "Shen"])],
+        comps=[
+            CompSuggestion(
+                name="决斗大师", score=0.8, carry="Draven", core_units=["Draven", "Braum", "Ashe", "Aatrox", "Shen"],
+                have_units=["Draven", "Braum", "Ashe"], missing_units=["Aatrox", "Shen"],
+            )
+        ],
     )
     adv = advisor.advise(state, analysis)
     check_contract(adv)
@@ -246,8 +251,12 @@ def test_augment_choices(advisor):
     aug = action(adv, ActionType.AUGMENT)
     assert aug.text == AUGMENT_GENERIC and aug.priority == 1
     assert adv.actions[0].type == ActionType.AUGMENT
-    assert adv.augment and "Rich Get Richer" in adv.augment and "Claude" in adv.augment
-    assert "增强" in adv.headline
+    assert adv.augment and "Rich Get Richer" in adv.augment
+    # Claude is off by default: never point the player to advice that will not come.
+    assert "Claude" not in adv.augment
+    assert "海克斯" in adv.headline and "增强" not in adv.headline
+    with_claude = RulesAdvisor(claude_enabled=True).advise(state, Analysis())
+    assert "Claude" in with_claude.augment
 
 
 def test_carousel_picks_missing_component(advisor):
@@ -485,7 +494,7 @@ def test_stale_augment_choices_are_ignored(advisor):
     assert ActionType.AUGMENT in types(advisor.advise(open_choice, Analysis()))
     picked = GameState(augment_choices=["Rich Get Richer", "Tiny Titans"], augments=["Tiny Titans"], **base)
     adv = advisor.advise(picked, Analysis())
-    assert ActionType.AUGMENT not in types(adv) and adv.augment is None and "增强" not in adv.headline
+    assert ActionType.AUGMENT not in types(adv) and adv.augment is None and "海克斯" not in adv.headline
     old = GameState(
         augment_choices=["Rich Get Richer"], field_age={"augment_choices": 100.0}, last_update=400.0, **base
     )
@@ -549,3 +558,116 @@ def test_roll_target_prefers_reachable_upgrades_over_hopeless_carry(advisor):
     assert "Draven" not in text and text.index("Garen") < text.index("Lucian")
     hopeless = advisor.advise(state, Analysis(econ=econ, odds=[odds("Draven", 4, 0.01)]))
     assert action(hopeless, ActionType.ROLL).text.endswith("找对子升星")
+
+
+def _roll_odds(name, cost, owned, p40, remaining=20):
+    return HitOdds(
+        unit=name, api_name=f"TFT99_{name}", cost=cost, owned_copies=owned, goal_copies=3, goal_star=2,
+        seen_elsewhere=0, remaining_in_pool=remaining, level=8, p_per_slot=0.01, p_in_shop=0.1,
+        p_goal_by_gold={20: p40 / 2, 40: p40},
+    )
+
+
+def test_late_roll_targets_are_comp_units_ranked_by_value(advisor):
+    """5-1, level 8, complete comp: a likely off-comp pair, a sell candidate or
+    an unowned off-comp unit must not be named over the comp's 4-cost."""
+    state = GameState(
+        stage=StageRound.parse("5-1"), gold=52, level=8, hp=35,
+        board=[unit("Ahri", 4, 2, row=3, col=0), unit("Morgana", 4, row=3, col=1), unit("Sentinel", 1, row=0, col=2)],
+        bench=[unit("Master Yi", 3), unit("Kayle", 2), unit("Kayle", 2)],
+    )
+    comp = CompSuggestion(
+        name="Ahri Morgana", score=0.9, carry="Ahri", core_units=["Ahri", "Morgana", "Sentinel"],
+        have_units=["Ahri", "Morgana", "Sentinel"],
+    )
+    odds = [
+        _roll_odds("Kayle", 2, 2, 0.74),
+        _roll_odds("Garen", 1, 0, 0.9),
+        _roll_odds("Master Yi", 3, 1, 0.54),
+        _roll_odds("Morgana", 4, 1, 0.46),
+        _roll_odds("Sentinel", 1, 1, 0.46),
+    ]
+    econ = EconPlan(recommendation=EconAction.ROLL, roll_budget=42)
+    analysis = Analysis(econ=econ, comps=[comp], odds=odds, sell_candidates=["Master Yi"])
+    text = action(advisor.advise(state, analysis), ActionType.ROLL).text
+    assert "Kayle" not in text and "Master Yi" not in text and "Garen" not in text
+    assert "Morgana" in text and "Sentinel" in text and text.index("Morgana") < text.index("Sentinel")
+
+
+def test_roll_second_target_needs_real_value(advisor):
+    """A cheap unowned comp filler far below the carry is not named next to it."""
+    state = GameState(stage=StageRound.parse("4-1"), gold=56, level=7, hp=48, board=[unit("Yunara", 2, row=3, col=0)])
+    comp = CompSuggestion(name="X", score=0.5, carry="Yunara", core_units=["Yunara", "Kayle"], missing_units=["Kayle"])
+    econ = EconPlan(recommendation=EconAction.ROLL, roll_budget=34)
+    odds = [_roll_odds("Yunara", 2, 1, 0.57), _roll_odds("Kayle", 2, 0, 0.27)]
+    text = action(advisor.advise(state, Analysis(econ=econ, comps=[comp], odds=odds)), ActionType.ROLL).text
+    assert "Yunara" in text and "Kayle" not in text
+
+
+def test_early_roll_targets_allow_owned_pairs_but_not_sell_candidates(advisor):
+    state = GameState(stage=StageRound.parse("3-2"), gold=50, level=6, hp=60, bench=[unit("Lucian", 2), unit("Lucian", 2), unit("Vi", 3)])
+    comp = CompSuggestion(name="X", score=0.6, carry="Draven", core_units=["Draven", "Garen"], missing_units=["Draven", "Garen"])
+    econ = EconPlan(recommendation=EconAction.ROLL, roll_budget=40)
+    odds = [_roll_odds("Vi", 3, 1, 0.9), _roll_odds("Lucian", 2, 2, 0.6), _roll_odds("Ashe", 3, 0, 0.9)]
+    analysis = Analysis(econ=econ, comps=[comp], odds=odds, sell_candidates=["Vi"])
+    text = action(advisor.advise(state, analysis), ActionType.ROLL).text
+    assert "Lucian" in text and "Vi" not in text and "Ashe" not in text
+
+
+def test_late_roll_targets_follow_the_board_when_the_comp_is_a_loose_guess(advisor):
+    state = GameState(
+        stage=StageRound.parse("4-2"), gold=50, level=7, hp=60,
+        board=[unit("Vi", 3, row=0, col=3)], bench=[unit("Kayle", 2), unit("Kayle", 2)],
+    )
+    econ = EconPlan(recommendation=EconAction.ROLL, roll_budget=40)
+    odds = [_roll_odds("Kayle", 2, 2, 0.8), _roll_odds("Vi", 3, 1, 0.5)]
+    weak = CompSuggestion(name="X", score=0.2, carry="Draven", core_units=["Draven"], missing_units=["Draven"])
+    text = action(advisor.advise(state, Analysis(econ=econ, comps=[weak], odds=odds)), ActionType.ROLL).text
+    assert "Vi" in text and "Kayle" not in text
+    committed = weak.model_copy(update={"score": 0.8})
+    text = action(advisor.advise(state, Analysis(econ=econ, comps=[committed], odds=odds)), ActionType.ROLL).text
+    assert text == "最多花 40 金币搜牌"
+
+
+def test_items_text_has_no_duplicate_label(advisor):
+    state = GameState(stage=StageRound.parse("3-3"), gold=20, level=6, hp=70)
+    slam = Analysis(items=[ItemSuggestion(item="Deathblade", components=["B.F. Sword", "B.F. Sword"], holder="Draven")])
+    assert advisor.advise(state, slam).items == "Deathblade 给 Draven"
+    comp = CompSuggestion(name="X", score=0.8, carry="Draven", carry_items=["Deathblade", "Giant Slayer"])
+    adv = advisor.advise(state, Analysis(comps=[comp]))
+    assert adv.items == "Draven：Deathblade、Giant Slayer"
+    assert all("装备：" not in t for t in all_text(adv))
+
+
+def test_augment_copy_uses_client_term_and_fullwidth_colon(advisor):
+    state = GameState(stage=StageRound.parse("2-1"), screen_type=ScreenType.AUGMENT_SELECT, gold=10, level=4, hp=90)
+    adv = advisor.advise(state, Analysis())
+    check_contract(adv)
+    texts = all_text(adv)
+    assert all("增强" not in t and ": " not in t for t in texts)
+    assert not action(adv, ActionType.AUGMENT).text.endswith("的")
+    assert adv.augment == AUGMENT_GENERIC
+
+
+def test_wisp_in_shop_gets_a_short_hint(advisor):
+    from tft_advisor.models import ShopSlot
+
+    shop = [ShopSlot(name="Vi", cost=3), ShopSlot(name="Garen", cost=1), ShopSlot(), ShopSlot(), ShopSlot(name="Wisp: Grow Up", cost=3)]
+    units = [unit("Vi", 3), unit("Garen", 1), None, None, None]
+    early = GameState(stage=StageRound.parse("2-5"), gold=20, level=5, hp=80, shop=shop, shop_units=units)
+    adv = advisor.advise(early, Analysis())
+    check_contract(adv)
+    hint = [a for a in adv.actions if "精灵" in a.text]
+    assert len(hint) == 1 and hint[0].priority == 3
+    assert hint[0].text == "第5格精灵「Grow Up」（3金币）：前期经济或经验类值得买"
+    late = early.model_copy(update={"stage": StageRound.parse("4-2"), "hp": 40})
+    assert any(a.text.endswith("稳血时优先买战斗类") for a in advisor.advise(late, Analysis()).actions)
+    # Cannot afford it, or on the carousel: no hint.
+    poor = early.model_copy(update={"gold": 2})
+    assert not any("精灵" in a.text for a in advisor.advise(poor, Analysis()).actions)
+    carousel = early.model_copy(update={"stage": StageRound.parse("3-4")})
+    assert not any("精灵" in a.text for a in advisor.advise(carousel, Analysis()).actions)
+    # A long name falls back to a short text instead of being cut.
+    long = early.model_copy(update={"shop": shop[:4] + [ShopSlot(name="Wisp: An Extremely Long Wisp Name Here", cost=12)]})
+    text = next(a.text for a in advisor.advise(long, Analysis()).actions if "精灵" in a.text)
+    assert text == "第5格是精灵（12金币）：前期经济或经验类值得买"

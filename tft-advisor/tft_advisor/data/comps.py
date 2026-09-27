@@ -76,6 +76,13 @@ class CompDef:
     positions: dict[str, tuple[int, int]] = field(default_factory=dict)  # unit -> (row, col), row 0 = front
     stars: dict[str, int] = field(default_factory=dict)  # units meant to be 3-star (reroll targets)
     difficulty: str = ""
+    # Units a reroll line slow rolls for (display names): "reroll_units" from
+    # the file, else the 3-star targets costing at most the reroll cost, else
+    # the comp units at most that cost. Empty for non-reroll styles. The carry
+    # is the item holder and may cost more (e.g. a 4-cost carry on a 3-cost
+    # reroll).
+    reroll_units: list[str] = field(default_factory=list)
+    name_en: str = ""  # name as written in the file (English for the bundled library)
 
 
 def bundled_comps_path() -> Path:
@@ -220,13 +227,14 @@ def _build_comp(entry: dict[str, Any], set_data: SetData, log: LogFn) -> Optiona
             if n and isinstance(st, int) and 1 <= st <= 4:
                 stars[n] = st
 
+    style = normalize_style(entry.get("style"), carry_cost)
     return CompDef(
-        name=name,
+        name=display_name(entry, name, set_data),
         units=units,
         carry=carry_name,
         carry_items=carry_items,
         traits=traits,
-        style=normalize_style(entry.get("style"), carry_cost),
+        style=style,
         tier=str(entry.get("tier") or "").strip().upper(),
         notes=str(entry.get("notes") or "").strip(),
         early=early,
@@ -234,7 +242,54 @@ def _build_comp(entry: dict[str, Any], set_data: SetData, log: LogFn) -> Optiona
         positions=positions,
         stars=stars,
         difficulty=str(entry.get("difficulty") or "").strip(),
+        reroll_units=_reroll_units(entry, style, units, stars, set_data),
+        name_en=name,
     )
+
+
+REROLL_COST = {"reroll1": 1, "reroll2": 2, "reroll3": 3}
+
+
+def _reroll_units(
+    entry: dict[str, Any], style: str, units: list[str], stars: dict[str, int], set_data: SetData
+) -> list[str]:
+    cap = REROLL_COST.get(style)
+    if cap is None:
+        return []
+
+    def cost(name: str) -> int:
+        champ = set_data.resolve_champion(name)
+        return champ.cost if champ else 99
+
+    explicit = []
+    for raw in _as_list(entry.get("reroll_units")):
+        champ = set_data.resolve_champion(raw)
+        if champ is not None and champ.name not in explicit:
+            explicit.append(champ.name)
+    if explicit:
+        return explicit
+    starred = [u for u, st in stars.items() if st >= 3 and cost(u) <= cap]
+    if starred:
+        return starred
+    return [u for u in units if cost(u) <= cap]
+
+
+def _has_cjk(text: str) -> bool:
+    return any("一" <= ch <= "鿿" for ch in text or "")
+
+
+def display_name(entry: dict[str, Any], name: str, set_data: SetData) -> str:
+    """Name shown to the player: ``name_zh`` from the file when the set data
+    is Chinese (the default client locale), otherwise the file's name."""
+    zh = str(entry.get("name_zh") or "").strip()
+    if zh and _set_is_chinese(set_data):
+        return zh
+    return name
+
+
+def _set_is_chinese(set_data: SetData) -> bool:
+    names = [c.name for c in list(set_data.champions.values())[:20]]
+    return any(_has_cjk(n) for n in names)
 
 
 def load_comps(path: Optional[str], set_data: SetData, log: Optional[LogFn] = None) -> list[CompDef]:

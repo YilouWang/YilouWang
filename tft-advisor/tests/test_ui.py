@@ -49,6 +49,15 @@ def quiet(_msg: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Nothing in these tests may write to the real ~/.tft_advisor (token, overlay position)."""
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    return home
+
+
 @pytest.fixture()
 def bus() -> EventBus:
     return EventBus()
@@ -374,9 +383,9 @@ def test_sse_frame_never_breaks_on_bad_payload(server: DashboardServer, bus: Eve
 # ---------------------------------------------------------------------------
 
 
-def test_lan_mode_requires_token(bus: EventBus) -> None:
+def test_lan_mode_requires_token(bus: EventBus, tmp_path: Path) -> None:
     logs: list[str] = []
-    srv = DashboardServer(bus, UIConfig(host="0.0.0.0", port=0), log=logs.append)
+    srv = DashboardServer(bus, UIConfig(host="0.0.0.0", port=0), log=logs.append, token_file=tmp_path / "token")
     try:
         try:
             url = srv.start()
@@ -994,3 +1003,423 @@ def test_overlay_windows_helpers_never_raise_off_windows(monkeypatch: pytest.Mon
     # ctypes.WinDLL does not exist here: both helpers must degrade, not crash run()
     assert overlay_mod._make_non_activating(root) is False
     assert overlay_mod._screen_bounds(root) == (0, 0, 1600, 900)
+
+
+# ---------------------------------------------------------------------------
+# review regressions: Ctrl+C in the overlay, CSRF, token, command errors, slow clients
+# ---------------------------------------------------------------------------
+
+
+def test_overlay_ctrl_c_during_mainloop_stops_the_whole_app(bus: EventBus, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tk raises KeyboardInterrupt from mainloop() (not a callback): the shared
+    stop event must be set, or AdvisorApp.wait keeps the app running."""
+    import tft_advisor.ui.overlay as overlay_mod
+
+    class Widget:
+        def __init__(self, *_a: Any, **_kw: Any) -> None:
+            pass
+
+        def __getattr__(self, _name: str) -> Any:
+            return lambda *_a, **_kw: None
+
+        def winfo_reqheight(self) -> int:
+            return 20
+
+        def winfo_children(self) -> list[Any]:
+            return []
+
+    class Root(Widget):
+        def mainloop(self) -> None:
+            raise KeyboardInterrupt
+
+        def winfo_fpixels(self, _spec: str) -> float:
+            return 96.0
+
+        def winfo_screenwidth(self) -> int:
+            return 1920
+
+        def winfo_screenheight(self) -> int:
+            return 1080
+
+        def winfo_x(self) -> int:
+            return 10
+
+        def winfo_y(self) -> int:
+            return 10
+
+    tk = types.ModuleType("tkinter")
+    tk.Tk, tk.Frame, tk.Label = Root, Widget, Widget  # type: ignore[attr-defined]
+    tkfont = types.ModuleType("tkinter.font")
+    tkfont.families = lambda _root=None: []  # type: ignore[attr-defined]
+    tk.font = tkfont  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "tkinter", tk)
+    monkeypatch.setitem(sys.modules, "tkinter.font", tkfont)
+    monkeypatch.setattr(overlay_mod, "display_available", lambda: True)
+    monkeypatch.setattr(overlay_mod, "_make_non_activating", lambda _root: False)
+
+    stop = threading.Event()
+    ov = Overlay(bus, UIConfig(overlay=True), log=quiet, stop_event=stop)
+    assert ov.run() is True
+    assert ov.interrupted and ov.closed
+    assert stop.is_set(), "Ctrl+C must stop capture / hotkeys / Claude calls, not only hide the window"
+    assert not bus._handlers.get("advice"), "bus subscriptions are released"
+
+
+def test_localhost_mode_rejects_pages_on_other_local_ports(server: DashboardServer, bus: EventBus) -> None:
+    port = server.port
+    got: list[Any] = []
+    bus.subscribe("command", lambda _t, p: got.append(p))
+    body = json.dumps({"cmd": "new_game"}).encode()
+    host = {"Host": f"127.0.0.1:{port}"}
+    as_json = {"Content-Type": "application/json"}
+
+    def post(extra: dict[str, str]) -> int:
+        return raw_request(port, "POST", "/api/command", {**host, **extra}, body)[0]
+
+    # another local web page (dev server, Jupyter, a downloaded HTML file) is not the dashboard
+    for origin in ("http://localhost:3000", "http://127.0.0.1:3000", f"https://127.0.0.1:{port}", "http://[::1]:3000"):
+        assert post({**as_json, "Origin": origin}) == 403, origin
+    # no-preflight "simple" requests (text/plain, form bodies) are refused outright
+    assert post({"Content-Type": "text/plain", "Origin": f"http://127.0.0.1:{port}"}) == 415
+    assert post({"Content-Type": "application/x-www-form-urlencoded"}) == 415
+    assert post({}) == 415
+    # fetch metadata: only the page itself (same-origin) or a typed URL (none)
+    assert post({**as_json, "Sec-Fetch-Site": "same-site"}) == 403
+    assert post({**as_json, "Sec-Fetch-Site": "cross-site"}) == 403
+    assert raw_request(port, "GET", "/api/snapshot", {**host, "Sec-Fetch-Site": "cross-site"})[0] == 403
+    assert raw_request(port, "GET", "/api/snapshot", {**host, "Origin": "http://localhost:3000"})[0] == 403
+    assert raw_request(port, "GET", "/", {**host, "Sec-Fetch-Site": "cross-site"})[0] == 200  # a link to the page is fine
+    assert got == []
+    # the dashboard itself, also when reached through another loopback name on the same port
+    assert post({**as_json, "Origin": f"http://127.0.0.1:{port}", "Sec-Fetch-Site": "same-origin"}) == 200
+    assert post({**as_json, "Origin": f"http://localhost:{port}"}) == 200
+    assert post({**as_json, "Content-Type": "application/json; charset=utf-8"}) == 200
+    assert len(got) == 3
+
+
+def test_lan_token_is_kept_between_runs_and_can_be_rotated(bus: EventBus, tmp_path: Path) -> None:
+    token_file = tmp_path / "cache" / "dashboard_token"
+
+    def run(**kw: Any) -> tuple[str, list[str]]:
+        logs: list[str] = []
+        srv = DashboardServer(bus, UIConfig(host="0.0.0.0", port=0), log=logs.append, token_file=token_file, **kw)
+        try:
+            try:
+                srv.start()
+            except OSError as exc:  # pragma: no cover - sandbox without 0.0.0.0
+                pytest.skip(f"cannot bind 0.0.0.0: {exc}")
+            assert srv.token
+            assert request("GET", f"http://127.0.0.1:{srv.port}/api/health?token={srv.token}")[0] == 200
+            return srv.token, logs
+        finally:
+            srv.stop()
+
+    first, logs = run()
+    assert token_file.read_text(encoding="utf-8").strip() == first
+    assert any(str(token_file) in line for line in logs), "the log says where the token lives"
+    if sys.platform != "win32":
+        assert token_file.stat().st_mode & 0o077 == 0, "token file is private"
+    assert run()[0] == first, "a phone bookmark must keep working after a restart"
+    rotated = run(new_token=True)[0]
+    assert rotated != first and token_file.read_text(encoding="utf-8").strip() == rotated
+    token_file.write_text("short\n", encoding="utf-8")  # damaged file: replaced by a fresh token
+    fresh = run()[0]
+    assert fresh not in (first, rotated, "short") and len(fresh) >= 22
+    # no file: a new token every run (old behaviour)
+    srv = DashboardServer(bus, UIConfig(host="0.0.0.0", port=0), log=quiet, token_file=None)
+    try:
+        srv.start()
+        assert srv.token and srv.token != fresh
+    finally:
+        srv.stop()
+
+
+def test_load_or_create_token_survives_an_unwritable_location(tmp_path: Path) -> None:
+    from tft_advisor.ui.server import load_or_create_token
+
+    blocker = tmp_path / "file"
+    blocker.write_text("x", encoding="utf-8")
+    logs: list[str] = []
+    token = load_or_create_token(blocker / "sub" / "token", log=logs.append)  # parent is a file
+    assert len(token) >= 22 and logs and "临时令牌" in logs[0]
+
+
+def test_rejected_command_is_reported_to_the_page(server: DashboardServer, bus: EventBus) -> None:
+    """The app refuses a command by logging a warning from the handler; the POST must say so."""
+
+    def fake_app(_topic: str, payload: Any) -> None:
+        if payload.get("cmd") == "set_field" and payload.get("value") == 999:
+            bus.log("命令 set_field 失败: 金币 999 不合理（范围 0 到 300）", "warn")
+        elif payload.get("cmd") == "set_comp" and payload.get("comp") == "bad":
+            bus.log("命令 set_comp 失败: 阵容名太长", "warn")
+        elif payload.get("cmd") == "set_comp":
+            bus.log("没有找到阵容 xyz，按关键词匹配", "warn")  # a hint: the comp was still set
+        elif payload.get("cmd") == "set_field" and payload.get("value") == 7:
+            bus.log("修正失败：等级 7 不合理", "warn")  # other wording, same meaning
+        elif payload.get("cmd") == "analyze":
+            bus.log("截图失败: 找不到游戏窗口", "warn")  # the job still runs: only a warning
+        elif payload.get("cmd") == "toggle_auto":
+            threading.Thread(target=bus.log, args=("另一个线程的警告", "warn")).start()
+            time.sleep(0.05)
+
+    bus.subscribe("command", fake_app)
+    url = base(server) + "/api/command"
+    status, raw = request("POST", url, {"cmd": "set_field", "field": "gold", "value": 999})
+    reply = json.loads(raw)
+    assert status == 400 and reply["ok"] is False and reply["rejected"] is True
+    assert reply["error"] == "金币 999 不合理（范围 0 到 300）", "no internal command name in the message"
+    status, raw = request("POST", url, {"cmd": "set_field", "field": "level", "value": 7})
+    assert status == 400 and json.loads(raw)["error"] == "等级 7 不合理"
+    status, raw = request("POST", url, {"cmd": "set_comp", "comp": "bad"})
+    assert status == 400 and json.loads(raw)["error"] == "阵容名太长"
+    status, raw = request("POST", url, {"cmd": "set_comp", "comp": "xyz"})
+    assert status == 200 and json.loads(raw)["warnings"] == ["没有找到阵容 xyz，按关键词匹配"]
+    status, raw = request("POST", url, {"cmd": "set_field", "field": "gold", "value": 42})
+    assert status == 200 and json.loads(raw) == {"ok": True, "cmd": "set_field"}
+    status, raw = request("POST", url, {"cmd": "analyze"})
+    assert status == 200 and json.loads(raw)["warnings"] == ["截图失败: 找不到游戏窗口"]
+    status, raw = request("POST", url, {"cmd": "toggle_auto"})  # other threads' logs are not ours
+    assert status == 200 and "warnings" not in json.loads(raw)
+    assert not [h for h in bus._handlers.get("log", [])], "the capture handler is removed"
+
+
+def test_app_manual_correction_out_of_range_is_rejected_over_http(tmp_path: Path) -> None:
+    from tft_advisor.app import AdvisorApp
+    from tft_advisor.config import Config
+    from tft_advisor.data.setdata import SetData, bundled_sample
+
+    cfg = Config()
+    cfg.data.cache_dir = str(tmp_path / "cache")
+    cfg.capture.screenshot_dir = str(tmp_path / "shots")
+    cfg.ui.open_browser = False
+    cfg.ui.port = 0
+    cfg.hotkeys.enabled = False
+    sample = SetData.from_cdragon(bundled_sample(), source="bundled-sample")
+    app = AdvisorApp(cfg, set_data=sample, perceiver=None, fast_perceiver=None, use_llm=False, console=False)
+    url = app.start(dashboard=True, hotkeys=False, voice=False, capture=False)
+    try:
+        assert url
+        cmd_url = url.split("?")[0].rstrip("/") + "/api/command"
+        status, raw = request("POST", cmd_url, {"cmd": "set_field", "field": "gold", "value": 999})
+        reply = json.loads(raw)
+        assert status == 400 and reply["rejected"] and "999" in reply["error"] and "300" in reply["error"]
+        assert "set_field" not in reply["error"]
+        assert app.tracker.state.gold != 999
+        status, raw = request("POST", cmd_url, {"cmd": "set_field", "field": "gold", "value": 42})
+        assert status == 200 and json.loads(raw)["ok"] is True
+        assert app.tracker.state.gold == 42
+    finally:
+        app.stop()
+
+
+def _slow_sockets(port: int, n: int) -> list[socket.socket]:
+    socks = []
+    for _ in range(n):
+        s = socket.create_connection(("127.0.0.1", port), timeout=5)
+        s.sendall(b"GET / HTTP/1.1\r\n")  # headers never finish
+        socks.append(s)
+    return socks
+
+
+def _closed_by_server(s: socket.socket, timeout: float) -> bool:
+    s.settimeout(timeout)
+    try:
+        return s.recv(1024) == b""
+    except (ConnectionResetError, ConnectionAbortedError):
+        return True
+    except (socket.timeout, TimeoutError):
+        return False
+
+
+def test_slow_header_clients_are_cut_off_by_a_total_deadline(bus: EventBus, monkeypatch: pytest.MonkeyPatch) -> None:
+    import tft_advisor.ui.server as server_mod
+
+    monkeypatch.setattr(server_mod, "HEADER_TIMEOUT_S", 0.6)
+    srv = DashboardServer(bus, UIConfig(host="127.0.0.1", port=0), log=quiet)
+    srv.start()
+    try:
+        s = _slow_sockets(srv.port, 1)[0]
+        t0 = time.time()
+        # one header byte every 0.2 s: each recv succeeds, only a total deadline stops it
+        for _ in range(10):
+            try:
+                s.sendall(b"X")
+            except OSError:
+                break
+            time.sleep(0.2)
+        assert _closed_by_server(s, 3.0)
+        assert time.time() - t0 < 4.0
+        s.close()
+        assert wait_for(lambda: srv._httpd.open_connections == 0, 3.0)
+        assert request("GET", base(srv) + "/api/health")[0] == 200  # normal requests unaffected
+    finally:
+        srv.stop()
+
+
+def test_connection_cap_drops_extra_connections_without_threads(bus: EventBus, monkeypatch: pytest.MonkeyPatch) -> None:
+    import tft_advisor.ui.server as server_mod
+
+    monkeypatch.setattr(server_mod, "MAX_CONNECTIONS", 4)
+    srv = DashboardServer(bus, UIConfig(host="127.0.0.1", port=0), log=quiet)
+    srv.start()
+    held: list[socket.socket] = []
+    try:
+        threads_before = threading.active_count()
+        held = _slow_sockets(srv.port, 4)
+        assert wait_for(lambda: srv._httpd.open_connections == 4, 3.0)
+        extra = _slow_sockets(srv.port, 6)
+        assert all(_closed_by_server(s, 2.0) for s in extra), "over the cap: closed at once"
+        for s in extra:
+            s.close()
+        assert threading.active_count() <= threads_before + 4 + 1
+        assert srv._httpd.open_connections == 4
+        for s in held:
+            s.close()
+        held = []
+        assert wait_for(lambda: srv._httpd.open_connections == 0, 12.0)
+        assert request("GET", base(srv) + "/api/health")[0] == 200
+    finally:
+        for s in held:
+            s.close()
+        srv.stop()
+
+
+def test_per_client_cap_applies_to_lan_peers_only(bus: EventBus) -> None:
+    import tft_advisor.ui.server as server_mod
+
+    srv = DashboardServer(bus, UIConfig(host="127.0.0.1", port=0), log=quiet)
+    srv.start()
+    try:
+        httpd = srv._httpd
+        phone = ("192.168.1.23", 50000)
+        admitted = [httpd._admit(phone) for _ in range(server_mod.MAX_CONNECTIONS_PER_IP + 3)]
+        assert admitted.count(True) == server_mod.MAX_CONNECTIONS_PER_IP
+        assert httpd._admit(("192.168.1.24", 1)), "another device still gets in"
+        assert httpd._admit(("127.0.0.1", 1)) and httpd._admit(("::ffff:127.0.0.1", 1, 0, 0))
+        for _ in range(server_mod.MAX_CONNECTIONS_PER_IP):
+            httpd._release(phone)
+        for addr in (("192.168.1.24", 1), ("127.0.0.1", 1), ("::ffff:127.0.0.1", 1, 0, 0)):
+            httpd._release(addr)
+        assert httpd.open_connections == 0 and httpd._admit(phone)
+        httpd._release(phone)
+    finally:
+        srv.stop()
+
+
+def test_index_html_review_regressions() -> None:
+    html = INDEX.read_text(encoding="utf-8")
+    js = re.search(r"<script>(.*)</script>", html, re.S).group(1)
+    # a snapshot without advice (fresh app after a restart) really shows the placeholder
+    body = js.split("function renderHeadline()", 1)[1].split("function currentRequests()", 1)[0]
+    assert "setHTML(el, waitingHTML())" in body and "keep the waiting placeholder" not in body
+    # lost connection: banner with the data's age, faded page, cleared when live again
+    assert 'classList.toggle("stale"' in js and "main.grid.stale" in html
+    assert "与助手的连接已断开" in js and "refreshBanner()" in js
+    # hidden tabs give their stream back; commands time out instead of queueing forever
+    assert "function pauseStream()" in js and "HIDDEN_PAUSE_MS" in js and "pageHidden()" in js
+    assert "AbortController" in js and "连接超时" in js
+    # refused commands are shown as refused; client-side ranges match the tracker
+    assert "j.rejected" in js and "修正失败" in js and "FIELD_RANGE" in js
+    from tft_advisor.engine import tracker
+
+    rng = re.search(r"var FIELD_RANGE = (\{.*?\});", js).group(1)
+    assert f"gold: [{tracker.GOLD_RANGE[0]}, {tracker.GOLD_RANGE[1]}]" in rng
+    assert f"hp: [{tracker.HP_RANGE[0]}, {tracker.HP_RANGE[1]}]" in rng
+    assert f"streak: [{tracker.STREAK_RANGE[0]}, {tracker.STREAK_RANGE[1]}]" in rng
+    assert f"xp_current: [0, {tracker.XP_MAX}]" in rng
+    # small layout / copy fixes
+    assert "(pointer: coarse)" in js and "Ctrl+Enter" not in re.search(r'<textarea id="ask-q"[^>]*>', html).group(0)
+    phone_css = html.split("@media (max-width: 720px)", 1)[1].split("</style>", 1)[0]
+    assert re.search(r"\.pl \{[^}]*min-height: 44px", phone_css)
+    assert 'g(S, "status.strategist", null) === false' in js and "需要 API Key" in js
+    for opt in re.findall(r"<option value=\"[a-z_]+\">([^<]*)</option>", html):
+        assert len(opt) <= 5, opt  # long labels get cut off in the narrow select
+
+
+def _chromium():
+    sync_api = pytest.importorskip("playwright.sync_api")
+    pw = sync_api.sync_playwright().start()
+    try:
+        browser = pw.chromium.launch()
+    except Exception as exc:  # pragma: no cover - no browser installed here
+        pw.stop()
+        pytest.skip(f"no Chromium for Playwright: {exc}")
+    return pw, browser
+
+
+def test_page_in_a_real_browser_restart_disconnect_and_rejections(bus: EventBus) -> None:
+    """Needs Playwright + Chromium (skipped otherwise)."""
+    pw, browser = _chromium()
+    srv = DashboardServer(bus, UIConfig(host="127.0.0.1", port=0), log=quiet, keepalive_s=0.5)
+    srv2: Optional[DashboardServer] = None
+    try:
+        srv.start()
+        port = srv.port
+        bus.publish("status", {"auto": True, "strategist": False, "hotkeys": {"analyze": "F6"}})
+        bus.publish("advice", sample_advice(stage="3-2"))
+        bus.publish("state", {"stage": {"stage": 3, "round": 2}, "gold": 38})
+
+        def fake_app(_topic: str, payload: Any) -> None:
+            if payload.get("cmd") == "set_field" and payload.get("field") == "stage":
+                bus.log(f"命令 set_field 失败: 回合格式不对：{payload.get('value')!r}（例如 3-2）", "warn")
+
+        bus.subscribe("command", fake_app)
+        page = browser.new_context(viewport={"width": 1440, "height": 900}, bypass_csp=True).new_page()
+        page.goto(srv.url)
+        page.wait_for_function("() => document.querySelector('#s-conn').textContent === '实时'", timeout=10000)
+        page.wait_for_function("() => document.querySelector('#headline').textContent.indexOf('稳住血量') >= 0", timeout=5000)
+        assert page.eval_on_selector("#ask-q", "e => e.disabled") is True  # no Claude: asking is pointless
+
+        # a refused correction says so (and never says "sent")
+        page.select_option("#fix-field", "stage")
+        page.fill("#fix-value", "0-0")
+        page.click("#fix-btn")
+        page.wait_for_function("() => document.querySelector('#toast').textContent.indexOf('修正失败') >= 0", timeout=5000)
+        assert "回合格式不对" in page.inner_text("#toast") and "set_field" not in page.inner_text("#toast")
+        page.select_option("#fix-field", "gold")
+        page.fill("#fix-value", "999")
+        page.click("#fix-btn")
+        assert "范围 0 到 300" in page.inner_text("#toast")
+
+        # the app dies: banner + faded page, not "live looking" data
+        srv.stop()
+        page.wait_for_function("() => document.querySelector('main.grid').classList.contains('stale')", timeout=8000)
+        assert "连接已断开" in page.inner_text("#banner") and page.inner_text("#s-conn") == "断开"
+
+        # a fresh app on the same port without advice: the old advice must go away
+        bus2 = EventBus()
+        bus2.publish("status", {"auto": True, "strategist": True})
+        srv2 = DashboardServer(bus2, UIConfig(host="127.0.0.1", port=port), log=quiet, keepalive_s=0.5)
+        srv2.start()
+        page.wait_for_function("() => !document.querySelector('main.grid').classList.contains('stale')", timeout=20000)
+        page.wait_for_function("() => document.querySelector('#headline .hl-text').textContent === '等待第一次分析'", timeout=5000)
+        assert page.inner_text("#banner") == "" and "稳住血量" not in page.inner_text("#headline")
+        assert page.eval_on_selector("#ask-q", "e => e.disabled") is False
+
+        # a hidden tab pauses its stream and resumes when shown again
+        page.wait_for_function("() => document.querySelector('#s-conn').textContent === '实时'", timeout=15000)
+        page.evaluate(
+            "() => { Object.defineProperty(document, 'visibilityState', {get: () => 'hidden', configurable: true});"
+            " document.dispatchEvent(new Event('visibilitychange')); }"
+        )
+        page.wait_for_function("() => document.querySelector('#s-conn').textContent === '暂停'", timeout=8000)
+        assert wait_for(lambda: srv2.sse_clients == 0, 5.0), "the server sees the stream closed"
+        page.evaluate(
+            "() => { Object.defineProperty(document, 'visibilityState', {get: () => 'visible', configurable: true});"
+            " document.dispatchEvent(new Event('visibilitychange')); }"
+        )
+        page.wait_for_function("() => document.querySelector('#s-conn').textContent === '实时'", timeout=8000)
+    finally:
+        srv.stop()
+        if srv2 is not None:
+            srv2.stop()
+        browser.close()
+        pw.stop()
+
+
+def test_validate_command_strips_terminal_control_characters() -> None:
+    assert validate_command({"cmd": "set_comp", "comp": "阿狸\x1b[2J‮法师"}) == ("set_comp", {"comp": "阿狸[2J法师"})
+    assert validate_command({"cmd": "scout", "player": "Opp\x1b]0;x\x07\nA"})[1]["player"] == "Opp]0;x A"
+    # questions keep their line breaks, lose the controls
+    assert validate_command({"cmd": "ask", "question": "该不该\n转法师\x07？"})[1]["question"] == "该不该\n转法师？"
+    assert validate_command({"cmd": "set_field", "field": "gold", "value": "4\x1b2"})[1]["value"] == "42"

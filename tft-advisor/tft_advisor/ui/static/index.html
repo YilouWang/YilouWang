@@ -48,8 +48,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .bad { color: var(--bad); }
 
 /* ---------- top bar ---------- */
+/* banner + top bar stick together, so "connection lost" stays in view while scrolling */
+.topwrap { position: sticky; top: 0; z-index: 20; }
 .topbar {
-  position: sticky; top: 0; z-index: 20;
   background: rgba(14, 17, 22, 0.96);
   border-bottom: 1px solid var(--line);
   padding: 8px 16px;
@@ -244,6 +245,8 @@ textarea, input[type=text], input[type=number], select {
 }
 textarea { resize: vertical; min-height: 70px; }
 textarea:focus, input:focus, select:focus { outline: none; border-color: var(--accent); }
+textarea:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:disabled:active { transform: none; }
 .row { display: flex; gap: 8px; align-items: stretch; margin-top: 8px; flex-wrap: wrap; }
 .row > * { flex: 1 1 110px; }
 .row > .btn { flex: 0 0 auto; min-width: 88px; }
@@ -258,6 +261,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
 }
 #toast.show { opacity: 1; }
 #toast.ok { border-color: var(--good); }
+#toast.warn { border-color: var(--warn); color: #f0c674; }
 #toast.bad { border-color: var(--bad); color: #ffb4ae; }
 
 #banner {
@@ -265,6 +269,8 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   padding: 8px 16px; font-size: 14px;
 }
 #banner.show { display: block; }
+/* connection lost: the data below is old, make that obvious at a glance */
+main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3s; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
@@ -273,7 +279,9 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
 }
 @media (max-width: 720px) {
   body { font-size: 15px; padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
-  .topbar { position: static; padding: 8px 12px; gap: 8px; }
+  .topwrap { position: static; }
+  .topwrap.alert { position: sticky; top: 0; } /* phones: only pin the bar while something is wrong */
+  .topbar { padding: 8px 12px; gap: 8px; }
   .brand { display: none; }
   .pill.info { display: none; }
   .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; width: 100%; }
@@ -293,10 +301,12 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   #toast { bottom: calc(86px + env(safe-area-inset-bottom)); }
   .shop { gap: 4px; }
   .slot .n { font-size: 13px; }
+  .pl { min-height: 44px; padding: 6px 10px; }
 }
 </style>
 </head>
 <body>
+<div class="topwrap" id="topwrap">
 <div id="banner"></div>
 <header class="topbar">
   <div class="brand">TFT 实时助手</div>
@@ -312,6 +322,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   </div>
   <div class="pills" id="pills"></div>
 </header>
+</div>
 
 <nav class="controls" id="controls">
   <button class="btn primary" data-cmd="analyze" data-label="分析">分析<span class="hk" id="hk-analyze">F6</span></button>
@@ -373,8 +384,8 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   </section>
 
   <section class="card w4" id="card-ask">
-    <h2>问 Claude</h2>
-    <textarea id="ask-q" maxlength="500" placeholder="例如：现在该 D 牌还是存钱？（Ctrl+Enter 发送）"></textarea>
+    <h2>问 Claude <span class="sub" id="ask-sub"></span></h2>
+    <textarea id="ask-q" maxlength="500" placeholder="例如：现在该 D 牌还是存钱？"></textarea>
     <div class="row"><button class="btn primary" id="ask-btn">提问</button></div>
     <div id="answer"></div>
   </section>
@@ -386,16 +397,16 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
         <option value="gold">金币</option>
         <option value="level">等级</option>
         <option value="hp">血量</option>
-        <option value="stage">阶段 (例如 3-2)</option>
+        <option value="stage">阶段</option>
         <option value="xp_current">当前经验</option>
-        <option value="streak">连胜/连败 (负数为连败)</option>
+        <option value="streak">连胜/连败</option>
       </select>
       <input type="text" id="fix-value" inputmode="numeric" placeholder="新数值" autocomplete="off">
       <button class="btn" id="fix-btn">修正</button>
     </div>
-    <div class="lbl">目标阵容（留空 = 自动推荐）</div>
+    <div class="lbl">目标阵容（留空 = 自动推荐）<span class="faint" id="comp-cur"></span></div>
     <div class="row">
-      <input type="text" id="comp-value" list="comp-list" placeholder="例如：枪手 或 某个阵容名" autocomplete="off">
+      <input type="text" id="comp-value" list="comp-list" placeholder="例如：阿狸 或 法师" autocomplete="off">
       <datalist id="comp-list"></datalist>
       <button class="btn" id="comp-btn">设定</button>
     </div>
@@ -421,6 +432,13 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   var ASK_TIMEOUT_S = 120;
   var STALE_STREAM_MS = 45000; // server pings every 15 s; 3 missed pings = dead stream
   var lastMsgAt = 0;
+  var lastDataAt = 0; // last time the server answered with data (stream event or poll)
+  var SEND_TIMEOUT_MS = 6000; // a command that is not answered by then failed (never a silent queue)
+  // Browsers allow about 6 connections per host: a hidden tab gives its stream
+  // back, or a few forgotten dashboard tabs block every new page and command.
+  var HIDDEN_PAUSE_MS = 3000;
+  var COARSE = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+  var ASK_PLACEHOLDER = "例如：现在该 D 牌还是存钱？" + (COARSE ? "" : "（Ctrl+Enter 发送）");
 
   function $(id) { return document.getElementById(id); }
   function esc(v) {
@@ -516,7 +534,25 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     slow_roll: "慢搜（保留利息）", all_in: "全力搜牌保血", hold: "正常运营"
   };
   var SOURCE_LABEL = { rules: "规则引擎", llm: "Claude", "rules+llm": "规则 + Claude" };
+  var PERCEIVER_LABEL = { claude: "Claude 识图", ocr: "本地 OCR", mock: "演示数据", manual: "手动输入", liveclient: "本地接口", list: "测试数据" };
+  function perceiverLabel(p) {
+    return String(p).split("+").map(function (x) { return PERCEIVER_LABEL[x] || x; }).join(" + ");
+  }
+  function dataSourceLabel(src) {
+    src = String(src || "");
+    if (src.indexOf("bundled-snapshot") === 0) return "内置快照";
+    if (src.indexOf("bundled-sample") === 0) return "内置样例（不是当前赛季）";
+    if (src.indexOf("cdragon") >= 0) return "CommunityDragon";
+    return src;
+  }
+  function shopName(name) {
+    // Set 18 Wisps are reported as "Wisp: <name>".
+    return String(name).replace(/^\s*wisp\s*[:：]\s*/i, "精灵：");
+  }
   var FIELD_LABEL = { gold: "金币", level: "等级", hp: "血量", stage: "阶段", xp_current: "当前经验", streak: "连胜/连败" };
+  // Same bounds as engine/tracker.py (GOLD_RANGE, HP_RANGE, XP_MAX, STREAK_RANGE); the app has the final say.
+  var FIELD_RANGE = { gold: [0, 300], level: [1, 10], hp: [0, 200], xp_current: [0, 200], streak: [-20, 20] };
+  var FIX_HINT = { stage: "例如 3-2", streak: "连败填负数，如 -3" };
 
   // ------------------------------------------------------------------ network
   var TOKEN = (function () {
@@ -541,33 +577,67 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   }
 
   var toastTimer = null;
-  function toast(text, kind) {
+  function toast(text, kind, ms) {
     var el = $("toast");
     el.textContent = text;
     el.className = "show " + (kind || "");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { el.className = ""; }, 2200);
+    toastTimer = setTimeout(function () { el.className = ""; }, ms || (kind === "ok" ? 2200 : 4500));
   }
   function banner(text) {
     var el = $("banner");
-    el.textContent = text || "";
+    if (el.textContent !== (text || "")) el.textContent = text || "";
     el.className = text ? "show" : "";
+    $("topwrap").classList.toggle("alert", !!text);
+  }
+  function agoText(ms) {
+    var d = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    return d < 60 ? d + " 秒前" : d < 3600 ? Math.round(d / 60) + " 分钟前" : Math.round(d / 3600) + " 小时前";
+  }
+  // One place decides the banner and the "old data" look of the page.
+  function refreshBanner() {
+    var down = connMode === "down";
+    var grid = document.querySelector("main.grid");
+    if (grid) grid.classList.toggle("stale", down && lastDataAt > 0);
+    if (authBad) {
+      banner("访问被拒绝：需要令牌。请用助手启动时打印的完整链接（带 ?token=）打开本页。");
+    } else if (down) {
+      banner(lastDataAt
+        ? "与助手的连接已断开，下面是 " + agoText(lastDataAt) + "的数据，正在重连..."
+        : "连不上助手，请确认 tft-advisor 正在运行，正在重试...");
+    } else {
+      banner("");
+    }
   }
 
-  function send(payload, label) {
-    return fetch(api("/api/command"), { method: "POST", headers: headers(true), body: JSON.stringify(payload), cache: "no-store" })
+  // failPrefix: what a refused command is called in the toast ("修正失败" ...).
+  function send(payload, label, failPrefix) {
+    var ctrl = window.AbortController ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, SEND_TIMEOUT_MS) : null;
+    var opts = { method: "POST", headers: headers(true), body: JSON.stringify(payload), cache: "no-store" };
+    if (ctrl) opts.signal = ctrl.signal;
+    return fetch(api("/api/command"), opts)
       .then(function (r) {
         return r.json().catch(function () { return {}; }).then(function (j) {
           if (r.status === 401) authFailed();
+          if (j && j.rejected && j.error) {
+            toast((failPrefix || "未执行") + "：" + j.error, "bad", 6000);
+            return false;
+          }
           if (!r.ok || !j.ok) throw new Error(j.error || ("HTTP " + r.status));
-          toast("已发送：" + label, "ok");
+          var warns = arr(j.warnings);
+          if (warns.length) toast("已发送：" + label + "。注意：" + warns[0], "warn", 6000);
+          else toast("已发送：" + label, "ok");
           return true;
         });
       })
       .catch(function (e) {
-        toast("发送失败：" + (e && e.message ? e.message : e), "bad");
+        var why = e && e.name === "AbortError" ? "连接超时" :
+          e instanceof TypeError ? "连不上助手" : (e && e.message ? e.message : String(e));
+        toast("发送失败：" + why, "bad");
         return false;
-      });
+      })
+      .then(function (ok) { clearTimeout(timer); return ok; });
   }
 
   var es = null;
@@ -580,16 +650,17 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   function setConn(mode) {
     connMode = mode;
     var el = $("s-conn");
-    var map = { live: ["实时", "good"], poll: ["轮询", "warn"], down: ["断开", "bad"], auth: ["令牌错误", "bad"] };
+    var map = { live: ["实时", "good"], poll: ["轮询", "warn"], down: ["断开", "bad"], auth: ["令牌错误", "bad"], paused: ["暂停", "dim"] };
     var m = map[mode] || ["...", ""];
     el.textContent = m[0];
     el.className = "v " + m[1];
+    refreshBanner();
   }
   function authFailed() {
     authBad = true;
     setConn("auth");
-    banner("访问被拒绝：需要令牌。请用助手启动时打印的完整链接（带 ?token=）打开本页。");
   }
+  function pageHidden() { return document.visibilityState === "hidden"; }
 
   function syncClock() {
     fetch(api("/api/health"), { headers: headers(false), cache: "no-store" })
@@ -601,6 +672,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   function handle(topic, raw) {
     var data;
     try { data = JSON.parse(raw); } catch (e) { return; }
+    lastDataAt = Date.now();
     if (topic === "snapshot") {
       S = data && typeof data === "object" ? data : {};
     } else if (topic === "log") {
@@ -616,11 +688,12 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     } else {
       S[topic] = data;
     }
-    if (authBad) { authBad = false; banner(""); }
+    if (authBad) { authBad = false; refreshBanner(); }
     scheduleRender();
   }
 
   function poll() {
+    if (pageHidden()) return; // nobody is looking; visibilitychange refreshes
     fetch(api("/api/snapshot"), { headers: headers(false), cache: "no-store" })
       .then(function (r) {
         if (r.status === 401) { authFailed(); return null; }
@@ -631,14 +704,16 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
         if (!j) return;
         if (es && es.readyState === 1 && connMode === "live") return; // the stream is fresher
         S = j;
+        lastDataAt = Date.now();
+        if (authBad) authBad = false;
         if (!es || es.readyState !== 1) setConn("poll");
-        if (authBad) { authBad = false; banner(""); }
+        else refreshBanner();
         scheduleRender();
       })
-      .catch(function () { if (!es || es.readyState !== 1) setConn("down"); });
+      .catch(function () { if ((!es || es.readyState !== 1) && connMode !== "paused") setConn("down"); });
   }
   function startPolling() {
-    if (pollTimer) return;
+    if (pollTimer || pageHidden()) return;
     poll();
     pollTimer = setInterval(poll, 2000);
   }
@@ -646,10 +721,21 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   }
 
+  // Hidden tab: close the stream and stop polling, so forgotten dashboard tabs
+  // never hold the browser's few connections to this host.
+  function pauseStream() {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    if (es) { try { es.close(); } catch (e) { /* ignore */ } es = null; }
+    stopPolling();
+    setConn("paused");
+  }
+
   function connect() {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
     if (es) { try { es.close(); } catch (e) { /* ignore */ } es = null; }
+    if (pageHidden()) { pauseStream(); return; } // resumed by visibilitychange
     if (!window.EventSource) { startPolling(); return; }
     var src;
     try { src = new EventSource(api("/api/events")); } catch (e) { sseFailed(); return; }
@@ -671,7 +757,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     TOPICS.forEach(function (t) {
       src.addEventListener(t, function (ev) { if (es === src) { lastMsgAt = Date.now(); handle(t, ev.data); } });
     });
-    src.addEventListener("ping", function () { if (es === src) lastMsgAt = Date.now(); });
+    src.addEventListener("ping", function () { if (es === src) lastMsgAt = lastDataAt = Date.now(); });
   }
   // A phone that switched Wi-Fi or slept can keep a dead stream "open" forever.
   setInterval(function () {
@@ -682,6 +768,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     }
   }, 10000);
   function sseFailed() {
+    if (pageHidden()) { pauseStream(); return; }
     startPolling();
     if (connMode !== "auth") setConn(connMode === "down" ? "down" : "poll");
     clearTimeout(reconnectTimer);
@@ -690,11 +777,19 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   }
 
   var hiddenAt = 0;
+  var hideTimer = null;
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState !== "visible") { hiddenAt = Date.now(); return; }
+    if (pageHidden()) {
+      hiddenAt = Date.now();
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(function () { if (pageHidden()) pauseStream(); }, HIDDEN_PAUSE_MS);
+      return;
+    }
+    clearTimeout(hideTimer);
+    hideTimer = null;
     var away = hiddenAt ? Date.now() - hiddenAt : 0;
     hiddenAt = 0;
-    if (!es || es.readyState === 2 || away > 20000) {
+    if (!es || es.readyState === 2 || connMode === "paused" || away > 20000) {
       backoff = 1000;
       connect(); // after a long sleep the old stream is often dead without an error
       poll();
@@ -727,6 +822,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     safe("seen", renderSeen);
     safe("warnings", renderWarnings);
     safe("answer", renderAnswer);
+    safe("ask", renderAsk);
     safe("log", renderLog);
   }
 
@@ -757,11 +853,18 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     }
     var calls = num(status.calls);
     if (calls === null) calls = num(g(status, "llm_stats.calls", null));
-    setText("s-calls", calls === null ? "0" : String(calls));
+    var cost = num(g(status, "llm_stats.cost_usd", null));
+    setText("s-calls", (calls === null ? "0" : String(calls)) + (cost !== null && cost > 0 ? " <small>约 $" + cost.toFixed(2) + "</small>" : ""));
+    var hint = typeof status.comp_hint === "string" ? status.comp_hint : null;
+    if (hint !== null) {
+      $("comp-cur").textContent = hint ? "：当前 " + hint : "：当前 自动";
+      var inp = $("comp-value");
+      if (inp && document.activeElement !== inp && !inp.value && hint) inp.value = hint;
+    }
 
     var pills = [];
     if (status.busy) pills.push('<span class="pill busy">分析中...</span>');
-    if (status.perceiver) pills.push('<span class="pill off info">识别: ' + esc(status.perceiver) + "</span>");
+    if (status.perceiver) pills.push('<span class="pill off info">识别: ' + esc(perceiverLabel(status.perceiver)) + "</span>");
     if (status.set) pills.push('<span class="pill off info">' + esc(status.set) + "</span>");
     if (status.llm === false) pills.push('<span class="pill off">未启用 Claude</span>');
     setHTML("pills", pills.join(""));
@@ -772,12 +875,20 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     });
   }
 
+  function waitingHTML() {
+    var key = g(S, "status.hotkeys.analyze", "F6");
+    return '<div class="hl-text">等待第一次分析</div><div class="dim">进入对局后会自动分析，也可以按 ' + esc(key) + " 或点「分析」。</div>";
+  }
+
   function renderHeadline() {
     var adv = S.advice;
     var el = $("headline");
     if (!adv || typeof adv !== "object" || !has(adv.headline)) {
+      // Really render the placeholder: a snapshot without advice (fresh app on
+      // the same port after a restart) must not leave the last session's advice up.
+      setHTML(el, waitingHTML());
       $("hl-age").textContent = "";
-      return; // keep the waiting placeholder
+      return;
     }
     var badges = [];
     var src = adv.source || "rules";
@@ -869,7 +980,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
         var cost = (u && num(u.cost)) || (s && num(s.cost)) || null;
         if (!name) { cells.push('<div class="slot none"><div class="n">空</div></div>'); continue; }
         var isPick = picks.indexOf(norm(name)) >= 0 || (u && picks.indexOf(norm(u.api_name)) >= 0);
-        cells.push('<div class="slot' + (isPick ? " pick" : "") + costCls(cost) + '"><div class="n">' + esc(name) +
+        cells.push('<div class="slot' + (isPick ? " pick" : "") + costCls(cost) + '"><div class="n">' + esc(shopName(name)) +
           '</div><div class="c">' + (cost ? cost + " 费" : "") + "</div></div>");
       }
       html += '<div class="shop">' + cells.join("") + "</div>";
@@ -922,7 +1033,9 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   function renderComps() {
     var comps = arr(g(S, "analysis.comps", [])).filter(function (c) { return c && typeof c === "object"; }).slice(0, 3);
     var dl = $("comp-list");
-    setHTML(dl, comps.map(function (c) { return '<option value="' + esc(c.name) + '">'; }).join(""));
+    var names = arr(g(S, "status.comp_names", [])).filter(has);
+    if (!names.length) names = comps.map(function (c) { return c.name; });
+    setHTML(dl, names.map(function (n) { return '<option value="' + esc(n) + '">'; }).join(""));
     if (!comps.length) { setHTML("comps", empty("暂无数据")); return; }
     setHTML("comps", comps.map(function (c) {
       var sc = num(c.score);
@@ -1011,7 +1124,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     setHTML("seen", html);
     var sub = [];
     if (num(st.last_update)) sub.push("更新于 " + fmtAge(st.last_update));
-    if (status.data_source) sub.push("数据: " + status.data_source);
+    if (status.data_source) sub.push("数据: " + dataSourceLabel(status.data_source));
     $("seen-sub").textContent = sub.join("，");
   }
 
@@ -1019,6 +1132,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     var w = arr(g(S, "analysis.warnings", [])).filter(has);
     var status = S.status || {};
     var items = w.map(function (x) { return "<li>" + esc(x) + "</li>"; });
+    if (status.perceiver === "manual") items.push('<li class="bad">没有 Claude API Key 也没有 OCR，助手看不到游戏画面：「分析」「读商店」「记录对手」不会读到新数据。请设置 ANTHROPIC_API_KEY 后重启，或在「手动修正」里输入金币、等级、血量。</li>');
     if (has(status.last_error)) items.push('<li class="bad">最近错误：' + esc(status.last_error) + "</li>");
     var lu = num(g(S, "state.last_update", null));
     if (lu && nowS() - lu > 300 && status.auto) items.push("<li>已经超过 5 分钟没有读到新画面，检查游戏窗口是否在前台</li>");
@@ -1039,6 +1153,16 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     if (!a || typeof a !== "object" || !has(a.answer)) { setHTML(el, ""); return; }
     lastAskTs = 0;
     setHTML(el, '<div class="answer">' + (has(a.question) ? '<div class="q">问：' + esc(a.question) + "</div>" : "") + esc(a.answer) + "</div>");
+  }
+
+  function renderAsk() {
+    var off = g(S, "status.strategist", null) === false; // no Claude: asking only returns an error
+    var q = $("ask-q"), b = $("ask-btn");
+    if (q.disabled === off) return;
+    q.disabled = off;
+    b.disabled = off;
+    q.placeholder = off ? "需要 API Key 才能提问：设置 ANTHROPIC_API_KEY 后重启助手" : ASK_PLACEHOLDER;
+    $("ask-sub").textContent = off ? "需要 API Key" : "";
   }
 
   function renderLog() {
@@ -1094,8 +1218,9 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
 
   $("fix-field").addEventListener("change", function () {
     var f = $("fix-field").value;
-    $("fix-value").setAttribute("inputmode", f === "stage" ? "text" : "numeric");
-    $("fix-value").placeholder = f === "stage" ? "例如 3-2" : "新数值";
+    // Phone number pads have no minus sign: a losing streak needs the text keyboard.
+    $("fix-value").setAttribute("inputmode", f === "stage" || f === "streak" ? "text" : "numeric");
+    $("fix-value").placeholder = FIX_HINT[f] || "新数值";
   });
   function fix() {
     var field = $("fix-field").value;
@@ -1106,10 +1231,16 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
       if (!/^\d{1,2}-\d{1,2}$/.test(raw)) { toast("阶段格式应为 3-2", "bad"); return; }
       value = raw;
     } else {
+      raw = raw.replace(/^[‐-―−－]/, "-"); // minus typed with a Chinese IME
       if (!/^-?\d{1,3}$/.test(raw)) { toast("请输入整数", "bad"); return; }
       value = parseInt(raw, 10);
+      var rg = FIELD_RANGE[field];
+      if (rg && (value < rg[0] || value > rg[1])) {
+        toast("修正失败：" + (FIELD_LABEL[field] || field) + " " + value + " 不合理（范围 " + rg[0] + " 到 " + rg[1] + "）", "bad");
+        return;
+      }
     }
-    send({ cmd: "set_field", field: field, value: value }, "修正" + (FIELD_LABEL[field] || field) + " = " + value).then(function (ok) {
+    send({ cmd: "set_field", field: field, value: value }, "修正" + (FIELD_LABEL[field] || field) + " = " + value, "修正失败").then(function (ok) {
       if (ok) $("fix-value").value = "";
     });
   }
@@ -1118,7 +1249,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
 
   function setComp() {
     var v = $("comp-value").value.replace(/^\s+|\s+$/g, "").slice(0, 200);
-    send({ cmd: "set_comp", comp: v }, v ? "目标阵容 " + v : "目标阵容 自动");
+    send({ cmd: "set_comp", comp: v }, v ? "目标阵容 " + v : "目标阵容 自动", "设定失败");
   }
   $("comp-btn").addEventListener("click", setComp);
   $("comp-value").addEventListener("keydown", function (ev) { if (ev.key === "Enter") { ev.preventDefault(); setComp(); } });
@@ -1128,9 +1259,11 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     safe("headline-age", function () { if (S.advice) $("hl-age").textContent = fmtAge(S.advice.created_at); });
     safe("seen", renderSeen);
     safe("answer", renderAnswer);
+    if (connMode === "down") refreshBanner(); // keeps "N 秒前" current
   }, 5000);
 
   // ------------------------------------------------------------------ boot
+  $("ask-q").placeholder = ASK_PLACEHOLDER;
   setConn("");
   syncClock();
   poll();

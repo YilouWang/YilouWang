@@ -7,6 +7,12 @@ The plain builder functions can also be imported: ``from .conftest import obs``.
 
 from __future__ import annotations
 
+import errno
+import ipaddress
+import os
+import socket
+import urllib.request
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
 import pytest
@@ -84,6 +90,76 @@ def chinese_set_data() -> SetData:
     if _ZH_SET_DATA is None:
         _ZH_SET_DATA = SetData.from_cdragon(chinese_sample(), bundled_sample())
     return _ZH_SET_DATA
+
+
+# Real Set 18 data: the bundled CommunityDragon snapshot (zh_cn names, en_us
+# for English aliases) and the bundled Set 18 comp library.
+_S18: Optional[SetData] = None
+_S18_COMPS: Optional[list] = None
+
+
+def s18_set_data() -> SetData:
+    global _S18
+    if _S18 is None:
+        from tft_advisor.data.setdata import bundled_snapshot
+
+        _S18 = SetData.from_cdragon(
+            bundled_snapshot("zh_cn"), bundled_snapshot("en_us"), 18, source="bundled-snapshot"
+        )
+    return _S18
+
+
+def s18_comps() -> list:
+    global _S18_COMPS
+    if _S18_COMPS is None:
+        from tft_advisor.data.comps import load_comps
+
+        _S18_COMPS = load_comps(None, s18_set_data())
+    return _S18_COMPS
+
+
+def s18_unit(name: str, star: int = 1, items: Iterable[str] = (), row: Optional[int] = None, col: Optional[int] = None) -> Unit:
+    """A resolved Set 18 unit; item names may be English or Chinese."""
+    sd = s18_set_data()
+    champ = sd.resolve_champion(name)
+    assert champ is not None, name
+    held = []
+    for raw in items:
+        it = sd.resolve_item(raw)
+        assert it is not None, raw
+        held.append(it.name)
+    return Unit(
+        api_name=champ.api_name, name=champ.name, cost=champ.cost, star=star, items=held, row=row, col=col,
+        traits=list(champ.traits),
+    )
+
+
+def s18_state(stage: str, board: Iterable[Any] = (), bench: Iterable[Any] = (), items: Iterable[str] = (), **fields: Any) -> GameState:
+    """Set 18 GameState. Units are names or tuples ``(name, star, items, row, col)``;
+    fielded units without a row fill the back rows."""
+    sd = s18_set_data()
+
+    def build(u: Any, i: int, on_board: bool) -> Unit:
+        if isinstance(u, Unit):
+            return u
+        if isinstance(u, tuple):
+            name, star = u[0], (u[1] if len(u) > 1 else 1)
+            its = u[2] if len(u) > 2 else ()
+            row = u[3] if len(u) > 3 else None
+            col = u[4] if len(u) > 4 else None
+        else:
+            name, star, its, row, col = u, 1, (), None, None
+        if on_board and row is None:
+            row, col = 3 - (i // 7) % 4, i % 7
+        return s18_unit(name, star, its, row if on_board else None, col if on_board else i)
+
+    st = GameState(stage=StageRound.parse(stage), screen_type=ScreenType.PLANNING, **fields)
+    st.board = [build(u, i, True) for i, u in enumerate(board)]
+    st.bench = [build(u, i, False) for i, u in enumerate(bench)]
+    st.item_bench = [sd.resolve_item(x).name if sd.resolve_item(x) else x for x in items]
+    if st.board:
+        st.field_age["board"] = 1.0
+    return st
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +266,94 @@ def make_state(
     if st.board:
         st.field_age["board"] = 1.0
     return st
+
+
+# ---------------------------------------------------------------------------
+# Isolation: every test runs as a fresh, offline user with no game running
+# ---------------------------------------------------------------------------
+
+# The real Riot Live Client Data API port (https://127.0.0.1:2999). The suite
+# runs on the user's gaming PC, so a live match must not change any outcome.
+LIVECLIENT_PORT = 2999
+_PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
+
+
+def _is_local_host(host: Any) -> bool:
+    if isinstance(host, bytes):
+        host = host.decode("ascii", "replace")
+    host = str(host)
+    if host.lower() == "localhost":
+        return True
+    try:
+        ip = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False  # a host name: resolving it is already egress intent
+    mapped = getattr(ip, "ipv4_mapped", None)
+    ip = mapped or ip
+    return ip.is_loopback or ip.is_unspecified
+
+
+@dataclass
+class Isolation:
+    """What the autouse ``isolation`` fixture set up (tests may inspect it)."""
+
+    home: Any
+    egress: list = field(default_factory=list)  # non-loopback TCP connects that were blocked
+
+
+@pytest.fixture(autouse=True, name="isolation")
+def _isolation(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch):
+    """Hermetic by construction, not by convention.
+
+    * HOME / USERPROFILE / APPDATA / LOCALAPPDATA and the cwd point into a fresh
+      temp dir, so ``~/.tft_advisor`` (game logs, review history, token, config)
+      and ``~/.config/anthropic`` are never the user's real ones.
+    * No ANTHROPIC_* (real API key, base URL), TFT_ADVISOR_* (config path, HUD
+      layout, debug) or proxy variables leak in; system (registry) proxies are
+      ignored too, so a local proxy cannot hide real egress from the guard.
+    * TCP connects to non-loopback addresses fail and fail the test; the Live
+      Client port is always refused, as if no match were running.
+    """
+    home = tmp_path_factory.mktemp("home")
+    for var in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"):
+        monkeypatch.setenv(var, str(home))
+    for var in list(os.environ):
+        if var.startswith(("ANTHROPIC_", "TFT_ADVISOR_")) or var in _PROXY_VARS:
+            monkeypatch.delenv(var, raising=False)
+    for name in ("getproxies_registry", "getproxies_macosx_sysconf"):  # Windows / macOS system proxy
+        if hasattr(urllib.request, name):
+            monkeypatch.setattr(urllib.request, name, lambda: {})
+    monkeypatch.chdir(home)
+
+    state = Isolation(home=home)
+    real_connect, real_connect_ex = socket.socket.connect, socket.socket.connect_ex
+
+    def blocked(sock: socket.socket, address: Any) -> Optional[OSError]:
+        if sock.family not in (socket.AF_INET, socket.AF_INET6) or not isinstance(address, tuple) or len(address) < 2:
+            return None
+        host, port = address[0], address[1]
+        if port == LIVECLIENT_PORT and _is_local_host(host):
+            return ConnectionRefusedError(errno.ECONNREFUSED, "tests: no game is running (Live Client port refused)")
+        if sock.type == socket.SOCK_STREAM and not _is_local_host(host):
+            state.egress.append(address)
+            return OSError(errno.ENETUNREACH, f"tests: network egress blocked by tests/conftest.py ({host}:{port})")
+        return None  # loopback, or UDP connect (sends nothing, e.g. LAN IP guess)
+
+    def connect(sock: socket.socket, address: Any) -> None:
+        err = blocked(sock, address)
+        if err is not None:
+            raise err
+        return real_connect(sock, address)
+
+    def connect_ex(sock: socket.socket, address: Any) -> int:
+        err = blocked(sock, address)
+        return err.errno if err is not None else real_connect_ex(sock, address)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
+    yield state
+    if state.egress:
+        pytest.fail(f"test tried to reach the network: {state.egress}", pytrace=False)
 
 
 # ---------------------------------------------------------------------------

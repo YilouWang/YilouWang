@@ -17,6 +17,8 @@ from typing import Iterable, Optional
 from ..config import HotkeyConfig
 from ..data.mechanics import Mechanics, load_mechanics
 from ..data.setdata import SetData, normalize_name
+from ..engine.economy import reroll_level
+from ..engine.tracker import WISP_PREFIXES, is_wisp_name
 from ..models import (
     ActionType,
     Advice,
@@ -39,11 +41,31 @@ MAX_ACTIONS = 6
 # Stabilization rounds where a roll-down is standard.
 ROLLDOWN_POINTS = {(3, 2), (4, 1), (4, 2)}
 
-AUGMENT_GENERIC = "增强选择: 优先经济/战力符合当前阵容的"
+# Roll targets: from this stage on only the top comp's units are named (the
+# early game holds any pair for tempo, the mid game rolls for the comp).
+ROLL_TARGET_LATE_STAGE = 4
+# A comp suggestion below this score is a loose guess (same cut as the
+# analyzer's STYLE_MIN_SCORE): the fielded board is then the real plan.
+ROLL_TARGET_COMMITTED_SCORE = 0.4
+ROLL_TARGET_MIN_P = 0.1
+# A second target is named only when it is worth this share of the first.
+ROLL_TARGET_SECOND_SHARE = 0.25
+# Value weights: carry > comp 3+ costs > cheap comp units > off-comp units.
+ROLL_VALUE_CARRY = 1.0
+ROLL_VALUE_CORE = 0.7
+ROLL_VALUE_FILLER = 0.45
+ROLL_VALUE_OFF_COMP = 0.3
+
+# "海克斯强化" is the client's term for augments ("增强" is not used in game).
+AUGMENT_HINT = "优先选契合当前阵容的经济或战力类"
+AUGMENT_GENERIC = f"海克斯强化：{AUGMENT_HINT}"
+AUGMENT_HEADLINE = "选海克斯：优先契合当前阵容"
+AUGMENT_MORE = "，详细对比看 Claude 建议"
 NO_ROLL_GOLD = "金币不够搜牌，先存钱"
 DEFAULT_HEADLINE = "按节奏运营，稳住血量"
 NO_ROLL_GOLD_ACTION = "金币不够搜牌，这回合先存钱吃利息"
 
+_WISP_PREFIX = re.compile(r"^\s*(?:" + "|".join(re.escape(p) for p in WISP_PREFIXES) + r")\s*[:：]?\s*", re.I)
 _DASHES = re.compile(r"\s*[\u2014\u2015\u2E3A\u2E3B]+\s*")
 _DUP_COMMA = re.compile(r"[，,]\s*[，,]+")
 
@@ -215,17 +237,20 @@ def _unit_label(u: Unit) -> str:
 class RulesAdvisor:
     """Offline advisor. ``mech`` / ``set_data`` are optional extras: without
     them the bundled mechanics are used and carousel picks rely only on the
-    engine's item suggestions."""
+    engine's item suggestions. ``claude_enabled`` says whether a Claude
+    strategist follows up (texts only point to Claude advice when it does)."""
 
     def __init__(
         self,
         hotkeys: Optional[HotkeyConfig] = None,
         mech: Optional[Mechanics] = None,
         set_data: Optional[SetData] = None,
+        claude_enabled: bool = False,
     ) -> None:
         self.hotkeys = hotkeys or HotkeyConfig()
         self.mech = mech or load_mechanics()
         self.set_data = set_data
+        self.claude_enabled = claude_enabled
 
     # ------------------------------------------------------------------ public
     def advise(self, state: GameState, analysis: Analysis) -> Advice:
@@ -279,6 +304,10 @@ class RulesAdvisor:
 
         if analysis.warnings:
             add(ActionType.OTHER, analysis.warnings[0], 3)
+
+        wisp = "" if carousel else self._wisp(state)
+        if wisp:
+            add(ActionType.BUY, wisp, 3)
 
         headline = clip(self._headline(state, analysis, carousel, carousel_pick, augment), HEADLINE_MAX)
         headline = headline or DEFAULT_HEADLINE  # e.g. an econ reason made only of dashes
@@ -340,7 +369,7 @@ class RulesAdvisor:
         rec = econ.recommendation
         pick = analysis.shop_picks[0] if analysis.shop_picks else None
         if augment:
-            return "选增强：优先契合当前阵容"
+            return AUGMENT_HEADLINE
         if carousel:
             if carousel_pick:
                 return f"选秀：拿{carousel_pick[0]}"
@@ -435,29 +464,65 @@ class RulesAdvisor:
             parts.pop()  # keep the upgrade note rather than a low-priority third unit
         return text, 1 if (makes_upgrade or rolling) else 2
 
-    def _roll_text(self, analysis: Analysis) -> str:
+    def _roll_text(self, state: GameState, analysis: Analysis) -> str:
         base = f"最多花 {analysis.econ.roll_budget} 金币搜牌"
-        full = base + self._roll_targets(analysis, with_odds=True)
+        full = base + self._roll_targets(state, analysis, with_odds=True)
         if len(full) <= ACTION_MAX:
             return full
-        short = base + self._roll_targets(analysis, with_odds=False)
+        short = base + self._roll_targets(state, analysis, with_odds=False)
         return short if len(short) <= ACTION_MAX else base
 
-    def _roll_targets(self, analysis: Analysis, with_odds: bool = True) -> str:
+    def _roll_value(self, o, state: GameState, analysis: Analysis) -> float:
+        """How much hitting this unit's goal is worth (0 = not a roll target).
+
+        The carry comes first, then the top comp's 3+ cost units (all comp
+        units on a reroll line), then its cheap units. Units the engine wants
+        sold are never targets, and neither are unowned off-comp units. From
+        stage 4 on, off-comp units only count while there is no committed comp
+        (then the fielded board is the plan); before that any owned pair is a
+        fine tempo upgrade.
+        """
+        keys = {_norm(o.unit), _norm(o.api_name), _norm(o.api_name.split("_", 1)[-1])}
+        keys.discard("")
+        comp = analysis.comps[0] if analysis.comps else None
+        carry = _norm(comp.carry) if comp and comp.carry else ""
+        if carry and carry in keys:
+            return ROLL_VALUE_CARRY
+        if keys & {_norm(n) for n in analysis.sell_candidates}:
+            return 0.0
+        comp_keys = {_norm(n) for n in (comp.core_units + comp.have_units + comp.missing_units)} if comp else set()
+        if keys & comp_keys:
+            core = (o.cost or 0) >= 3 or _is_reroll_plan(analysis.econ)
+            return ROLL_VALUE_CORE if core else ROLL_VALUE_FILLER
+        if o.owned_copies <= 0:
+            return 0.0
+        late = state.stage is not None and state.stage.stage >= ROLL_TARGET_LATE_STAGE
+        if comp is None or not late:
+            return ROLL_VALUE_OFF_COMP
+        if comp.score < ROLL_TARGET_COMMITTED_SCORE:
+            board = set().union(*(_unit_keys(u) for u in state.board)) if state.board else set()
+            if keys & board:
+                return ROLL_VALUE_OFF_COMP
+        return 0.0
+
+    def _roll_targets(self, state: GameState, analysis: Analysis, with_odds: bool = True) -> str:
         """Name the 1-2 units most worth rolling for with this budget.
 
         Rolling for a unit that the budget cannot realistically upgrade (for
-        example a 4-cost at level 6) is bad advice, so units are ranked by the
-        probability of reaching their goal star with ``roll_budget`` gold; the
-        comp carry gets a bonus only when its own chance is meaningful.
+        example a 4-cost at level 6) is bad advice, and so is rolling for a
+        cheap off-comp unit just because it is likely: units are ranked by
+        value (carry > comp core > filler, see ``_roll_value``) times the
+        probability of reaching their goal star with ``roll_budget`` gold.
         """
         econ = analysis.econ
         budget = econ.roll_budget
         # Units whose remaining pool cannot complete the goal are not worth rolling for.
         wanted = [
-            o
+            (o, v)
             for o in analysis.odds
             if o.owned_copies < o.goal_copies and o.remaining_in_pool >= o.goal_copies - o.owned_copies
+            for v in (self._roll_value(o, state, analysis),)
+            if v > 0
         ]
         if not wanted:
             return ""
@@ -466,23 +531,15 @@ class RulesAdvisor:
             options = sorted(g for g in o.p_goal_by_gold if g <= budget)
             return o.p_goal_by_gold[options[-1]] if options else 0.0
 
-        comp = analysis.comps[0] if analysis.comps else None
-        key = _norm(comp.carry) if comp and comp.carry else ""
-        core = {_norm(u) for u in (comp.core_units if comp else [])}
-
-        def score(o) -> float:
-            p = p_at(o)
-            bonus = 0.0
-            if key and key in (_norm(o.unit), _norm(o.api_name)) and p >= 0.1:
-                bonus += 0.25
-            if _norm(o.unit) in core:
-                bonus += 0.05
-            return p + bonus
-
-        ranked = sorted(wanted, key=score, reverse=True)
-        good = [o for o in ranked if p_at(o) >= 0.1][:2]
-        if not good:
+        ranked = sorted(
+            ((o, v * p_at(o)) for o, v in wanted if p_at(o) >= ROLL_TARGET_MIN_P),
+            key=lambda t: t[1],
+            reverse=True,
+        )
+        if not ranked:
             return "，找对子升星"
+        best = ranked[0][1]
+        good = [ranked[0][0]] + [o for o, s in ranked[1:2] if s >= ROLL_TARGET_SECOND_SHARE * best]
         if not with_odds:
             return "，找 " + "、".join(o.unit for o in good)
         parts = []
@@ -511,7 +568,7 @@ class RulesAdvisor:
             out.append((ActionType.LEVEL, f"买经验升到 {target} 级{cost}", 1))
         if rec in (EconAction.LEVEL_AND_ROLL, EconAction.ROLL):
             if can_roll:
-                out.append((ActionType.ROLL, self._roll_text(analysis), 1))
+                out.append((ActionType.ROLL, self._roll_text(state, analysis), 1))
             elif rec == EconAction.ROLL:
                 out.append((ActionType.SAVE, NO_ROLL_GOLD_ACTION, 2))
         elif rec == EconAction.ALL_IN:
@@ -538,6 +595,26 @@ class RulesAdvisor:
             if nxt:
                 out.append((f"准备合成 {nxt.item}" + (f" 给 {nxt.holder}" if nxt.holder else ""), 3))
         return out
+
+    def _wisp(self, state: GameState) -> str:
+        """Hint for a Set 18 Wisp in the shop. Its effect is unknown here, so
+        judge it like a small augment (set notes): cheap econ / XP Wisps
+        early, combat Wisps when stabilizing."""
+        for i, slot in enumerate(state.shop):
+            if not (slot.name and is_wisp_name(slot.name)):
+                continue
+            if slot.cost is not None and state.gold is not None and state.gold < slot.cost:
+                return ""
+            name = _WISP_PREFIX.sub("", slot.name).strip()
+            price = f"（{slot.cost}金币）" if slot.cost is not None else ""
+            sr = state.stage
+            early = sr is not None and sr.stage <= 3 and (state.hp is None or state.hp >= 45)
+            tip = "前期经济或经验类值得买" if early else "稳血时优先买战斗类"
+            text = f"第{i + 1}格精灵「{name}」{price}：{tip}" if name else ""
+            if not text or len(text) > ACTION_MAX:
+                text = f"第{i + 1}格是精灵{price}：{tip}"
+            return text
+        return ""
 
     def _sell(self, state: GameState, analysis: Analysis) -> str:
         if len(state.bench) < self.mech.bench_size or not analysis.sell_candidates:
@@ -609,7 +686,12 @@ class RulesAdvisor:
                 parts.append(f"现在升 {econ.target_level}")
                 stay = max(level, econ.target_level)
             cap = self._cap_gold()
-            parts.append(f"停在 {stay} 级慢搜三星，只花 {cap} 以上的钱" if stay else f"慢搜三星，只花 {cap} 以上的钱")
+            rr = reroll_level(econ.style)
+            if stay and rr and stay < rr:
+                # Stage 2 follows the standard curve; the reroll level comes later.
+                parts.append(f"{rr} 级开始慢搜三星，只花 {cap} 以上的钱")
+            else:
+                parts.append(f"停在 {stay} 级慢搜三星，只花 {cap} 以上的钱" if stay else f"慢搜三星，只花 {cap} 以上的钱")
             parts.append("主C三星后再升级补强")
         else:
             std = self.mech.standard_level_at(sr)
@@ -663,12 +745,13 @@ class RulesAdvisor:
         return clip(text, FIELD_MAX)
 
     def _items_text(self, analysis: Analysis, comp: Optional[CompSuggestion], carry: Optional[Unit]) -> str:
+        # No leading "装备：" label: the dashboard and overlay show their own.
         if analysis.items:
             parts = [f"{s.item} 给 {s.holder}" if s.holder else s.item for s in analysis.items[:3]]
-            return clip("装备：" + _join(parts, "，"), FIELD_MAX)
+            return clip(_join(parts, "，"), FIELD_MAX)
         if comp and comp.carry_items:
             who = comp.carry or (carry.name if carry else "主C")
-            return clip(f"{who} 装备：{_join(comp.carry_items[:3])}", FIELD_MAX)
+            return clip(f"{who}：{_join(comp.carry_items[:3])}", FIELD_MAX)
         return ""
 
     def _carry_is_melee(self, carry: Optional[Unit]) -> Optional[bool]:
@@ -691,7 +774,9 @@ class RulesAdvisor:
         return "主C放后排角落，坦克放前排挡伤害"
 
     def _augment_text(self, state: GameState) -> str:
+        # Point to Claude only when a strategist will actually answer.
+        more = AUGMENT_MORE if self.claude_enabled else ""
         choices = [c for c in state.augment_choices if c]
         if choices:
-            return clip(f"可选：{_join(choices)}。优先经济/战力符合当前阵容的，详细对比看 Claude 建议", FIELD_MAX)
-        return f"{AUGMENT_GENERIC}，详细对比看 Claude 建议"
+            return clip(f"可选：{_join(choices)}。{AUGMENT_HINT}{more}", FIELD_MAX)
+        return f"{AUGMENT_GENERIC}{more}"

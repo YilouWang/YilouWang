@@ -81,11 +81,31 @@ def test_pairing_and_holders(set_data):
 
 
 def test_priority_two_early_unless_low_hp(set_data):
-    st = make_state("2-2", board=["Graves"], item_bench=["B.F. Sword", "Sparring Gloves"])
+    # A tier 2 item with no special fit waits until 2-5 (or low HP).
+    st = make_state("2-2", board=["Graves"], item_bench=["B.F. Sword", "Chain Vest"])
     assert [s.priority for s in plan_items(st, set_data)] == [2]
     assert [s.priority for s in plan_items(st, set_data, hp_bucket="low")] == [1]
-    st25 = make_state("2-5", board=["Graves"], item_bench=["B.F. Sword", "Sparring Gloves"])
+    st25 = make_state("2-5", board=["Graves"], item_bench=["B.F. Sword", "Chain Vest"])
     assert [s.priority for s in plan_items(st25, set_data)] == [1]
+
+
+def test_core_and_front_line_items_are_slammed_from_2_1(set_data):
+    # Infinity Edge (tier 3) at 2-2 with healthy HP: slam it.
+    st = make_state("2-2", board=["Graves"], item_bench=["B.F. Sword", "Sparring Gloves"])
+    sugs = plan_items(st, set_data)
+    assert [s.priority for s in sugs] == [1] and "现在就合" in sugs[0].reason
+    # A tank item for a fielded front-row unit is slammed too.
+    st = make_state(
+        "2-2", board=[("Braum", 1, (), 0, 3), ("Graves", 1, (), 3, 0)], item_bench=["Chain Vest", "Giant's Belt"]
+    )
+    sugs = plan_items(st, set_data)
+    assert [(s.item, s.holder, s.priority) for s in sugs] == [("Sunfire Cape", "Braum", 1)]
+    # Loss streaking into the carousel: hold the components.
+    st.streak = -4
+    assert [s.priority for s in plan_items(st, set_data)] == [2]
+    # Stage 1 never slams at healthy HP.
+    st1 = make_state("1-4", board=["Graves"], item_bench=["B.F. Sword", "Sparring Gloves"])
+    assert [s.priority for s in plan_items(st1, set_data)] == [2]
 
 
 def test_comp_carry_items_preferred(set_data):
@@ -199,3 +219,86 @@ def test_completed_item_when_every_unit_is_full(set_data):
     assert sugs[0].holder is None and "满" in sugs[0].reason and "先上场" not in sugs[0].reason
     empty = plan_items(make_state("3-2", item_bench=["Warmog's Armor"]), set_data)
     assert "先上场" in empty[0].reason
+
+
+# ---------------------------------------------------------------------------
+# Set 18 regressions: profiles, Thief's Gloves, team-size items
+# ---------------------------------------------------------------------------
+
+from tft_advisor.engine.items import profile_hints_from_comps  # noqa: E402
+
+from .conftest import s18_comps, s18_set_data, s18_state  # noqa: E402
+
+
+def _s18_plan(st, comp_name=None):
+    sd = s18_set_data()
+    from tft_advisor.engine.analyzer import Analyzer
+    from tft_advisor.data.mechanics import load_mechanics
+
+    an = Analyzer(sd, load_mechanics(), s18_comps())
+    out = an.analyze(st)
+    return out
+
+
+def test_s18_profiles_do_not_come_from_mixed_trait_words():
+    sd = s18_set_data()
+    prof = {n: champion_profile(sd.resolve_champion(n)) for n in ("Nidalee", "Master Yi", "Akali", "Soraka", "Azir")}
+    # 魔战士 (Adaptor) and 狂战士 (Ravager) are not tank words; Executioner is not an AD word.
+    assert prof["Nidalee"] == "ap" and prof["Master Yi"] == "ad" and prof["Akali"] == "ad"
+    assert prof["Soraka"] != "ad" and prof["Azir"] != "ad"
+    hints = profile_hints_from_comps(s18_comps(), sd)
+    for name in ("Soraka", "Azir"):
+        champ = sd.resolve_champion(name)
+        assert hints[champ.api_name] == "ap"
+        assert champion_profile(champ, hint=hints[champ.api_name]) == "ap"
+    # Ties are broken by the items already held.
+    from tft_advisor.models import Unit
+
+    soraka = sd.resolve_champion("Soraka")
+    u = Unit(api_name=soraka.api_name, name=soraka.name, cost=4, items=["灭世者的死亡之帽"], traits=list(soraka.traits))
+    assert champion_profile(soraka, u, sd) == "ap"
+
+
+def test_s18_ad_item_not_sent_to_an_ap_carry():
+    st = s18_state(
+        "4-2",
+        board=[("Soraka", 1, ("Rabadon's Deathcap",), 3, 3), ("Malphite", 1, (), 0, 3), "Fiddlesticks", "Lillia", "Ornn", "Teemo", "Rammus"],
+        items=["B.F. Sword", "B.F. Sword"], level=7, gold=30, hp=70,
+    )
+    out = _s18_plan(st)
+    db = [s for s in out.items if s.item == "死亡之刃"]
+    assert all(s.holder != "索拉卡" and s.priority != 1 for s in db)
+
+
+def test_s18_nidalee_gets_rabadon_in_invoker_nidalee():
+    st = s18_state(
+        "4-2",
+        board=[("Nidalee", 1, (), 1, 3), ("Morgana", 2, (), 3, 4), "Sentinel", "Teemo", "Pebbles", "Vi", "Sivir"],
+        items=["Needlessly Large Rod", "Needlessly Large Rod"], level=7, gold=30, hp=70,
+    )
+    out = _s18_plan(st)
+    assert out.comps[0].name == "神谕 奈德丽"
+    rab = next(s for s in out.items if s.item == "灭世者的死亡之帽")
+    assert rab.holder == "奈德丽"
+
+
+def test_s18_thiefs_gloves_and_team_size_items_skip_the_itemized_carry_and_tank():
+    board = [("Ahri", 2, ("Jeweled Gauntlet",), 3, 3), ("Sett", 2, ("Warmog's Armor",), 0, 3), "Morgana", "Karma", "Sentinel", "Pebbles", "Krug"]
+    out = _s18_plan(s18_state("4-2", board=board, items=["Sparring Gloves", "Sparring Gloves"], level=7, gold=30, hp=70))
+    tg = next(s for s in out.items if s.item == "窃贼手套")
+    assert tg.holder not in ("阿狸", "瑟提", None)
+    out = _s18_plan(
+        s18_state("4-2", board=board, items=["Frying Pan", "Frying Pan", "Frying Pan", "Tear of the Goddess"], level=7, gold=30, hp=70)
+    )
+    holders = {s.item: s.holder for s in out.items}
+    assert holders and all(h not in ("瑟提", "阿狸") for h in holders.values())
+
+
+def test_thiefs_gloves_needs_an_itemless_fielded_unit(set_data):
+    full = make_state("4-2", board=[("Graves", 2, ("Deathblade",), 3, 0)], item_bench=["Sparring Gloves", "Sparring Gloves"])
+    sugs = plan_items(full, set_data)
+    tg = next(s for s in sugs if s.item == "Thief's Gloves")
+    assert tg.holder is None and "先留着" in tg.reason
+    empty = make_state("4-2", board=[("Graves", 2, ("Deathblade",), 3, 0), ("Braum", 1, (), 0, 3)], item_bench=["Thief's Gloves"])
+    sugs = plan_items(empty, set_data, comp=CompSuggestion(name="X", score=0.5, carry="Graves"))
+    assert sugs[0].holder == "Braum"

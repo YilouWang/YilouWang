@@ -50,7 +50,7 @@ best alternative from comps.
 USE THE MATH
 - econ is a deterministic plan (save / level / roll, roll_budget, target_level). odds give, per unit, \
 p_in_shop (chance one fresh shop shows it) and p_goal_by_gold (gold budget -> probability of reaching the \
-goal star level at the current level). comps, items, shop_picks and sell_candidates come from the same engine.
+goal star level), computed at that entry's level (the level after the planned level up when econ levels first). comps, items, shop_picks and sell_candidates come from the same engine.
 - Prefer these numbers over your own estimates. Do not invent probabilities. You may overrule the engine when \
 the game situation clearly calls for it (for example HP, a strong board, a contested line); say why in one \
 short clause.
@@ -72,10 +72,16 @@ third-party automation. The player performs every action manually.
 - confidence: 0..1, lower it when the snapshot is incomplete or contradictory.
 
 SNAPSHOT FORMAT
-- Board rows: row 0 is the front row, row 3 the back row; col 0..6 left to right. star is 1..3.
+- Board rows: row 0 is the front row, row 3 the back row; col 0..6 left to right. star is 1..4 \
+(4 = a Set 18 four-star, same 9 copies as a three-star).
 - Opponent unit strings look like "Name*2" (a two-star Name). opponents.*.stage is the round when that board \
 was recorded; older snapshots may be outdated.
 - players lists every player's HP; self marks the player you are coaching.
+- shop entries are "Name(cost)"; null is an empty or unread slot. An entry starting with "Wisp: " is a Set 18 \
+Wisp, not a champion ("Wisp: X(n)" = the Wisp X for n gold; no (n) when the price was not read): judge it like a \
+small augment and say in the buy advice whether to take it.
+- comp, items, positioning and augment are shown under their own labels (阵容, 装备, 站位, 海克斯): write only \
+the content, no leading label. items example: 无尽之刃 给 芸阿娜.
 """
 
 ASK_INSTRUCTIONS = (
@@ -164,15 +170,29 @@ def _history_entry(h: Any) -> Any:
     return str(h)
 
 
+def _slot_str(name: Optional[str], cost: Optional[int]) -> Optional[str]:
+    if not name:
+        return None
+    return f"{name}({cost})" if cost is not None else name
+
+
 def _shop(state: GameState) -> list[Optional[str]]:
-    if state.shop_units:
-        return [
-            (f"{u.name}({u.cost})" if u.cost is not None else u.name) if u is not None else None
-            for u in state.shop_units
-        ]
-    return [
-        (f"{s.name}({s.cost})" if s.cost is not None else s.name) if s.name else None for s in state.shop
-    ]
+    """Resolved champions when available; slots without a unit (a Set 18
+    Wisp is stored as ``shop_units[i] = None``) fall back to the raw slot so
+    the Wisp and its price still reach the model."""
+    slots = list(state.shop)
+    if not state.shop_units:
+        return [_slot_str(s.name, s.cost) for s in slots]
+    out: list[Optional[str]] = []
+    for i in range(max(len(state.shop_units), len(slots))):
+        u = state.shop_units[i] if i < len(state.shop_units) else None
+        if u is not None:
+            out.append(_slot_str(u.name or u.api_name, u.cost))
+        elif i < len(slots):
+            out.append(_slot_str(slots[i].name, slots[i].cost))
+        else:
+            out.append(None)
+    return out
 
 
 def _state_dict(
@@ -203,6 +223,7 @@ def _state_dict(
             "owned": o.owned_copies,
             "goal_star": o.goal_star,
             "goal_copies": o.goal_copies,
+            "level": o.level,
             "remaining": o.remaining_in_pool,
             "seen_elsewhere": o.seen_elsewhere,
             "p_in_shop": round(o.p_in_shop, 3),

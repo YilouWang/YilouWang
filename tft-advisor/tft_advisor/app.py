@@ -2,11 +2,19 @@
 
 Threads:
   * capture thread  grabs frames, detects round / shop changes (auto mode)
-  * worker thread   runs one analysis job at a time (latest job wins)
+  * worker thread   runs one perception job at a time (latest job wins)
+  * strategy thread runs the Claude strategist after a job (latest wins), so a
+                    slow strategy call never delays the next perception job
   * ask thread      answers free-form questions (one at a time)
   * hotkeys         Win32 message loop (Windows only)
   * dashboard       HTTP server
 The main thread runs the tkinter overlay if enabled, otherwise just waits.
+
+Frames for player-triggered jobs (F6 / F7 / F9 and the dashboard buttons) are
+grabbed when the key is pressed, not when the worker gets to the job: the
+player may already have switched the camera back. Automatic jobs (round or
+shop change) only use frames of the game window while it is in the
+foreground, so the desktop or another app is never sent to Claude.
 """
 
 from __future__ import annotations
@@ -15,6 +23,7 @@ import json
 import threading
 import time
 import traceback
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -26,6 +35,20 @@ from .config import Config
 from .models import Advice, Analysis, GameState, Observation, ScreenObservation, ScreenType
 
 PRIORITY = {"scout": 4, "manual": 4, "auto": 3, "reanalyze": 2, "shop": 1}
+#: Jobs whose frame is grabbed at trigger time (the player is looking at it now).
+TRIGGER_GRAB = ("manual", "scout", "shop")
+
+NO_PERCEIVER_MSG = "没有可用的识别方式：请设置 ANTHROPIC_API_KEY 或安装 OCR (pip install rapidocr-onnxruntime)，现在只能用「手动修正」"
+AUTO_PAUSED_MSG = "没找到游戏窗口或游戏不在前台，自动分析暂停"
+
+
+def _console_safe(text: str) -> str:
+    """Escape control / format characters so dashboard input cannot drive the terminal."""
+    return "".join(ch if unicodedata.category(ch) not in ("Cc", "Cf") else repr(ch)[1:-1] for ch in str(text))
+
+
+def _strip_controls(text: str) -> str:
+    return "".join(ch for ch in text if unicodedata.category(ch) not in ("Cc", "Cf"))
 
 
 @dataclass(order=True)
@@ -35,6 +58,10 @@ class Job:
     image: Optional[Image.Image] = field(default=None, compare=False)
     extra: dict[str, Any] = field(default_factory=dict, compare=False)
     created_at: float = field(default_factory=time.time, compare=False)
+    # New-game generation the job belongs to (None = whatever is current when it runs).
+    generation: Optional[int] = field(default=None, compare=False)
+    # Automatic job: only perceive a frame of the foreground game window.
+    gated: bool = field(default=False, compare=False)
 
 
 class JobSlot:
@@ -64,25 +91,66 @@ class JobSlot:
         with self._cond:
             return self._job
 
+    def clear(self) -> None:
+        with self._cond:
+            self._job = None
+
 
 class GameLogger:
-    """Appends one JSON line per analysis to ~/.tft_advisor/logs/<game>.jsonl."""
+    """Appends one JSON line per analysis to ~/.tft_advisor/logs/game-<start>.jsonl.
 
-    def __init__(self, directory: Path) -> None:
+    One file per game. When a new file is started only the newest ``keep``
+    game logs are kept (0 = keep all): they contain other players' names.
+    """
+
+    def __init__(self, directory: Path, keep: int = 0) -> None:
         self.directory = directory
+        self.keep = max(0, int(keep))
         self._path: Optional[Path] = None
         self._lock = threading.Lock()
+
+    @property
+    def path(self) -> Optional[Path]:
+        return self._path
 
     def new_game(self) -> None:
         with self._lock:
             self._path = None
 
+    def _new_path(self) -> Path:
+        # Private directory on POSIX (mode is ignored on Windows).
+        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        now = time.time()
+        base = time.strftime("game-%Y%m%d-%H%M%S", time.localtime(now)) + f"-{int(now * 1000) % 1000:03d}"
+        path, n = self.directory / f"{base}.jsonl", 0
+        while path.exists():  # two games started in the same millisecond (tests)
+            n += 1
+            path = self.directory / f"{base}-{n}.jsonl"
+        return path
+
+    def prune(self) -> None:
+        """Delete the oldest game logs beyond ``keep`` (never the current one)."""
+        if not self.keep:
+            return
+        try:
+            logs = sorted((p for p in self.directory.glob("game-*.jsonl") if p.is_file()), key=lambda p: p.stem)
+        except OSError:
+            return
+        for old in logs[: max(0, len(logs) - self.keep)]:
+            if old == self._path:
+                continue
+            try:
+                old.unlink()
+            except OSError:
+                pass
+
     def write(self, record: dict[str, Any]) -> None:
         with self._lock:
             try:
                 if self._path is None:
-                    self.directory.mkdir(parents=True, exist_ok=True)
-                    self._path = self.directory / time.strftime("game-%Y%m%d-%H%M%S.jsonl")
+                    self._path = self._new_path()
+                    self._path.touch()
+                    self.prune()
                 with open(self._path, "a", encoding="utf-8") as fh:
                     fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
             except OSError:
@@ -132,7 +200,7 @@ class AdvisorApp:
         self.analyzer = Analyzer(self.set_data, self.mech, self.comps, cfg.advisor.comp_hint)
         self.rules = RulesAdvisor(cfg.hotkeys, mech=self.mech, set_data=self.set_data)
         self.scout_planner = ScoutPlanner(cfg.advisor.max_scout_requests_per_stage, cfg.hotkeys.scout, mech=self.mech)
-        self.game_log = GameLogger(cfg.cache_dir / "logs")
+        self.game_log = GameLogger(cfg.cache_dir / "logs", keep=cfg.data.keep_game_logs)
 
         if use_llm is None:
             use_llm = llm is not None or has_credentials()
@@ -151,6 +219,8 @@ class AdvisorApp:
             self.strategist = ClaudeStrategist(self.llm, cfg.anthropic, self.set_data, extra_reference=reference)
         else:
             self.strategist = None
+        # The rules text points to the Claude advice only when a strategist exists.
+        self.rules.claude_enabled = self.strategist is not None
 
         self.capturer = capturer
         self.live = live_client
@@ -167,7 +237,19 @@ class AdvisorApp:
         self._pending_shop_at: Optional[float] = None
         self._hotkeys: Any = None
         self._server: Any = None
+        # cli `run --new-token`: rotate the saved LAN dashboard token.
+        self.new_dashboard_token = False
         self._speaker: Any = None
+        # Bumped by new_game(): results of jobs started before it are dropped.
+        self._generation = 0
+        self._state_lock = threading.RLock()
+        self._logged_game_id: Optional[str] = self.tracker.state.game_id
+        self._auto_paused = False
+        # Strategist: its own single-slot thread once start() ran, inline otherwise.
+        self._strategy_slot = JobSlot()
+        self._strategy_async = False
+        self._strategy_busy = False
+        self._strategy_seq = 0
         self._unsubscribe = self.bus.subscribe("command", self._on_command)
 
     # ------------------------------------------------------------------ logging
@@ -179,7 +261,7 @@ class AdvisorApp:
 
     def _log(self, text: str, level: str) -> None:
         if self.console:
-            print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}] {_console_safe(text)}", flush=True)
         self.bus.log(text, level)
 
     # ------------------------------------------------------------ construction
@@ -211,7 +293,12 @@ class AdvisorApp:
             "status",
             {
                 "auto": self.auto,
-                "busy": self.busy,
+                "busy": self.busy or self._strategy_busy,
+                "thinking": self._strategy_busy,
+                "auto_paused": self._auto_paused,
+                "capture_error": getattr(self.capturer, "last_error", None) if self.capturer is not None else None,
+                "comp_hint": self.analyzer.comp_hint,
+                "comp_names": [c.name for c in self.comps][:80],
                 "llm": self.llm is not None,
                 "strategist": self.strategist is not None,
                 "perceiver": self.perception_mode(),
@@ -253,11 +340,16 @@ class AdvisorApp:
                 self._publish_requests()
             elif cmd == "set_field":
                 self.tracker.set_field(str(payload.get("field")), payload.get("value"))
-                self.info(f"已手动修正 {payload.get('field')} = {payload.get('value')}")
+                from .engine.tracker import FIELD_ZH
+
+                fname = _strip_controls(str(payload.get("field")))[:40]
+                value = _strip_controls(str(payload.get("value")))[:40]
+                self.info(f"已手动修正 {FIELD_ZH.get(fname, fname)} = {value}")
                 self._slot.put(Job(PRIORITY["reanalyze"], "reanalyze"))
             elif cmd == "set_comp":
-                self.analyzer.comp_hint = str(payload.get("comp") or "")
+                self.analyzer.comp_hint = _strip_controls(str(payload.get("comp") or "")).strip()[:200]
                 self.info(f"目标阵容设为: {self.analyzer.comp_hint or '自动'}")
+                self.publish_status()
                 self._slot.put(Job(PRIORITY["reanalyze"], "reanalyze"))
             elif cmd == "new_game":
                 self.new_game()
@@ -270,23 +362,91 @@ class AdvisorApp:
         self.publish_status()
 
     def new_game(self) -> None:
-        self.tracker.reset()
-        self.game_log.new_game()
-        self._last_advice = None
-        for req in list(self.scout_planner.open_requests()):
-            self.scout_planner.dismiss(req.id)
-        self.info("新对局：已重置")
+        """Manual reset (dashboard button). The target comp goes back to the
+        configured default; jobs already in flight are dropped when they finish."""
+        with self._state_lock:
+            self._generation += 1
+            self._slot.clear()
+            self._strategy_slot.clear()
+            state = self.tracker.reset()
+            self._logged_game_id = state.game_id
+            self.game_log.new_game()
+            self._last_advice = None
+            self._last_llm_ts = 0.0
+            self.scout_planner.reset()
+            self.analyzer.comp_hint = self.cfg.advisor.comp_hint
+        self.info("新对局：已重置" + (f"（目标阵容: {self.analyzer.comp_hint}）" if self.analyzer.comp_hint else ""))
         self._publish_state(self.tracker.state)
         # Clear the last game's advice everywhere (dashboard, overlay, voice).
-        self.bus.publish("analysis", _dump(Analysis()))
-        self.bus.publish("advice", _dump(Advice(headline="新对局，等待第一次分析", source="rules")))
+        # No gold is known yet: no economy plan and no confidence badge.
+        analysis = _dump(Analysis())
+        analysis["econ"] = None
+        self.bus.publish("analysis", analysis)
+        advice = _dump(Advice(headline="新对局，等待第一次分析", source="rules"))
+        advice["confidence"] = None
+        self.bus.publish("advice", advice)
         self._publish_requests()
         self.publish_status()
 
+    def _on_game_change(self, state: GameState) -> None:
+        """The tracker saw a new game on its own (stage back to 1-x): new log file."""
+        if not state.game_id or state.game_id == self._logged_game_id:
+            return
+        self._logged_game_id = state.game_id
+        self.game_log.new_game()
+        self.scout_planner.reset()
+        self._last_llm_ts = 0.0
+        self._last_advice = None
+        self._strategy_slot.clear()
+        self.info("检测到新对局，开始新的对局日志")
+        if self.analyzer.comp_hint:
+            self.info(f"目标阵容仍是 {self.analyzer.comp_hint}（可以在看板上清空）")
+
     # ---------------------------------------------------------------- pipeline
     def request_analysis(self, purpose: str, image: Optional[Image.Image] = None, **extra: Any) -> bool:
-        """Queue an analysis job. The frame is grabbed by the worker if not given."""
-        return self._slot.put(Job(PRIORITY.get(purpose, 2), purpose, image, extra))
+        """Queue an analysis job for a player action (hotkey / dashboard button).
+
+        For manual / scout / shop the frame is grabbed right now, in the
+        caller's thread: the worker may be busy for seconds and the player
+        flips the camera back right after pressing the key. If that grab
+        fails the worker tries again (and explains why it failed)."""
+        if image is None and purpose in TRIGGER_GRAB and self.capturer is not None:
+            image = self._grab()
+        return self._slot.put(Job(PRIORITY.get(purpose, 2), purpose, image, extra, generation=self._generation))
+
+    def _request_auto(self, purpose: str) -> bool:
+        """Queue an automatic job (capture loop); its frame is grabbed and
+        checked by the worker (game window in the foreground only)."""
+        return self._slot.put(Job(PRIORITY.get(purpose, 2), purpose, generation=self._generation, gated=True))
+
+    def _game_frame_ok(self) -> bool:
+        """True when the capturer's last frame shows the game: taken from the
+        game window (not the whole-monitor fallback) while the game is in the
+        foreground. Capturers without that information (files, tests) pass."""
+        cap = self.capturer
+        if cap is None:
+            return True
+        source = getattr(cap, "last_source", None)
+        if source is None:
+            return True
+        if source != "window" and not (source == "monitor" and not self.cfg.capture.use_window):
+            return False  # window not found / minimized: the monitor shows something else
+        foreground = getattr(cap, "game_foreground", None)
+        if callable(foreground):
+            try:
+                if foreground() is False:  # None = unknown (not Windows)
+                    return False
+            except Exception:
+                pass
+        return True
+
+    def _set_auto_paused(self, paused: bool) -> None:
+        if paused == self._auto_paused:
+            return
+        self._auto_paused = paused
+        if paused:
+            self.info(AUTO_PAUSED_MSG)
+        self.publish_status()
 
     def _grab(self) -> Optional[Image.Image]:
         if self.capturer is None:
@@ -353,7 +513,12 @@ class AdvisorApp:
             from .vision.merge import merge_observations
 
             obs = obs.model_copy(update={"screen": merge_observations(obs.screen, live, prefer_secondary={"level"})})
-        if purpose == "scout" and player and not obs.screen.viewed_player_name:
+        if (
+            purpose == "scout"
+            and player
+            and not obs.screen.viewed_player_name
+            and obs.screen.viewing_own_board is not True  # still our own board: never file it under `player`
+        ):
             obs.screen.viewed_player_name = player
         if purpose == "scout":
             obs.purpose = "scout"
@@ -372,6 +537,7 @@ class AdvisorApp:
 
     def run_job(self, job: Job) -> Optional[Advice]:
         """Run one job synchronously (worker thread, replay and tests)."""
+        generation = job.generation if job.generation is not None else self._generation
         self.busy = True
         self.publish_status()
         try:
@@ -379,25 +545,42 @@ class AdvisorApp:
                 image = job.image if job.image is not None else self._grab()
                 if image is None:
                     if self.capturer is not None:
-                        self.warn("没有截到游戏画面（检查游戏是否在运行，或运行 tft-advisor calibrate）")
+                        reason = getattr(self.capturer, "last_error", None)
+                        if job.gated:
+                            return None  # the capture loop already reports this state
+                        self.warn(
+                            "没有截到游戏画面"
+                            + (f"：{reason}" if reason else "（检查游戏是否在运行，或运行 tft-advisor calibrate）")
+                        )
                         return None
                     # No capturer (demo / tests): perceivers that replay data ignore the frame.
                     image = Image.new("RGB", (1920, 1080))
+                if job.gated and job.image is None and not self._game_frame_ok():
+                    self._set_auto_paused(True)
+                    return None
                 if self.perceiver is None and self.fast_perceiver is None:
-                    self.warn("没有可用的识别方式：请设置 ANTHROPIC_API_KEY 或安装 OCR (pip install rapidocr-onnxruntime)")
+                    self.last_error = NO_PERCEIVER_MSG
+                    self.warn(NO_PERCEIVER_MSG)
                     return None
                 if self.cfg.capture.save_screenshots and job.purpose != "shop":
                     self._save_frame(image, job.purpose)
                 obs = self._perceive(image, job.purpose, job.extra)
                 if obs is None:
                     return None
-                state = self.tracker.ingest(obs)
+                with self._state_lock:
+                    if generation != self._generation:
+                        self.info("已开始新对局，丢弃上一局的分析结果")
+                        return None
+                    before = (
+                        {k: _dump(v) for k, v in self.tracker.state.opponents.items()} if obs.purpose == "scout" else {}
+                    )
+                    state = self.tracker.ingest(obs)
+                    self._on_game_change(state)
                 if obs.purpose == "scout":
-                    who = obs.screen.viewed_player_name or "对手"
-                    self.info(f"已记录 {who} 的棋盘")
+                    self._report_scout(before, state)
             else:
                 state = self.tracker.state
-            return self._advise(state, job)
+            return self._advise(state, job, generation)
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             self.warn(f"分析出错: {self.last_error}")
@@ -408,7 +591,18 @@ class AdvisorApp:
             self.busy = False
             self.publish_status()
 
-    def _advise(self, state: GameState, job: Job) -> Advice:
+    def _report_scout(self, before: dict[str, Any], state: GameState) -> None:
+        """Say whose board was stored, or that nothing was (own board on screen)."""
+        from .engine.tracker import UNKNOWN_PLAYER
+
+        stored = [k for k, v in state.opponents.items() if before.get(k) != _dump(v)]
+        if not stored:
+            self.warn(f"没有记录到对手：截到的像是你自己的棋盘（先切到对手的棋盘，再按 {self.cfg.hotkeys.scout}）")
+            return
+        who = "对手（没读到名字）" if stored[0] == UNKNOWN_PLAYER else stored[0]
+        self.info(f"已记录 {who} 的棋盘")
+
+    def _advise(self, state: GameState, job: Job, generation: Optional[int] = None) -> Advice:
         analysis: Analysis = self.analyzer.analyze(state, self.tracker.taken_by_player())
         if self.cfg.advisor.scout_prompts:
             analysis.scout_requests = self.scout_planner.plan(state, analysis)
@@ -424,24 +618,81 @@ class AdvisorApp:
             and state.screen_type not in (ScreenType.LOADING, ScreenType.POST_GAME)
             and (job.purpose == "manual" or self.clock() - self._last_llm_ts >= self.cfg.advisor.min_seconds_between_llm)
         )
+        record = {
+            "ts": self.clock(),
+            "game_id": state.game_id,
+            "purpose": job.purpose,
+            "state": _dump(state),
+            "analysis": _dump(analysis),
+            "advice": _dump(advice),
+        }
         if use_llm:
             self._last_llm_ts = self.clock()
-            llm_advice = self.strategist.advise(state, analysis, advice)
-            if llm_advice is not advice and getattr(llm_advice, "source", "") == "llm":
+            if self._strategy_async:
+                # The rules advice is already on screen; Claude's advice follows
+                # from the strategy thread without holding up the next frame.
+                self.game_log.write(record)
+                self._strategy_seq += 1
+                task = {
+                    "seq": self._strategy_seq,
+                    "generation": self._generation if generation is None else generation,
+                    "game_id": state.game_id,
+                    "stage": str(state.stage) if state.stage else None,
+                    "state": state,
+                    "analysis": analysis,
+                    "advice": advice,
+                }
+                self._strategy_slot.put(Job(0, "strategy", extra=task))
+                return advice
+            llm_advice = self._call_strategist(state, analysis, advice)
+            if llm_advice is not None:
                 advice = llm_advice
                 self._publish_advice(advice)
-            elif getattr(self.strategist, "last_error", None):
-                self.last_error = str(self.strategist.last_error)
-        self.game_log.write(
-            {
-                "ts": self.clock(),
-                "purpose": job.purpose,
-                "state": _dump(state),
-                "analysis": _dump(analysis),
-                "advice": _dump(advice),
-            }
-        )
+                record["advice"] = _dump(advice)
+        self.game_log.write(record)
         return advice
+
+    def _call_strategist(self, state: GameState, analysis: Analysis, advice: Advice) -> Optional[Advice]:
+        """Claude's advice, or None (the rules advice stays; the reason goes to last_error)."""
+        llm_advice = self.strategist.advise(state, analysis, advice)
+        if llm_advice is not advice and getattr(llm_advice, "source", "") == "llm":
+            return llm_advice
+        if getattr(self.strategist, "last_error", None):
+            self.last_error = str(self.strategist.last_error)
+        return None
+
+    def _strategy_current(self, task: dict[str, Any]) -> bool:
+        """A strategy result is shown only if nothing newer replaced its basis."""
+        if task["seq"] != self._strategy_seq or task["generation"] != self._generation:
+            return False
+        now = self.tracker.state
+        return now.game_id == task["game_id"] and (str(now.stage) if now.stage else None) == task["stage"]
+
+    def _run_strategy(self, task: dict[str, Any]) -> None:
+        self._strategy_busy = True
+        self.publish_status()
+        try:
+            llm_advice = self._call_strategist(task["state"], task["analysis"], task["advice"])
+            if llm_advice is None:
+                return
+            if not self._strategy_current(task):
+                return  # the round moved on (or a newer request is queued): stale advice
+            self._publish_advice(llm_advice)
+            self.game_log.write(
+                {
+                    "ts": self.clock(),
+                    "game_id": task["game_id"],
+                    "purpose": "strategy",
+                    "stage": task["stage"],
+                    "advice": _dump(llm_advice),
+                }
+            )
+        except Exception as exc:  # the strategy thread must survive anything
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            self.warn(f"Claude 策略出错: {self.last_error}")
+        finally:
+            self._strategy_busy = False
+            self.publish_status()
 
     def _publish_state(self, state: GameState) -> None:
         self.bus.publish("state", _dump(state))
@@ -487,7 +738,8 @@ class AdvisorApp:
             return "未启用 Claude（没有 API Key），无法回答自由提问"
         state = self.tracker.state
         analysis = self.analyzer.analyze(state, self.tracker.taken_by_player())
-        return self.strategist.ask(question, state, analysis)
+        # The advice on screen, so "why should I save?" is answered consistently.
+        return self.strategist.ask(question, state, analysis, rules_advice=self._last_advice)
 
     # ----------------------------------------------------------------- threads
     def _worker_loop(self) -> None:
@@ -495,6 +747,12 @@ class AdvisorApp:
             job = self._slot.get(timeout=0.5)
             if job is not None:
                 self.run_job(job)
+
+    def _strategy_loop(self) -> None:
+        while not self._stop.is_set():
+            job = self._strategy_slot.get(timeout=0.5)
+            if job is not None:
+                self._run_strategy(job.extra)
 
     def _capture_loop(self) -> None:
         from .capture.change import RoundWatcher
@@ -507,15 +765,24 @@ class AdvisorApp:
             now = self.clock()
             if self._pending_auto_at is not None and now >= self._pending_auto_at:
                 self._pending_auto_at = None
-                self.request_analysis("auto")
+                self._request_auto("auto")
                 continue
             if self._pending_shop_at is not None and now >= self._pending_shop_at:
                 self._pending_shop_at = None
-                self.request_analysis("shop")
+                self._request_auto("shop")
                 continue
             image = self._grab()
             if image is None:
                 continue
+            if not self._game_frame_ok():
+                # Not the game (window not found, minimized, covered by another
+                # app): never analyse it, and start fresh when the game is back.
+                watcher.reset()
+                self._pending_auto_at = None
+                self._pending_shop_at = None
+                self._set_auto_paused(True)
+                continue
+            self._set_auto_paused(False)
             try:
                 events = watcher.update(image)
             except Exception:
@@ -527,27 +794,56 @@ class AdvisorApp:
                 if self.tracker.state.screen_type in (ScreenType.PLANNING, ScreenType.OTHER):
                     self._pending_shop_at = now + 0.4
 
+    def _scout_hotkey(self) -> None:
+        # With exactly one open request, the player is almost surely looking at
+        # that board: pass the name as a hint, like the dashboard button does.
+        open_reqs = [r for r in self.scout_planner.open_requests() if r.target_player]
+        if len(open_reqs) == 1:
+            self.request_analysis("scout", player=open_reqs[0].target_player)
+        else:
+            self.request_analysis("scout")
+
     def start(self, *, dashboard: bool = True, hotkeys: bool = True, voice: Optional[bool] = None, capture: bool = True) -> Optional[str]:
-        """Start background threads. Returns the dashboard URL if started."""
+        """Start background threads. Returns the dashboard URL if started.
+
+        The dashboard starts first: if its port cannot be bound the OSError
+        propagates before any thread was started."""
         url = None
         self._stop.clear()
-        for target, name in ((self._worker_loop, "worker"), (self._capture_loop, "capture")):
+        if dashboard:
+            from .ui.server import DashboardServer
+
+            self._server = DashboardServer(
+                self.bus,
+                self.cfg.ui,
+                log=self.info,
+                token_file=Path(self.cfg.cache_dir) / "dashboard_token",
+                new_token=self.new_dashboard_token,
+            )
+            try:
+                url = self._server.start()
+            except BaseException:
+                self._server = None
+                raise
+        loops = [(self._worker_loop, "worker"), (self._capture_loop, "capture")]
+        if self.strategist is not None:
+            loops.append((self._strategy_loop, "strategy"))
+            self._strategy_async = True
+        for target, name in loops:
             if name == "capture" and not capture:
                 continue
             t = threading.Thread(target=target, name=name, daemon=True)
             t.start()
             self._threads.append(t)
-        if dashboard:
-            from .ui.server import DashboardServer
-
-            self._server = DashboardServer(self.bus, self.cfg.ui, log=self.info)
-            url = self._server.start()
+        if self.perception_mode() == "manual":
+            self.last_error = NO_PERCEIVER_MSG
+            self.warn(NO_PERCEIVER_MSG)
         if hotkeys and self.cfg.hotkeys.enabled:
             from .capture.hotkeys import HotkeyManager
 
             wanted = [
                 (self.cfg.hotkeys.analyze, lambda: self.request_analysis("manual")),
-                (self.cfg.hotkeys.scout, lambda: self.request_analysis("scout")),
+                (self.cfg.hotkeys.scout, self._scout_hotkey),
                 (self.cfg.hotkeys.toggle_auto, self.toggle_auto),
                 (self.cfg.hotkeys.shop, lambda: self.request_analysis("shop")),
             ]
@@ -560,7 +856,11 @@ class AdvisorApp:
                 bindings[key] = fn
             self._hotkeys = HotkeyManager(bindings, log=self.info)
             if not self._hotkeys.start():
-                self.info("全局热键不可用：请用网页上的按钮")
+                failed = list(getattr(self._hotkeys, "failed", None) or [])
+                if getattr(self._hotkeys, "registered", None):
+                    self.info(f"部分热键不可用（{'、'.join(failed)}），其余热键正常；不可用的请用网页上的按钮")
+                else:
+                    self.info("全局热键不可用：请用网页上的按钮")
         if voice if voice is not None else self.cfg.ui.voice:
             from .ui.voice import Speaker
 
@@ -587,6 +887,7 @@ class AdvisorApp:
         for t in self._threads:
             t.join(timeout=2.0)
         self._threads.clear()
+        self._strategy_async = False
         self._unsubscribe()
 
     def wait(self) -> None:

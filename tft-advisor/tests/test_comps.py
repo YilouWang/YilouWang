@@ -332,3 +332,66 @@ def test_load_comps_never_raises(tmp_path, set_data):
     comps = load_comps(str(weird), set_data, log=logs.append)
     assert [c.name for c in comps] == ["ok"] and comps[0].units == ["Graves"] and comps[0].style == "standard"
     assert load_comps(str(tmp_path), set_data, log=logs.append) == []  # a directory
+
+
+# ---------------------------------------------------------------------------
+# Set 18 library: zh display names, reroll units, hints by trait / zh name
+# ---------------------------------------------------------------------------
+
+from .conftest import s18_comps, s18_set_data, s18_state  # noqa: E402
+
+
+def test_s18_comps_have_chinese_display_names():
+    comps = s18_comps()
+    assert len(comps) == 45
+    names = [c.name for c in comps]
+    assert len(set(names)) == 45
+    for c in comps:
+        assert any("一" <= ch <= "鿿" for ch in c.name), c.name
+        assert c.name == c.name.strip() and c.name_en == c.name_en.strip()
+        assert "—" not in c.name
+    by_en = {c.name_en: c for c in comps}
+    assert by_en["Solara Yunara"].name == "日蚀骑士 芸阿娜"
+    assert "Ashe Fast 9" in by_en  # trailing space removed
+    from importlib import resources
+
+    raw = json.loads(resources.files("tft_advisor.data").joinpath("bundled", "comps_set18.json").read_text("utf-8"))
+    assert all(e["name"] == e["name"].strip() and e.get("name_zh") for e in raw["comps"])
+
+
+def test_english_set_data_keeps_the_file_name(set_data):
+    comp = load_comps(None, set_data)[0]
+    assert comp.name == comp.name_en
+
+
+def test_s18_reroll_units_are_the_cheap_three_star_targets():
+    by_en = {c.name_en: c for c in s18_comps()}
+    lunar = by_en["Lunarwood Kha'zix"]
+    assert lunar.carry == "伊泽瑞尔" and set(lunar.reroll_units) == {"黛安娜", "赫卡里姆", "卡兹克"}
+    assert set(by_en["Caitlyn Hunters"].reroll_units) == {"瑟庄妮", "凯特琳", "峡谷迅捷蟹"}
+    assert set(by_en["Elderwood Veigar"].reroll_units) == {"雷克塞", "奥恩", "维迦"}  # 2-costs are not reroll1 targets
+    assert by_en["Ahri Morgana"].reroll_units == []
+    sd = s18_set_data()
+    from tft_advisor.engine.comps_engine import reroll_key_apis
+
+    assert reroll_key_apis(by_en["Elderwood Veigar"], sd) == [sd.resolve_champion("Veigar").api_name]
+    keys = reroll_key_apis(lunar, sd)
+    assert sd.resolve_champion("Ezreal").api_name not in keys and len(keys) == 3
+
+
+def test_s18_hint_by_trait_and_chinese_champion_name():
+    sd = s18_set_data()
+    st = s18_state("3-2", board=["Yorick", "Rakan", "Leona", "Karma", "Caitlyn"], level=6, gold=30, hp=70)
+    base = {s.name: s.score for s in suggest_comps(st, sd, s18_comps(), {}, 45)}
+    for hint in ("法师", "Spellweaver"):
+        boosted = {s.name: s.score for s in suggest_comps(st, sd, s18_comps(), {}, 45, hint=hint)}
+        assert boosted["阿狸 莫甘娜"] > base["阿狸 莫甘娜"], hint  # Ahri + Karma are Spellweavers
+        assert boosted["6主宰 灵活"] == base["6主宰 灵活"]
+    zh = suggest_comps(st, sd, s18_comps(), {}, 3, hint="艾希")
+    en = suggest_comps(st, sd, s18_comps(), {}, 3, hint="Ashe")
+    assert [s.name for s in zh] == [s.name for s in en]
+    assert [s.score for s in zh] == [s.score for s in en]
+    assert all("艾希" in s.name for s in zh)
+    # A trait that does not exist in the set changes nothing.
+    none = suggest_comps(st, sd, s18_comps(), {}, 45, hint="枪手")
+    assert {s.name: s.score for s in none} == base

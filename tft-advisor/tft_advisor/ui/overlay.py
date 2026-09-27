@@ -309,7 +309,12 @@ class Overlay:
         try:
             root.mainloop()
         except KeyboardInterrupt:
+            # Tk checks for signals between events that ran no Python callback, so
+            # Ctrl+C often lands here instead of _report_exception. Set the shared
+            # stop event too: otherwise only the window closes and the app (capture,
+            # hotkeys, Claude calls) keeps running until a second Ctrl+C.
             self._interrupted = True
+            self._stop.set()
         finally:
             for unsub in self._unsubs:
                 try:
@@ -333,6 +338,11 @@ class Overlay:
     @property
     def closed(self) -> bool:
         return self._closed.is_set()
+
+    @property
+    def interrupted(self) -> bool:
+        """True when ``run()`` ended because of Ctrl+C (the stop event is set too)."""
+        return self._interrupted
 
     # ------------------------------------------------------------------- Tk side
     def _build(self, root: Any, tk: Any, tkfont: Any) -> None:

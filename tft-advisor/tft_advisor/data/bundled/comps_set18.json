@@ -8,6 +8,7 @@
  "comps": [
   {
    "name": "6 Juggernaut Flex",
+   "name_zh": "6主宰 灵活",
    "tier": "A",
    "style": "fast8",
    "units": [
@@ -104,6 +105,7 @@
   },
   {
    "name": "Ahri Morgana",
+   "name_zh": "阿狸 莫甘娜",
    "tier": "A",
    "style": "fast8",
    "units": [
@@ -192,6 +194,7 @@
   },
   {
    "name": "Aphelios Nidalee",
+   "name_zh": "厄斐琉斯 奈德丽",
    "tier": "A",
    "style": "fast8",
    "units": [
@@ -283,6 +286,7 @@
   },
   {
    "name": "Aphelios Rapidfire",
+   "name_zh": "厄斐琉斯 迅捷射手",
    "tier": "A",
    "style": "fast8",
    "units": [
@@ -378,6 +382,7 @@
   },
   {
    "name": "Ashe Juggernauts",
+   "name_zh": "艾希 主宰",
    "tier": "A",
    "style": "fast8",
    "units": [
@@ -465,6 +470,7 @@
   },
   {
    "name": "Azir Rammus",
+   "name_zh": "阿兹尔 拉莫斯",
    "tier": "A",
    "style": "reroll3",
    "units": [
@@ -553,6 +559,7 @@
   },
   {
    "name": "Lunarwood Kha'zix",
+   "name_zh": "月森 卡兹克",
    "tier": "A",
    "style": "reroll3",
    "units": [
@@ -653,6 +660,7 @@
   },
   {
    "name": "Malphite AP Flex",
+   "name_zh": "墨菲特 法系灵活",
    "tier": "A",
    "style": "fast8",
    "units": [
@@ -742,6 +750,7 @@
   },
   {
    "name": "Spirit Blossom",
+   "name_zh": "灵魂莲华 艾希",
    "tier": "A",
    "style": "fast8",
    "units": [
@@ -837,6 +846,7 @@
   },
   {
    "name": "10 Riftbeast",
+   "name_zh": "10峡谷野怪",
    "tier": "B",
    "style": "fast9",
    "units": [
@@ -943,6 +953,7 @@
   },
   {
    "name": "Ahri Zyra",
+   "name_zh": "阿狸 婕拉",
    "tier": "B",
    "style": "fast8",
    "units": [
@@ -1041,6 +1052,7 @@
   },
   {
    "name": "Aphelios Elderwood",
+   "name_zh": "厄斐琉斯 永恒之森",
    "tier": "B",
    "style": "fast8",
    "units": [
@@ -1142,6 +1154,7 @@
   },
   {
    "name": "Aphelios Flex",
+   "name_zh": "厄斐琉斯 灵活",
    "tier": "B",
    "style": "fast8",
    "units": [
@@ -1230,6 +1243,7 @@
   },
   {
    "name": "Aphelios Vanguards",
+   "name_zh": "厄斐琉斯 重装战士",
    "tier": "B",
    "style": "fast8",
    "units": [
@@ -1321,7 +1335,8 @@
    "notes": "Core units are Aphelios + Diana + Sentinel + Mama Beak. Red Buff is BIS Aphelios but you can also play Rageblade build. Play Scuttlecrab + Rakan over Brambleback if no melee items. Can duo carry Zyra or Morgana if extra AP items. "
   },
   {
-   "name": "Ashe Fast 9 ",
+   "name": "Ashe Fast 9",
+   "name_zh": "艾希 速9",
    "tier": "B",
    "style": "fast9",
    "units": [
@@ -1410,6 +1425,7 @@
   },
   {
    "name": "Azir Reroll",
+   "name_zh": "阿兹尔 赌狗",
    "tier": "B",
    "style": "reroll3",
    "units": [
@@ -1497,6 +1513,7 @@
   },
   {
    "name": "Caitlyn Hunters",
+   "name_zh": "凯特琳 猎人",
    "tier": "B",
    "style": "reroll2",
    "units": [
@@ -1583,6 +1600,7 @@
   },
   {
    "name": "Coven Ahri",
+   "name_zh": "魔女 阿狸",
    "tier": "B",
    "style": "fast8",
    "units": [
@@ -1676,6 +1694,7 @@
   },
   {
    "name": "Defender Cassio",
+   "name_zh": "护卫 卡西奥佩娅",
    "tier": "B",
    "style": "reroll3",
    "units": [
@@ -1765,6 +1784,7 @@
   },
   {
    "name": "Dragon 9",
+   "name_zh": "远古巨龙 9级",
    "tier": "B",
    "style": "fast9",
    "units": [
@@ -1863,6 +1883,7 @@
   },
   {
    "name": "Draven AD 9",
+   "name_zh": "德莱文 物理 9级",
    "tier": "B",
    "style": "fast9",
    "units": [
@@ -1962,6 +1983,7 @@
   },
   {
    "name": "Elderwood Veigar",
+   "name_zh": "永恒之森 维迦",
    "tier": "B",
    "style": "reroll1",
    "units": [
@@ -2051,6 +2073,7 @@
   },
   {
    "name": "Primal Flex",
+   "name_zh": "野兽之灵 灵活",
    "tier": "B",
    "style": "fast8",
    "units": [
@@ -2144,6 +2167,7 @@
   },
   {
    "name": "Primal Jungle",
+   "name_zh": "野兽之灵 打野",
    "tier": "B",
    "style": "fast8",
    "units": [
@@ -2234,6 +2258,7 @@
   },
   {
    "name": "Riftbeast Reroll",
+   "name_zh": "峡谷野怪 赌狗",
    "tier": "B",
    "style": "reroll1",
    "units": [
@@ -2329,6 +2354,7 @@
   },
   {
    "name": "Solara Yunara",
+   "name_zh": "日蚀骑士 芸阿娜",
    "tier": "B",
    "style": "reroll2",
    "units": [
@@ -2424,6 +2450,7 @@
   },
   {
    "name": "Woodblossom",
+   "name_zh": "永恒之森 莲华",
    "tier": "B",
    "style": "fast8",
    "units": [
@@ -2514,6 +2541,7 @@
   },
   {
    "name": "Yi Rengar",
+   "name_zh": "易 雷恩加尔",
    "tier": "B",
    "style": "reroll3",
    "units": [
@@ -2608,6 +2636,7 @@
   },
   {
    "name": "Adaptor Reroll",
+   "name_zh": "魔战士 赌狗",
    "tier": "C",
    "style": "reroll3",
    "units": [
@@ -2701,6 +2730,7 @@
   },
   {
    "name": "Elderwood Executioners",
+   "name_zh": "永恒之森 裁决使",
    "tier": "C",
    "style": "fast8",
    "units": [
@@ -2799,6 +2829,7 @@
   },
   {
    "name": "Invoker Nidalee",
+   "name_zh": "神谕 奈德丽",
    "tier": "C",
    "style": "fast8",
    "units": [
@@ -2888,6 +2919,7 @@
   },
   {
    "name": "Moo-nara",
+   "name_zh": "阿利斯塔 芸阿娜",
    "tier": "C",
    "style": "reroll2",
    "units": [
@@ -2980,6 +3012,7 @@
   },
   {
    "name": "Rengar Reroll",
+   "name_zh": "雷恩加尔 赌狗",
    "tier": "C",
    "style": "reroll3",
    "units": [
@@ -3077,6 +3110,7 @@
   },
   {
    "name": "Solar Kayle",
+   "name_zh": "日蚀骑士 凯尔",
    "tier": "C",
    "style": "reroll2",
    "units": [
@@ -3169,6 +3203,7 @@
   },
   {
    "name": "Solar Melee",
+   "name_zh": "日蚀骑士 近战",
    "tier": "C",
    "style": "reroll1",
    "units": [
@@ -3263,6 +3298,7 @@
   },
   {
    "name": "Sprykin Teemo",
+   "name_zh": "约德尔人 提莫",
    "tier": "C",
    "style": "reroll2",
    "units": [
@@ -3350,6 +3386,7 @@
   },
   {
    "name": "Teemowood",
+   "name_zh": "提莫 永恒之森",
    "tier": "C",
    "style": "reroll2",
    "units": [
@@ -3438,6 +3475,7 @@
   },
   {
    "name": "Warwick Reroll",
+   "name_zh": "沃里克 赌狗",
    "tier": "C",
    "style": "reroll2",
    "units": [
@@ -3524,6 +3562,7 @@
   },
   {
    "name": "Emblem Rengar",
+   "name_zh": "纹章 雷恩加尔",
    "tier": "X",
    "style": "reroll3",
    "units": [
@@ -3612,6 +3651,7 @@
   },
   {
    "name": "Fae Tristana",
+   "name_zh": "花仙子 崔丝塔娜",
    "tier": "X",
    "style": "reroll3",
    "units": [
@@ -3700,6 +3740,7 @@
   },
   {
    "name": "Inferno Fast 9",
+   "name_zh": "地狱火 速9",
    "tier": "X",
    "style": "fast8",
    "units": [
@@ -3805,6 +3846,7 @@
   },
   {
    "name": "Ravager Elise",
+   "name_zh": "狂战士 伊莉丝",
    "tier": "X",
    "style": "reroll2",
    "units": [
@@ -3904,6 +3946,7 @@
   },
   {
    "name": "Trait Ladder",
+   "name_zh": "多羁绊 9级",
    "tier": "X",
    "style": "fast9",
    "units": [
@@ -3998,6 +4041,7 @@
   },
   {
    "name": "Unrivaled Reroll",
+   "name_zh": "宿敌 赌狗",
    "tier": "X",
    "style": "reroll3",
    "units": [
@@ -4088,6 +4132,7 @@
   },
   {
    "name": "Veigar Consuming Flora",
+   "name_zh": "维迦 绝命花妖",
    "tier": "X",
    "style": "reroll1",
    "units": [

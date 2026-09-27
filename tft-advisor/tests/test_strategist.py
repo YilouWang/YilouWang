@@ -350,3 +350,39 @@ def test_priority_zero_is_most_urgent_and_scout_request_falls_back(set_data, mec
         adv = strat.advise(state, analysis, rules)
     assert [(a.type, a.priority) for a in adv.actions] == [(ActionType.LEVEL, 1), (ActionType.ROLL, 2)]
     assert adv.scout_request == rules.scout_request
+
+
+def test_wisp_in_shop_reaches_the_strategist():
+    """The tracker stores a Wisp slot as shop_units[i] = None: the raw slot
+    (name and price) must still be sent, not a null like an empty slot."""
+    shop = [ShopSlot(name="Vi", cost=3), ShopSlot(), ShopSlot(name="Wisp: Grow Up", cost=3), ShopSlot(name="Wisp: Golden Wisp")]
+    units = [Unit(api_name="TFT99_Vi", name="Vi", cost=3), None, None, None]
+    state = GameState(stage=StageRound.parse("2-5"), shop=shop, shop_units=units)
+    data = _payload(build_state_message(state, Analysis(), None))
+    assert data["shop"] == ["Vi(3)", None, "Wisp: Grow Up(3)", "Wisp: Golden Wisp"]
+    assert "Wisp: " in SYSTEM_PROMPT_STRATEGIST
+    # More slots than resolved units: the extra slots are not dropped.
+    state = GameState(shop=shop, shop_units=units[:1])
+    assert _payload(build_state_message(state, Analysis(), None))["shop"][2] == "Wisp: Grow Up(3)"
+
+
+def test_duplicate_field_labels_are_stripped(set_data, mech):
+    state = make_state()
+    analysis = make_analysis(state, mech)
+    rules = RulesAdvisor(mech=mech).advise(state, analysis)
+    reply = dict(
+        REPLY,
+        items="装备：巨人杀手 给 Draven",
+        augment="海克斯：选 Rich Get Richer，经济好",
+        positioning="站位: Draven 放后排角落",
+        comp="阵容：Draven 决斗大师",
+    )
+    with FakeAnthropic() as fake:
+        fake.queue_json(reply)
+        strat, _, _ = make_strategist(fake, set_data)
+        adv = strat.advise(state, analysis, rules)
+    assert adv.items == "巨人杀手 给 Draven"
+    assert adv.augment == "选 Rich Get Richer，经济好"
+    assert adv.positioning == "Draven 放后排角落"
+    assert adv.comp == "Draven 决斗大师"
+    assert rules.items and not rules.items.startswith("装备")

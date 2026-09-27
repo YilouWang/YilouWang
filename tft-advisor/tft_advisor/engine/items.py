@@ -40,9 +40,13 @@ MIN_PAIR_VALUE = 0.5
 SLAM_STAGE = (2, 5)
 
 # Trait keywords (English + Chinese) hinting at a unit's damage profile.
+# Mixed-damage traits stay out: Set 18 Executioner (裁决使) holds AD and AP
+# carries, and the bare "战士" would match 魔战士 (Adaptor) and 狂战士
+# (Ravager), which are not tanks. Set-specific profiles come from the comp
+# library's item plans instead (profile_hints_from_comps).
 AD_WORDS = (
     "gunslinger", "ranger", "marksman", "sniper", "blademaster", "duelist", "assassin", "slayer",
-    "challenger", "deadeye", "quickstrike", "executioner", "rapidfire", "striker", "gunner", "reaper",
+    "challenger", "deadeye", "quickstrike", "rapidfire", "striker", "gunner", "reaper",
     "edgelord", "cannoneer", "hunter", "longshot",
     "枪手", "游侠", "狙神", "神射", "射手", "剑士", "剑圣", "决斗", "刺客", "杀手", "枪", "猎",
 )
@@ -54,8 +58,17 @@ AP_WORDS = (
 TANK_WORDS = (
     "knight", "guardian", "brawler", "bruiser", "warden", "bastion", "vanguard", "juggernaut", "sentinel",
     "defender", "protector", "colossus", "behemoth", "tank", "heavyweight", "bulwark", "guard", "titan",
-    "骑士", "守护", "斗士", "护卫", "重装", "坦克", "守卫", "哨兵", "堡垒", "卫士", "巨像", "战士",
+    "骑士", "守护", "斗士", "护卫", "重装", "坦克", "守卫", "哨兵", "堡垒", "卫士", "巨像",
 )
+HINT_WEIGHT = 2.5  # profile known from the comp library outweighs trait keywords
+
+# Items that are not stats for one unit (English names, normalized on use):
+# Thief's Gloves takes all three slots and only goes on an itemless unit;
+# +1 team size items belong on a cheap fielded unit, not on an itemized tank.
+THIEFS_GLOVES = ("Thief's Gloves",)
+TEAM_SIZE_ITEMS = ("Tactician's Crown", "Tactician's Cape", "Tactician's Shield")
+EARLY_SLAM_STAGE = (2, 1)
+LOSS_STREAK_HOLD = -3  # loss streaking into the carousel: hold components
 
 
 # ---------------------------------------------------------------------------
@@ -119,9 +132,21 @@ def _word_hits(texts: Iterable[str], words: tuple[str, ...]) -> int:
     return hits
 
 
-def champion_profile(champ: Optional[Champion], unit: Optional[Unit] = None, set_data: Optional[SetData] = None) -> str:
-    """'ad' | 'ap' | 'tank' | 'unknown' from cdragon role, api suffix, traits and items."""
+def champion_profile(
+    champ: Optional[Champion],
+    unit: Optional[Unit] = None,
+    set_data: Optional[SetData] = None,
+    hint: Optional[str] = None,
+) -> str:
+    """'ad' | 'ap' | 'tank' | 'unknown' from cdragon role, api suffix, traits and items.
+
+    ``hint``: profile from the comp library (the items strong players give
+    this unit), weighted above trait keywords. Ties are broken by the items
+    the unit already holds.
+    """
     score = {"ad": 0.0, "ap": 0.0, "tank": 0.0}
+    if hint in score:
+        score[hint] += HINT_WEIGHT
     role = str(getattr(champ, "role", "") or "").lower() if champ else ""
     if role:
         if "tank" in role:
@@ -146,19 +171,61 @@ def champion_profile(champ: Optional[Champion], unit: Optional[Unit] = None, set
     score["ad"] += _word_hits(traits, AD_WORDS)
     score["ap"] += _word_hits(traits, AP_WORDS)
     score["tank"] += _word_hits(traits, TANK_WORDS)
+    held = {"ad": 0.0, "ap": 0.0, "tank": 0.0}
     if unit is not None:
         for name in unit.items:
             item = set_data.resolve_item(name) if set_data else None
             r, _tier = item_role(item, name)
             if r in score:
                 score[r] += 1.0
+                held[r] += 1.0
         if unit.row == 0:
             score["tank"] += 0.5
         elif unit.row == 3:
             score["ad"] += 0.1
             score["ap"] += 0.1
-    best = max(score, key=lambda k: (score[k], k == "tank"))
+    best = max(score, key=lambda k: (round(score[k], 6), held[k]))
     return best if score[best] > 0.3 else "unknown"
+
+
+def profile_hints_from_comps(comps: Iterable, set_data: SetData, keep_ties: bool = False) -> dict[str, Optional[str]]:
+    """Champion api name -> 'ad' / 'ap' / 'tank' from comp item plans.
+
+    Counts the roles of the items each comp recommends for a unit
+    (``item_holders``, plus ``carry_items`` for the carry) over the given
+    comps; a unit gets a profile when one role clearly leads. With
+    ``keep_ties`` a unit whose plan is mixed maps to None (so a single comp's
+    mixed plan can cancel a library-wide guess: Set 18 Nidalee is AD in the
+    Primal comps and AP in the Invoker ones).
+    """
+    counts: dict[str, dict[str, int]] = {}
+
+    def add(unit_name: Optional[str], items: Iterable[str]) -> None:
+        champ = set_data.resolve_champion(unit_name) if unit_name else None
+        if champ is None:
+            return
+        c = counts.setdefault(champ.api_name, {"ad": 0, "ap": 0, "tank": 0})
+        for raw in items:
+            role, _tier = item_role(set_data.resolve_item(raw), raw)
+            if role in c:
+                c[role] += 1
+
+    for comp in comps:
+        holders = dict(getattr(comp, "item_holders", {}) or {})
+        carry = getattr(comp, "carry", None)
+        if carry and carry not in holders:
+            holders[carry] = list(getattr(comp, "carry_items", []) or [])
+        for unit_name, items in holders.items():
+            add(unit_name, items)
+    out: dict[str, Optional[str]] = {}
+    for api, c in counts.items():
+        ranked = sorted(c.items(), key=lambda kv: -kv[1])
+        (role, n), (_r2, n2) = ranked[0], ranked[1]
+        if n >= 1 and n > n2:
+            out[api] = role
+        elif keep_ties and n >= 1:
+            out[api] = None
+    return out
 
 
 def _power(u: Unit) -> int:
@@ -200,11 +267,35 @@ class _Ctx:
         return sum(1 for u in self.units if self.profile(u) == role)
 
 
-def _build_ctx(state: GameState, set_data: SetData, comp: Optional[CompSuggestion]) -> _Ctx:
+def _carry_items_profile(comp: Optional[CompSuggestion], set_data: SetData) -> Optional[str]:
+    """'ad' / 'ap' when the comp's carry items clearly say so."""
+    if comp is None or not comp.carry_items:
+        return None
+    c = {"ad": 0, "ap": 0}
+    for raw in comp.carry_items:
+        role, _tier = item_role(set_data.resolve_item(raw), raw)
+        if role in c:
+            c[role] += 1
+    if c["ad"] == c["ap"]:
+        return None
+    return "ad" if c["ad"] > c["ap"] else "ap"
+
+
+def _build_ctx(
+    state: GameState,
+    set_data: SetData,
+    comp: Optional[CompSuggestion],
+    profile_hints: Optional[dict[str, str]] = None,
+) -> _Ctx:
     ctx = _Ctx(set_data=set_data, board=list(state.board), bench=list(state.bench))
+    hints = dict(profile_hints or {})
+    carry_champ = set_data.resolve_champion(comp.carry) if comp is not None and comp.carry else None
+    carry_hint = _carry_items_profile(comp, set_data)
+    if carry_champ is not None and carry_hint:
+        hints[carry_champ.api_name] = carry_hint  # the comp's own carry items decide
     for u in ctx.units:
         champ = set_data.champions.get(u.api_name)
-        ctx.profiles[id(u)] = champion_profile(champ, u, set_data)
+        ctx.profiles[id(u)] = champion_profile(champ, u, set_data, hint=hints.get(u.api_name))
         ctx.load[id(u)] = len(u.items)
     seen_traits: dict[str, set[str]] = {}
     for u in ctx.units:
@@ -230,8 +321,13 @@ def _build_ctx(state: GameState, set_data: SetData, comp: Optional[CompSuggestio
                     ctx.carry_unit = max(owned, key=lambda u: (u.star, ctx.on_board(u), len(u.items)))
                     ctx.carry_profile = ctx.profile(ctx.carry_unit)
                 else:
-                    ctx.carry_profile = champion_profile(champ, None, set_data)
+                    ctx.carry_profile = champion_profile(champ, None, set_data, hint=hints.get(champ.api_name))
     return ctx
+
+
+def _is_named(item: Item, names: tuple[str, ...]) -> bool:
+    keys = {normalize_name(n) for n in names}
+    return any(normalize_name(n) in keys for n in (item.name_en, item.name) if n)
 
 
 def _emblem_trait(item: Item, set_data: SetData) -> Optional[str]:
@@ -340,16 +436,38 @@ def _pick_holder(role: str, item: Item, ctx: _Ctx) -> Optional[Unit]:
             key=lambda u: (ctx.on_board(u), u.api_name in ctx.comp_apis, _power(u), u.row or 0, len(u.items), u.name),
         )
 
+    if _is_named(item, THIEFS_GLOVES):
+        # Uses all three slots: only a fielded unit with no items, and never
+        # the carry (random items on the main carry are wasted).
+        empty = [
+            u
+            for u in ctx.board
+            if ctx.load.get(id(u), 0) == 0 and not u.api_name.startswith("?") and u is not ctx.carry_unit
+        ]
+        return best(empty)
+    if _is_named(item, TEAM_SIZE_ITEMS):
+        # +1 team size: park it on a cheap fielded unit, not on the itemized
+        # tank or carry.
+        spare = [u for u in units if ctx.on_board(u) and u is not ctx.carry_unit]
+        if spare:
+            return min(spare, key=lambda u: (ctx.load.get(id(u), 0), _power(u), u.name))
+        return best(units)
     if item.api_name in ctx.comp_item_apis and carry is not None:
         return carry
     if role in ("ad", "ap"):
         if carry is not None and ctx.profile(carry) in (role, "unknown"):
             return carry
-        return (
-            best([u for u in units if ctx.profile(u) == role])
-            or best([u for u in units if ctx.profile(u) not in ("tank",)])
-            or best(units)
+        other = "ap" if role == "ad" else "ad"
+        match = best([u for u in units if ctx.profile(u) == role]) or best(
+            [u for u in units if ctx.profile(u) == "unknown"]
         )
+        if match is not None:
+            return match
+        # Never hand an AD item to an AP carry (or the reverse): on a team of
+        # the other damage type the item waits for a better use.
+        if any(ctx.profile(u) == other for u in ctx.units):
+            return None
+        return best(units)
     if role in ("tank", "utility"):
         ids = {id(u) for u in units}
         front = [u for u in ctx.board if id(u) in ids and u.row == 0]
@@ -364,7 +482,20 @@ def _pick_holder(role: str, item: Item, ctx: _Ctx) -> Optional[Unit]:
     if role == "emblem":
         trait = _emblem_trait(item, ctx.set_data)
         lacking = [u for u in units if trait is None or trait not in u.traits]
-        return best([u for u in lacking if ctx.on_board(u)]) or best(lacking) or best(units)
+        fielded = [u for u in lacking if ctx.on_board(u)]
+        if fielded:
+            # A fielded unit whose slots matter least: not the carry, fewest items.
+            return max(
+                fielded,
+                key=lambda u: (
+                    u is not ctx.carry_unit,
+                    -ctx.load.get(id(u), 0),
+                    u.api_name in ctx.comp_apis,
+                    _power(u),
+                    u.name,
+                ),
+            )
+        return best(lacking) or best(units)
     # flex
     if carry is not None:
         return carry
@@ -375,6 +506,10 @@ def _reason(a: str, b: str, item: Item, role: str, holder: Optional[Unit], comp_
     parts = [f"{a}+{b} 合成{item.name}（{ROLE_ZH.get(role, '通用')}装）"]
     if holder is not None:
         parts.append(f"给{holder.name}")
+    elif _is_named(item, THIEFS_GLOVES):
+        parts.append("场上没有空装备的英雄，先留着")
+    elif role in ("ad", "ap"):
+        parts.append("现在的阵容没人适合用")
     if comp_item:
         parts.append("阵容主C核心装备")
     parts.append("现在就合，早成型少掉血" if slam else "先留散件，关键回合再合")
@@ -386,9 +521,18 @@ def plan_items(
     set_data: SetData,
     comp: Optional[CompSuggestion] = None,
     hp_bucket: str = "unknown",
+    profile_hints: Optional[dict[str, str]] = None,
 ) -> list[ItemSuggestion]:
-    """Suggested item combinations (priority 1 = slam now) plus equip hints."""
-    ctx = _build_ctx(state, set_data, comp)
+    """Suggested item combinations (priority 1 = slam now) plus equip hints.
+
+    Slam timing: from 2-5 (or at low HP) every pair is slammed. From 2-1 a
+    pair is slammed early when it makes a core (tier 3) item, a carry item of
+    the target comp, or a tank item for a fielded front-row unit, unless the
+    player is loss streaking (then components are held for the carousel).
+    ``profile_hints``: champion api -> 'ad' / 'ap' / 'tank' from the comp
+    library (see ``profile_hints_from_comps``).
+    """
+    ctx = _build_ctx(state, set_data, comp, profile_hints)
 
     components: list[Item] = []
     completed_on_bench: list[Item] = []
@@ -404,6 +548,15 @@ def plan_items(
 
     stage_key = state.stage.key if isinstance(state.stage, StageRound) else (0, 0)
     slam = (stage_key >= SLAM_STAGE and len(components) >= 2) or hp_bucket in ("low", "critical")
+    loss_streaking = state.streak is not None and state.streak <= LOSS_STREAK_HOLD
+    early = not slam and stage_key >= EARLY_SLAM_STAGE and not loss_streaking
+
+    def early_slam(item: Item, role: str, tier: int, holder: Optional[Unit]) -> bool:
+        if not early:
+            return False
+        if tier >= 3 or item.api_name in ctx.comp_item_apis:
+            return True
+        return role == "tank" and holder is not None and ctx.on_board(holder) and holder.row == 0
 
     out: list[tuple[int, float, ItemSuggestion]] = []
 
@@ -411,10 +564,13 @@ def plan_items(
     for item in completed_on_bench:
         role, _tier = item_role(item)
         holder = _pick_holder(role, item, ctx)
+        thief = _is_named(item, THIEFS_GLOVES)
         if holder is not None:
-            ctx.load[id(holder)] = ctx.load.get(id(holder), 0) + 1
+            ctx.load[id(holder)] = MAX_ITEMS_PER_UNIT if thief else ctx.load.get(id(holder), 0) + 1
         if holder is not None:
             where = f"，装给{holder.name}"
+        elif thief and ctx.units:
+            where = "，只能给没有装备的场上英雄，先留着"
         elif ctx.units:
             where = "，英雄的装备格都满了，换下一件差的再装"
         else:
@@ -438,12 +594,18 @@ def plan_items(
     for i, j, item in pairs:
         used_idx.update((i, j))
         planned.add(item.api_name)
-        role, _tier = item_role(item)
+        role, tier = item_role(item)
         holder = _pick_holder(role, item, ctx)
         if holder is not None:
-            ctx.load[id(holder)] = ctx.load.get(id(holder), 0) + 1
+            # Thief's Gloves fills every slot of its holder.
+            ctx.load[id(holder)] = (
+                MAX_ITEMS_PER_UNIT if _is_named(item, THIEFS_GLOVES) else ctx.load.get(id(holder), 0) + 1
+            )
         comp_item = item.api_name in ctx.comp_item_apis
-        prio = 1 if slam else 2
+        now = slam or early_slam(item, role, tier, holder)
+        if role in ("ad", "ap") and holder is None and ctx.units and hp_bucket not in ("low", "critical"):
+            now = False  # nobody on this team uses it: keep the components
+        prio = 1 if now else 2
         out.append(
             (
                 prio,
@@ -453,7 +615,7 @@ def plan_items(
                     components=[components[i].name, components[j].name],
                     holder=holder.name if holder else None,
                     priority=prio,
-                    reason=_reason(components[i].name, components[j].name, item, role, holder, comp_item, slam),
+                    reason=_reason(components[i].name, components[j].name, item, role, holder, comp_item, now),
                 ),
             )
         )

@@ -141,11 +141,11 @@ def test_standard_level_timing_3_2(mech):
     lvl = mech.standard_levels["3-2"]
     plan = plan_economy(gs("3-2", gold=50, level=lvl - 1, hp=85), mech)
     assert plan.recommendation == EconAction.LEVEL and plan.target_level == lvl
-    # Medium HP at a stabilization round: level and roll the rest down to ~10.
+    # Medium HP at a stabilization round: level and roll, but 3-2 keeps ~20.
     spend = mech.gold_to_reach(lvl - 1, 0, lvl)
     plan = plan_economy(gs("3-2", gold=50, level=lvl - 1, hp=55), mech)
     assert plan.recommendation == EconAction.LEVEL_AND_ROLL and plan.target_level == lvl
-    assert plan.roll_budget == 50 - spend - 10
+    assert plan.roll_budget == 50 - spend - 20
 
 
 def test_standard_level_timing_4_1(mech):
@@ -247,3 +247,100 @@ def test_two_levels_behind_buys_the_level_it_can_afford(mech):
 def test_unknown_level_is_not_level_one(mech):
     plan = plan_economy(GameState(stage=StageRound.parse("5-1"), gold=0, hp=80), mech)
     assert plan.target_level != 2
+
+
+# ---------------------------------------------------------------------------
+# Regressions: reroll end, stage 2 reroll curve, fast 8 at level 8, streaks,
+# low HP outside the roll-down rounds
+# ---------------------------------------------------------------------------
+
+LEVELING = (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL)
+ROLLING = (EconAction.ROLL, EconAction.SLOW_ROLL, EconAction.ALL_IN, EconAction.LEVEL_AND_ROLL)
+
+
+def test_reroll_done_levels_like_a_standard_line(mech):
+    # Carry already 3-star at 5-1, still level 5: level up, no slow roll at 5.
+    plan = plan_economy(gs("5-1", gold=90, level=5, hp=70), mech, "reroll1", key_star=3)
+    assert plan.recommendation in LEVELING and plan.target_level >= 7
+    assert plan.style == "standard"
+    assert not any(w in plan.reason for w in ("慢搜", "赌狗", "三星"))
+    for stage, hp in (("5-5", 40), ("6-2", 30)):
+        plan = plan_economy(gs(stage, gold=60, level=5, hp=hp), mech, "reroll1", key_star=3)
+        assert plan.recommendation in LEVELING and plan.target_level > 5, stage
+        assert "三星" not in plan.reason
+
+
+def test_reroll_still_slow_rolls_before_the_three_star(mech):
+    plan = plan_economy(gs("4-1", gold=64, level=5, hp=80), mech, "reroll1", key_star=2)
+    assert plan.recommendation == EconAction.SLOW_ROLL and plan.roll_budget == 14
+    plan = plan_economy(gs("4-2", gold=50, level=5, hp=60), mech, "reroll1", key_star=2)
+    assert plan.recommendation == EconAction.ROLL and "还没三星" in plan.reason
+    # Unknown target: no claim about the 3-star.
+    plan = plan_economy(gs("4-2", gold=50, level=5, hp=60), mech, "reroll1")
+    assert "还没三星" not in plan.reason
+
+
+def test_reroll_stops_staying_low_from_4_5(mech):
+    plan = plan_economy(gs("4-5", gold=60, level=5, hp=60), mech, "reroll1", key_star=2)
+    assert plan.recommendation in LEVELING and plan.target_level > 5
+
+
+def test_reroll_follows_the_standard_curve_in_stage_two(mech):
+    # 2-2, level 3, 16 gold: not straight to level 5 with every coin.
+    plan = plan_economy(gs("2-2", gold=16, level=3, hp=90), mech, "reroll1", key_star=2)
+    assert plan.target_level in (None, mech.standard_levels["2-1"])
+    # 2-5, level 4 (6 xp), 30 gold: level 6 would cost 24; stage 2 stops at 5.
+    plan = plan_economy(gs("2-5", gold=30, level=4, xp=6, hp=90), mech, "reroll2", key_star=2)
+    assert plan.recommendation == EconAction.LEVEL and plan.target_level == 5
+    # Stage 3: the reroll level.
+    plan = plan_economy(gs("3-1", gold=30, level=5, hp=80), mech, "reroll2", key_star=2)
+    assert plan.recommendation == EconAction.LEVEL and plan.target_level == 6
+    # A 3-cost reroll does not jump to 7 at 3-1, it goes 7 from 3-5.
+    plan = plan_economy(gs("3-1", gold=60, level=5, hp=80), mech, "reroll3", key_star=2)
+    assert plan.target_level != 7
+    plan = plan_economy(gs("3-5", gold=60, level=6, hp=80), mech, "reroll3", key_star=2)
+    assert plan.recommendation == EconAction.LEVEL and plan.target_level == 7
+    # A reroll line at its level never buys the next level with spare gold.
+    plan = plan_economy(gs("2-6", gold=60, level=5, xp=18, hp=90), mech, "reroll1", key_star=1)
+    assert plan.target_level != 6
+
+
+def test_fast8_at_level_8_stops_rolling_once_the_carry_is_two_star(mech):
+    for stage, gold in (("4-5", 60), ("5-2", 70), ("5-5", 64)):
+        plan = plan_economy(gs(stage, gold=gold, level=8, hp=82, streak=6), mech, "fast8", key_star=2)
+        assert plan.recommendation not in ROLLING, stage
+        assert plan.roll_budget == 0
+    plan = plan_economy(gs("5-1", gold=90, level=8, hp=82, streak=6), mech, "fast8", key_star=2)
+    assert plan.recommendation == EconAction.LEVEL and plan.target_level == 9
+    # Carry still 1-star: keep rolling for it.
+    plan = plan_economy(gs("4-5", gold=60, level=8, hp=82), mech, "fast8", key_star=1)
+    assert plan.recommendation == EconAction.ROLL and plan.roll_budget == 50
+    # Unknown carry: only the scheduled roll-down, not every round.
+    plan = plan_economy(gs("5-2", gold=48, level=8, hp=82), mech, "fast8")
+    assert plan.recommendation not in ROLLING
+
+
+def test_loss_streak_with_enough_hp_skips_the_3_2_roll(mech):
+    plan = plan_economy(gs("3-2", gold=52, level=5, hp=58, streak=-6), mech)
+    assert plan.roll_budget == 0 and plan.recommendation in (EconAction.LEVEL, EconAction.SAVE)
+    assert "连败" in plan.reason
+    # Below the HP floor it rolls, but 3-2 still keeps about 20.
+    spend = mech.gold_to_reach(5, 0, 6)
+    plan = plan_economy(gs("3-2", gold=50, level=5, hp=44, streak=-7), mech)
+    assert plan.recommendation == EconAction.LEVEL_AND_ROLL
+    assert plan.roll_budget == 50 - spend - 20
+
+
+def test_win_streak_does_not_roll_at_a_rolldown_point(mech):
+    plan = plan_economy(gs("4-2", gold=36, level=7, hp=64, streak=5), mech)
+    assert plan.recommendation not in ROLLING and plan.roll_budget == 0
+    spend = mech.gold_to_reach(6, 0, 7)
+    plan = plan_economy(gs("4-1", gold=spend + 20, level=6, hp=60, streak=4), mech)
+    assert plan.recommendation == EconAction.LEVEL and plan.roll_budget == 0
+
+
+def test_low_hp_levels_and_rolls_outside_the_rolldown_rounds(mech):
+    spend = mech.gold_to_reach(7, 20, 8)
+    plan = plan_economy(gs("4-3", gold=60, level=7, xp=20, hp=28), mech, "fast8")
+    assert plan.recommendation == EconAction.LEVEL_AND_ROLL and plan.target_level == 8
+    assert plan.roll_budget == 60 - spend - 10

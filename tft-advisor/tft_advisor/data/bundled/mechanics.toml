@@ -19,6 +19,9 @@ pvp_win_gold = 1
 passive_xp_per_round = 2
 bench_size = 9
 shop_slots = 5
+# Set 18 Wisps: 1 shop in every `wisp_every` hides its rightmost champion slot
+# under a Wisp (2 = every other shop; 0 = no Wisps). Roll-down odds use it.
+wisp_every = 2
 max_level = 10
 carousel_round = 4
 pve_round = 7
@@ -82,3 +85,12 @@ streak_bonus = [[3, 1], [5, 2], [6, 3]]  # 3-4: +1, 5: +2, 6+: +3
 "4-1" = 7
 "4-5" = 8
 "5-5" = 9
+
+# Set-specific extras (read through Mechanics.extra).
+[extra]
+# Units that take more than one team slot (English name or api name -> slots).
+team_slots = { "Elder Dragon" = 2 }
+# Trait (English name) -> count from which every shop holds a Wisp.
+wisp_every_shop = { "Blossom" = 5 }
+# Trait (English name) -> {count: shop slots that roll one cost higher}.
+upgraded_slots = { "Inferno" = { 3 = 1, 5 = 2, 7 = 4 } }

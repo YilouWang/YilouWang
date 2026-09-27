@@ -18,7 +18,7 @@ from tft_advisor.llm import LLM, LLMError
 from tft_advisor.models import Observation, PlayerObs, ScreenObservation, ScreenType, ShopSlot, UnitObs
 from tft_advisor.vision.base import PURPOSES, PerceptionError, PerceptionHint, Perceiver, crop_region, region_box
 from tft_advisor.vision.claude_vision import ClaudeVisionPerceiver, fit_long_edge, prepare_crop, sanitize_screen
-from tft_advisor.vision.liveclient import LiveClient
+from tft_advisor.vision.liveclient import DEFAULT_BASE, LiveClient
 from tft_advisor.vision.merge import merge_into, merge_observations
 from tft_advisor.vision.mock import MockPerceiver, load_observations
 from tft_advisor.vision.ocr import (
@@ -114,7 +114,7 @@ def decode(block: dict) -> Image.Image:
 
 def test_claude_auto_request_and_result(set_data):
     with FakeAnthropic() as fake:
-        fake.queue_json(GOOD_REPLY)
+        fake.queue_json_wire(GOOD_REPLY)
         p = make_perceiver(fake, set_data, vision_model="claude-sonnet-5", vision_effort="medium", max_image_edge=800)
         assert isinstance(p, Perceiver)
         obs = p.perceive(frame(), purpose="auto")
@@ -135,14 +135,17 @@ def test_claude_auto_request_and_result(set_data):
             assert name in system["text"]
 
         labels, images, instruction = split_content(body["messages"][0]["content"])
-        assert len(images) == 4
+        assert len(images) == 7
         assert labels[0].startswith("IMAGE 1: full screenshot")
         assert labels[1].startswith("IMAGE 2: bottom HUD crop")
         assert labels[2].startswith("IMAGE 3: player list crop")
         assert labels[3].startswith("IMAGE 4: stage")
-        # Full frame as JPEG (layout, small upload), crops as lossless PNG (small text).
-        assert images[0]["source"]["media_type"] == "image/jpeg"
-        assert all(img["source"]["media_type"] == "image/png" for img in images[1:])
+        assert labels[4].startswith("IMAGE 5: board and bench crop")
+        assert labels[5].startswith("IMAGE 6: trait panel crop")
+        assert labels[6].startswith("IMAGE 7: item bench crop")
+        # Full frame and the busy board as JPEG (small upload), text crops as lossless PNG.
+        media = [img["source"]["media_type"] for img in images]
+        assert media == ["image/jpeg", "image/png", "image/png", "image/png", "image/jpeg", "image/png", "image/png"]
         for lab in labels:
             assert lab in instruction  # the instruction lists every image
         assert "automatic capture" in instruction
@@ -158,10 +161,31 @@ def test_claude_auto_request_and_result(set_data):
         assert p.llm.stats.by_purpose == {"vision": 1}
 
 
+def test_claude_vision_sends_the_all_required_wire_schema(set_data):
+    # The API rejects schemas with more than 24 optional or 16 union typed
+    # parameters (400 "Schema is too complex"); ScreenObservation has more.
+    with FakeAnthropic() as fake:
+        fake.queue_json_wire(dict(GOOD_REPLY, xp_current=None, xp_needed=None, augment_choices=None))
+        obs = make_perceiver(fake, set_data).perceive(frame(), purpose="auto")
+        schema = fake.requests[0]["body"]["output_config"]["format"]["schema"]
+        assert "unreadable" in schema["properties"]
+        assert set(schema["required"]) == set(schema["properties"])
+        assert "anyOf" not in json.dumps(schema)
+        # unreadable fields come back as null, visible ones keep their values
+        s = obs.screen
+        assert s.xp_current is None and s.xp_needed is None and s.augment_choices is None
+        assert s.gold == 42 and s.augments == ["Rich Get Richer"] and s.bench[0].row is None
+        assert s.shop[4].name is None and s.shop[4].cost is None
+        system = fake.requests[0]["body"]["system"][0]["text"]
+        instruction = fake.requests[0]["body"]["messages"][0]["content"][-1]["text"]
+        assert "unreadable" in system and "unreadable" in instruction
+        assert "null" not in system and "null" not in instruction
+
+
 def test_claude_scout_adds_banner_and_forces_not_own_board(set_data):
     reply = dict(GOOD_REPLY, viewing_own_board=None, viewed_player_name=None, hp=100)
     with FakeAnthropic() as fake:
-        fake.queue_json(reply)
+        fake.queue_json_wire(reply)
         p = make_perceiver(fake, set_data)
         hint = PerceptionHint(scouting_player="咕噜咕噜", self_name="Yilou", champion_names=["Ahri", "Morgana"])
         obs = p.perceive(frame(), purpose="scout", hint=hint)
@@ -170,22 +194,23 @@ def test_claude_scout_adds_banner_and_forces_not_own_board(set_data):
         assert obs.screen.viewed_player_name == "咕噜咕噜"
 
         labels, images, instruction = split_content(fake.requests[0]["body"]["messages"][0]["content"])
-        assert len(images) == 5
-        assert labels[4].startswith("IMAGE 5: top banner crop")
+        assert len(images) == 8
+        assert labels[4].startswith("IMAGE 5: board and bench crop")
+        assert labels[7].startswith("IMAGE 8: top banner crop")
         assert "SCOUTING" in instruction
         assert "咕噜咕噜" in instruction and "Yilou" in instruction and "Ahri" in instruction
 
 
 def test_claude_scout_keeps_explicit_own_board(set_data):
     with FakeAnthropic() as fake:
-        fake.queue_json(dict(GOOD_REPLY, viewing_own_board=True))
+        fake.queue_json_wire(dict(GOOD_REPLY, viewing_own_board=True))
         obs = make_perceiver(fake, set_data).perceive(frame(), purpose="scout")
         assert obs.screen.viewing_own_board is True
 
 
 def test_claude_shop_sends_only_hud_crop_and_drops_other_fields(set_data):
     with FakeAnthropic() as fake:
-        fake.queue_json(GOOD_REPLY)
+        fake.queue_json_wire(GOOD_REPLY)
         p = make_perceiver(fake, set_data)
         obs = p.perceive(frame(), purpose="shop")
         labels, images, instruction = split_content(fake.requests[0]["body"]["messages"][0]["content"])
@@ -203,15 +228,15 @@ def test_claude_shop_sends_only_hud_crop_and_drops_other_fields(set_data):
 
 def test_claude_manual_purpose_and_unknown_purpose(set_data):
     with FakeAnthropic() as fake:
-        fake.queue_json(GOOD_REPLY)
-        fake.queue_json(GOOD_REPLY)
+        fake.queue_json_wire(GOOD_REPLY)
+        fake.queue_json_wire(GOOD_REPLY)
         p = make_perceiver(fake, set_data)
         p.perceive(frame(), purpose="manual")
         obs = p.perceive(frame(), purpose="weird")
         assert obs.purpose == "auto"
         _, images0, instr0 = split_content(fake.requests[0]["body"]["messages"][0]["content"])
         _, images1, _ = split_content(fake.requests[1]["body"]["messages"][0]["content"])
-        assert len(images0) == 4 and len(images1) == 4
+        assert len(images0) == 7 and len(images1) == 7
         assert "full analysis" in instr0
 
 
@@ -232,7 +257,7 @@ def test_claude_postprocess_clamps_invalid_values(set_data):
         ],
     )
     with FakeAnthropic() as fake:
-        fake.queue_json(bad)
+        fake.queue_json_wire(bad)
         obs = make_perceiver(fake, set_data).perceive(frame(), hint=PerceptionHint(self_name="Yilou"))
     s = obs.screen
     assert s.gold is None and s.level is None and s.stage is None
@@ -293,7 +318,7 @@ def test_claude_rejects_missing_image(set_data):
 
 def test_rgba_and_small_frames_work(set_data):
     with FakeAnthropic() as fake:
-        fake.queue_json(GOOD_REPLY)
+        fake.queue_json_wire(GOOD_REPLY)
         p = make_perceiver(fake, set_data)
         obs = p.perceive(frame(1280, 720).convert("RGBA"))
         assert obs.screen.gold == 42
@@ -590,8 +615,10 @@ def test_liveclient_fetch_returns_none_when_nothing_listens():
     with pytest.raises(PerceptionError):
         lc.perceive(None)
     assert time.monotonic() - t0 < 3
-    # the real default endpoint is not running on a test machine either
-    assert LiveClient().fetch() is None
+    # Never contact the real endpoint: the suite runs on the gaming PC, where a
+    # match may be serving it. Check the default and the https path separately.
+    assert LiveClient().base == DEFAULT_BASE == "https://127.0.0.1:2999"
+    assert LiveClient(base=f"https://127.0.0.1:{_free_port()}").fetch() is None
 
 
 class _Server:
@@ -612,7 +639,7 @@ class _Server:
 
         self.paths: list[str] = []
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
-        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
 
     @property
     def base(self) -> str:
@@ -845,11 +872,11 @@ def test_vision_works_without_capture_regions(monkeypatch, set_data):
         assert region_box((1920, 1080), name) == _fallback_box((1920, 1080), name)
     assert len(shop_card_boxes((1920, 1080))) == 5
     with FakeAnthropic() as fake:
-        fake.queue_json(GOOD_REPLY)
+        fake.queue_json_wire(GOOD_REPLY)
         obs = make_perceiver(fake, set_data).perceive(frame(), purpose="scout")
         assert obs.screen.gold == 42
         _, images, _ = split_content(fake.requests[0]["body"]["messages"][0]["content"])
-        assert len(images) == 5
+        assert len(images) == 8
 
 
 def test_ocr_shop_purpose_skips_stage(set_data):
@@ -1078,7 +1105,7 @@ def test_liveclient_never_follows_redirects():
             self.end_headers()
 
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
     try:
         lc = LiveClient(base=f"http://127.0.0.1:{httpd.server_address[1]}")
         assert lc.fetch() is None
@@ -1113,13 +1140,97 @@ def test_non_string_hints_from_the_dashboard_do_not_crash(set_data):
     assert s.viewed_player_name == "12345" and s.players[0].is_self
 
 
-@pytest.mark.parametrize("edge,expected", [(0, 1568), (-5, 1568), (None, 1568), (99999, 8000), (1920, 1920)])
+@pytest.mark.parametrize(
+    "edge,expected", [(0, "default"), (-5, "default"), (None, "default"), (99999, 2576), (1920, 1920), (2576, 2576)]
+)
 def test_max_image_edge_is_clamped(set_data, edge, expected):
+    # 2576 px is the long-edge limit of current models: larger is resized by the API anyway.
+    if expected == "default":
+        expected = min(AnthropicConfig().max_image_edge, 2576)
     cfg = AnthropicConfig()
     cfg.max_image_edge = edge  # type: ignore[assignment]
     p = ClaudeVisionPerceiver(LLM(cfg), cfg, set_data)
-    full = p.build_images(Image.new("RGB", (9000, 5063)), "auto")[0][1]
+    # a very long but short frame: same long-edge clamp, a fraction of the 137 MB of 9000x5063
+    full = p.build_images(Image.new("RGB", (9000, 1000)), "auto")[0][1]
     assert max(full.size) == min(expected, 9000)
+
+
+def test_board_bench_traits_and_items_are_sent_at_native_resolution(set_data):
+    from PIL import JpegImagePlugin
+
+    from tft_advisor.vision.claude_vision import _union_box
+
+    with FakeAnthropic() as fake:
+        fake.queue_json_wire(GOOD_REPLY)
+        fake.queue_json_wire(GOOD_REPLY)
+        p = make_perceiver(fake, set_data)  # default max_image_edge
+        p.perceive(frame(1920, 1080), purpose="auto")
+        p.perceive(frame(1920, 1080), purpose="scout")
+        for req, count in zip(fake.requests, (7, 8)):
+            labels, images, instruction = split_content(req["body"]["messages"][0]["content"])
+            assert len(images) == count
+            by_label = {lab.split(": ", 1)[1].split(" crop")[0]: img for lab, img in zip(labels, images)}
+            board = by_label["board and bench"]
+            boxes = [region_box((1920, 1080), r) for r in ("board", "bench")]
+            x0, y0, x1, y1 = _union_box((1920, 1080), ("board", "bench"))
+            assert (x0, y0) == (min(b[0] for b in boxes), min(b[1] for b in boxes))
+            assert (x1, y1) == (max(b[2] for b in boxes), max(b[3] for b in boxes))
+            decoded = decode(board)
+            assert decoded.size == (x1 - x0, y1 - y0)  # native pixels, not the downscaled frame
+            assert board["source"]["media_type"] == "image/jpeg"
+            assert JpegImagePlugin.get_sampling(decoded) == 0  # 4:4:4 keeps star pip colors
+            tx0, ty0, tx1, ty1 = region_box((1920, 1080), "traits")
+            assert decode(by_label["trait panel"]).size == (tx1 - tx0, ty1 - ty0)
+            assert by_label["item bench"]["source"]["media_type"] == "image/png"
+            assert "board and bench crop" in instruction
+
+
+def test_png_crops_are_not_optimized_on_the_real_time_path(set_data, monkeypatch):
+    calls: list[dict] = []
+    real_save = Image.Image.save
+
+    def spy(self, fp, format=None, **params):  # noqa: A002 - PIL signature
+        calls.append({"format": format, **params})
+        return real_save(self, fp, format, **params)
+
+    monkeypatch.setattr(Image.Image, "save", spy)
+    with FakeAnthropic() as fake:
+        p = make_perceiver(fake, set_data)
+        p.build_content(frame(), "auto")
+    pngs = [c for c in calls if c["format"] == "PNG"]
+    assert pngs and not any(c.get("optimize") for c in pngs)
+
+
+def test_scout_frame_of_own_board_is_not_filed_under_the_hinted_opponent(mech):
+    """Player pressed record for OppA but the camera still showed the home board."""
+    from tft_advisor.data.setdata import bundled_snapshot
+    from tft_advisor.engine.tracker import GameTracker
+
+    s18 = SetData.from_cdragon(bundled_snapshot("zh_cn"), bundled_snapshot("en_us"))
+    board = [{"name": n, "star": 2, "items": [], "row": 3, "col": i} for i, n in enumerate(("Akali", "Camille", "Kobuko", "Leona"))]
+    lobby = [{"name": "Me", "hp": 70, "is_self": True}, {"name": "OppA", "hp": 60, "is_self": False}]
+    own = dict(GOOD_REPLY, shop=None, board=board, bench=[], traits=[], players=lobby, augments=None, item_bench=[])
+    hint = PerceptionHint(scouting_player="OppA", self_name="Me")
+
+    s = sanitize_screen(ScreenObservation.model_validate(dict(own, viewing_own_board=True)), "scout", hint)
+    assert s.viewing_own_board is True and s.viewed_player_name is None
+    assert any("自己的棋盘" in n for n in s.notes)
+    # A real scout frame still gets the name the player gave.
+    s = sanitize_screen(ScreenObservation.model_validate(dict(own, viewing_own_board=None)), "scout", hint)
+    assert s.viewing_own_board is False and s.viewed_player_name == "OppA"
+
+    tracker = GameTracker(s18, mech)
+    with FakeAnthropic() as fake:
+        fake.queue_json_wire(dict(own, viewing_own_board=True))
+        fake.queue_json_wire(dict(own, viewing_own_board=True))
+        p = make_perceiver(fake, s18)
+        tracker.ingest(p.perceive(frame(), purpose="auto", hint=PerceptionHint(self_name="Me")))
+        obs = p.perceive(frame(), purpose="scout", hint=hint)
+    assert obs.screen.viewed_player_name is None
+    st = tracker.ingest(obs)
+    assert st.opponents == {}
+    assert tracker.taken_by_player() == {}
+    assert len(st.board) == 4 and all(u.star == 2 for u in st.board)
 
 
 def test_unreal_hud_notes_only_for_set_18_plus():

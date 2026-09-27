@@ -6,6 +6,10 @@ import pytest
 
 from tft_advisor.engine.probability import (
     GOLD_BUDGETS,
+    ShopModel,
+    default_shop,
+    odds_upgraded,
+    shop_model,
     best_roll_level,
     compute_hit_odds,
     copies_needed,
@@ -18,7 +22,7 @@ from tft_advisor.engine.probability import (
     rolldown_probability,
 )
 
-from .conftest import make_state, make_unit
+from .conftest import make_state, make_unit, s18_set_data
 
 
 def four_cost_pool(mech, set_data):
@@ -95,15 +99,27 @@ def test_rolldown_edges(mech):
     assert rolldown_probability(mech, 8, 4, 2, 9, 30, 50) > rolldown_probability(mech, 8, 4, 2, 4, 30, 50)
 
 
-def _simulate(mech, level, cost, need, rem, total, gold, trials, seed=7):
+def _simulate(mech, level, cost, need, rem, total, gold, trials, seed=7, shop=None):
+    """Shop by shop: each slot draws a cost tier from the level odds (one tier
+    higher on an upgraded slot), then the champion from that tier's pool."""
+    shop = shop or default_shop(mech)
+    odds = [mech.odds(level, c) for c in range(1, 6)]
     rng = random.Random(seed)
     hits = 0
     for _ in range(trials):
         g, bought = gold, 0
+        phase = rng.randrange(len(shop.schedule))  # unknown phase of the first roll
         while bought < need and g >= mech.roll_cost + cost:
             g -= mech.roll_cost
-            p = p_unit_per_slot(mech, level, cost, rem - bought, total - bought)
-            shown = sum(1 for _ in range(mech.shop_slots) if rng.random() < p)
+            slots = shop.schedule[phase]
+            phase = (phase + 1) % len(shop.schedule)
+            shown = 0
+            for k in range(slots):
+                tier = rng.choices(range(1, 6), weights=odds)[0]
+                if k < shop.upgraded:
+                    tier = min(5, tier + 1)
+                if tier == cost and rng.random() < (rem - bought) / (total - bought):
+                    shown += 1
             buy = min(shown, need - bought, g // cost)
             bought += buy
             g -= buy * cost
@@ -119,6 +135,49 @@ def test_rolldown_matches_monte_carlo(mech, set_data, level, cost, need, rem, go
     assert exact == pytest.approx(sim, abs=0.03)
 
 
+@pytest.mark.parametrize(
+    "shop",
+    [ShopModel((5,), 0), ShopModel((5, 4), 0), ShopModel((4,), 0), ShopModel((5, 4), 2), ShopModel((5, 4), 4)],
+)
+def test_rolldown_matches_monte_carlo_for_wisps_and_inferno(mech, set_data, shop):
+    total = mech.pool_size[4] * len(set_data.champions_by_cost(4))
+    exact = rolldown_probability(mech, 7, 4, 2, 8, total, 50, shop=shop)
+    sim = _simulate(mech, 7, 4, 2, 8, total, 50, trials=6000, shop=shop)
+    assert exact == pytest.approx(sim, abs=0.03)
+
+
+def test_wisp_shops_lower_the_odds(mech, set_data):
+    # Every other shop hides a champion under a Wisp: fewer champion slots.
+    assert mech.wisp_every == 2 and mech.shop_schedule() == (5, 4)
+    total = mech.pool_size[4] * len(set_data.champions_by_cost(4))
+    five = rolldown_probability(mech, 8, 4, 2, 8, total, 40, shop=ShopModel((5,), 0))
+    wisp = rolldown_probability(mech, 8, 4, 2, 8, total, 40)
+    blossom = rolldown_probability(mech, 8, 4, 2, 8, total, 40, shop=ShopModel((4,), 0))
+    assert blossom < wisp < five
+    assert wisp == pytest.approx(rolldown_probability(mech, 8, 4, 2, 8, total, 40, shop=ShopModel((5, 4), 0)))
+    # Inferno upgraded slots make 4 costs at level 7 much more likely.
+    base7 = rolldown_probability(mech, 7, 4, 2, 8, total, 40)
+    assert rolldown_probability(mech, 7, 4, 2, 8, total, 40, shop=ShopModel((5, 4), 4)) > base7 + 0.2
+
+
+def test_shop_model_reads_traits(mech):
+    from tft_advisor.models import GameState, TraitObs
+
+    sd = s18_set_data()
+    assert shop_model(GameState(), sd, mech) == ShopModel((5, 4), 0)
+    blossom = GameState(traits=[TraitObs(name="灵魂莲华", count=5, active=True)])
+    assert shop_model(blossom, sd, mech).schedule == (4,)
+    inferno = GameState(traits=[TraitObs(name="Inferno", count=5, active=True)])
+    assert shop_model(inferno, sd, mech).upgraded == 2
+    # Fielded units count too (3 Inferno units -> 1 upgraded slot).
+    st = make_state("4-1")
+    st.board = [make_unit(n, set_data=sd) for n in ("Akali", "Varus", "Shen")]
+    assert shop_model(st, sd, mech).upgraded == 1
+    assert odds_upgraded(mech, 7, 4) == pytest.approx(mech.odds(7, 3))
+    assert odds_upgraded(mech, 9, 5) == pytest.approx(mech.odds(9, 4) + mech.odds(9, 5))
+    assert odds_upgraded(mech, 7, 1) == 0.0
+
+
 # ---------------------------------------------------------------------------
 # Expected gold / best level
 # ---------------------------------------------------------------------------
@@ -126,8 +185,11 @@ def test_rolldown_matches_monte_carlo(mech, set_data, level, cost, need, rem, go
 
 def test_expected_gold(mech):
     p = p_unit_per_slot(mech, 8, 4, 10, 30)
-    hit = p_at_least_one(p, mech.shop_slots)
+    sched = mech.shop_schedule()
+    hit = sum(p_at_least_one(p, n) for n in sched) / len(sched)  # Wisp shops show fewer champions
     assert expected_gold_to_goal(mech, 8, 4, 1, 10, 30) == pytest.approx(mech.roll_cost / hit + 4)
+    five = expected_gold_to_goal(mech, 8, 4, 1, 10, 30, shop=ShopModel((5,), 0))
+    assert five == pytest.approx(mech.roll_cost / p_at_least_one(p, 5) + 4)
     two = expected_gold_to_goal(mech, 8, 4, 2, 10, 30)
     assert two > 2 * expected_gold_to_goal(mech, 8, 4, 1, 10, 30) - 1e-9  # the pool shrinks
     assert expected_gold_to_goal(mech, 8, 4, 0, 10, 30) == 0.0

@@ -15,16 +15,36 @@ from typing import Callable, Optional, TypeVar
 from ..data.comps import CompDef
 from ..data.mechanics import Mechanics
 from ..data.setdata import SetData
-from ..models import Analysis, CompSuggestion, EconPlan, GameState, HitOdds, ItemSuggestion, ScreenType, Unit
-from .comps_engine import Owned, hint_boost, owned_units, suggest_comps
-from .economy import STYLES, hp_bucket, plan_economy, reroll_level
-from .items import plan_items
+from ..models import (
+    Analysis,
+    CompSuggestion,
+    EconAction,
+    EconPlan,
+    GameState,
+    HitOdds,
+    ItemSuggestion,
+    ScreenType,
+    Unit,
+)
+from .comps_engine import (
+    Owned,
+    comp_hint_boost,
+    owned_units,
+    reroll_key_copies,
+    star_of_copies,
+    suggest_comps,
+)
+from .economy import STYLES, hp_bucket, plan_economy, reroll_cost, reroll_level
+from .items import plan_items, profile_hints_from_comps
 from .probability import compute_hit_odds
 
 MAX_ODDS = 8
 STYLE_MIN_SCORE = 0.4  # commit to a comp's econ style only when it fits reasonably
 LATE_STAGE = 4
 RICH_GOLD = 70
+ROLL_TARGET_FLOOR = 0.10  # a roll needs a target with at least this chance at its budget
+FIND_ONE_FLOOR = 0.5  # ... or a missing unit it will probably find
+WIN_STREAK_CHECK = 2  # win streaks from this length only roll for a real target
 
 T = TypeVar("T")
 
@@ -60,6 +80,8 @@ class Analyzer:
         self.comps: list[CompDef] = list(comps or [])
         self.comp_hint = comp_hint or ""
         self.last_errors: list[str] = []
+        self._hint_match: tuple[str, bool] = ("", True)
+        self._lib_profiles: Optional[dict[str, Optional[str]]] = None
 
     def set_comp_hint(self, hint: str) -> None:
         self.comp_hint = (hint or "").strip()
@@ -81,18 +103,38 @@ class Analyzer:
         analysis.comps = comps
         top = comps[0] if comps else None
         style = self._guard("style", lambda: self._style_for(top, state), "standard")
+        key_star = self._guard("key", lambda: self._key_star(top, state, style), None)
+        if style.startswith("reroll") and key_star is not None and key_star >= 3:
+            # The reroll target is 3-star: level and chase upgrades like a
+            # standard line from here on.
+            style = "standard"
 
         # Econ and odds need a level: an unread level would be treated as 1
         # ("buy XP to reach level 2" at stage 5), so estimate it instead.
         est = self._guard("level", lambda: self._with_level_estimate(state), state)
-        analysis.econ = self._guard("econ", lambda: plan_economy(est, self.mech, style), EconPlan(gold=state.gold or 0))
-        analysis.odds = self._guard("odds", lambda: self._odds(est, top, taken_total, style), [])
+        analysis.econ = self._guard(
+            "econ", lambda: plan_economy(est, self.mech, style, key_star=key_star), EconPlan(gold=state.gold or 0)
+        )
+        # Odds at the level the next shops will be rolled at (after leveling).
+        odds_state = self._guard("odds_level", lambda: self._odds_state(est, analysis.econ), est)
+        analysis.odds = self._guard("odds", lambda: self._odds(odds_state, top, taken_total, style), [])
+        self._guard("roll_check", lambda: self._drop_pointless_roll(est, analysis, style), None)
         analysis.items = self._guard(
-            "items", lambda: plan_items(state, self.set_data, comp=top, hp_bucket=hp_bucket(state.hp)), []
+            "items",
+            lambda: plan_items(
+                state,
+                self.set_data,
+                comp=top,
+                hp_bucket=hp_bucket(state.hp),
+                profile_hints=self._profile_hints(top),
+            ),
+            [],
         )
         analysis.shop_picks = self._guard("shop", lambda: self._shop_picks(state, top), [])
         analysis.sell_candidates = self._guard("sell", lambda: self._sell_candidates(state, top), [])
-        analysis.warnings = self._guard("warnings", lambda: self._warnings(state, analysis.items, style), [])
+        # The econ plan's style: a reroll that ended (4-5 or later) levels normally.
+        econ_style = analysis.econ.style if analysis.econ.style in STYLES else style
+        analysis.warnings = self._guard("warnings", lambda: self._warnings(state, analysis.items, econ_style), [])
         if self.last_errors:
             analysis.warnings.append("部分分析出错已跳过，建议可能不完整")
         return analysis
@@ -110,8 +152,25 @@ class Analyzer:
         bound, the standard curve for the round a typical value."""
         if state.level is not None:
             return state.level
-        guess = max(len(state.board), self.mech.standard_level_at(state.stage) or 0)
+        guess = max(self.team_slots_used(state), self.mech.standard_level_at(state.stage) or 0)
         return min(self.mech.max_level, guess) if guess > 0 else None
+
+    def slot_weight(self, u: Unit) -> int:
+        """Team slots a fielded unit takes (Set 18 Elder Dragon takes 2)."""
+        table = self.mech.extra.get("team_slots") if isinstance(self.mech.extra, dict) else None
+        if not isinstance(table, dict) or not table:
+            return 1
+        champ = self.set_data.champions.get(u.api_name)
+        for key in (u.api_name, champ.name_en if champ else None, champ.name if champ else None, u.name):
+            if key and key in table:
+                try:
+                    return max(1, int(table[key]))
+                except (TypeError, ValueError):
+                    return 1
+        return 1
+
+    def team_slots_used(self, state: GameState) -> int:
+        return sum(self.slot_weight(u) for u in state.board)
 
     def _with_level_estimate(self, state: GameState) -> GameState:
         if state.level is not None:
@@ -130,20 +189,58 @@ class Analyzer:
             return "standard"
         hinted = False
         if self.comp_hint:
-            champs = [c for c in (self.set_data.resolve_champion(n) for n in comp.units) if c is not None]
-            carry = self.set_data.resolve_champion(comp.carry) if comp.carry else None
-            hinted = hint_boost(comp.name, champs, carry, self.comp_hint, self.set_data) > 0
+            hinted = comp_hint_boost(comp, self.comp_hint, self.set_data) > 0
         if top.score < STYLE_MIN_SCORE and not hinted:
             return "standard"
         # Staying low to slow roll is a commitment: players make it when they
-        # already hold a pair (or a 2-star) of the reroll carry, not because a
-        # few generic early units overlap with a reroll comp.
-        if comp.style.startswith("reroll") and not hinted and state is not None and comp.carry:
-            carry_api = self._resolve_api(comp.carry)
-            copies = sum(u.copies for u in state.all_units() if u.api_name == carry_api)
-            if copies < 2:
+        # already hold a pair (or a 2-star) of a unit they reroll for, not
+        # because a few generic early units overlap with a reroll comp. The
+        # comp's carry is only the item holder and often costs more than the
+        # reroll (a 4-cost carry on a 3-cost reroll), so it does not count.
+        if comp.style.startswith("reroll") and not hinted and state is not None:
+            copies = reroll_key_copies(comp, owned_units(state, self.set_data), self.set_data)
+            if copies is None or copies < 2:
                 return "standard"
         return comp.style
+
+    def _key_star(self, top: Optional[CompSuggestion], state: GameState, style: str) -> Optional[int]:
+        """Star level of the unit the line is built around: the reroll target on
+        reroll lines, the carry otherwise (0 = not owned, None = no target)."""
+        if top is None:
+            return None
+        owned = owned_units(state, self.set_data)
+        comp = self._comp_def(top.name)
+        if comp is not None and style.startswith("reroll"):
+            copies = reroll_key_copies(comp, owned, self.set_data)
+            if copies is not None:
+                return star_of_copies(copies)
+        carry = self._resolve_api(top.carry)
+        if carry is None:
+            return None
+        o = owned.get(carry)
+        return star_of_copies(o.copies) if o else 0
+
+    def _profile_hints(self, top: Optional[CompSuggestion]) -> dict[str, str]:
+        """Champion damage profiles from the comp library's item plans (AD / AP /
+        tank by the items strong players give each unit); the top comp wins."""
+        if self._lib_profiles is None:
+            self._lib_profiles = {
+                k: v for k, v in profile_hints_from_comps(self.comps, self.set_data).items() if v
+            }
+        hints: dict[str, Optional[str]] = dict(self._lib_profiles)
+        comp = self._comp_def(top.name if top else None)
+        if comp is not None:
+            # The target comp's own plan wins, a mixed plan included (None).
+            hints.update(profile_hints_from_comps([comp], self.set_data, keep_ties=True))
+        return {k: v for k, v in hints.items() if v}
+
+    def _hint_matches_any(self) -> bool:
+        """Does the comp hint boost at least one loaded comp? (cached per hint)"""
+        hint = self.comp_hint
+        if self._hint_match[0] != hint:
+            ok = any(comp_hint_boost(c, hint, self.set_data) > 0 for c in self.comps)
+            self._hint_match = (hint, ok)
+        return self._hint_match[1]
 
     def _resolve_api(self, name: Optional[str]) -> Optional[str]:
         if not name:
@@ -161,6 +258,72 @@ class Analyzer:
         return {a for a in apis if a}
 
     # ------------------------------------------------------------------ odds
+    def _odds_state(self, state: GameState, econ: EconPlan) -> GameState:
+        """The state whose level the next shops roll at: after a LEVEL or
+        LEVEL_AND_ROLL plan that is the target level, not the current one."""
+        target = econ.target_level
+        if (
+            econ.recommendation in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL)
+            and target is not None
+            and state.level is not None
+            and target > state.level
+        ):
+            return state.model_copy(update={"level": target, "xp_current": 0})
+        return state
+
+    def _has_roll_target(self, analysis: Analysis) -> bool:
+        """Does the roll budget have something realistic to find? A unit whose
+        next star is reachable with at least ROLL_TARGET_FLOOR (the same bar
+        the rules use to name a roll target), or a missing comp carry the
+        rolls will probably show."""
+        budget = analysis.econ.roll_budget
+        roll = max(1, self.mech.roll_cost)
+        top = analysis.comps[0] if analysis.comps else None
+        carry = self._resolve_api(top.carry) if top else None
+        for o in analysis.odds:
+            need = o.goal_copies - o.owned_copies
+            if need <= 0 or o.remaining_in_pool < need:
+                continue
+            options = sorted(g for g in o.p_goal_by_gold if g <= budget)
+            p = o.p_goal_by_gold[options[-1]] if options else 0.0
+            if p >= ROLL_TARGET_FLOOR:
+                return True
+            if o.owned_copies == 0 and o.api_name == carry:
+                if 1.0 - (1.0 - o.p_in_shop) ** (budget // roll) >= FIND_ONE_FLOOR:
+                    return True  # the carry is missing: finding one copy is the point
+        return False
+
+    def _drop_pointless_roll(self, state: GameState, analysis: Analysis, style: str) -> None:
+        """Turn a roll with no realistic target into save / level.
+
+        Only where rolling is optional: a win streak (the board already wins)
+        or a fast 8 / fast 9 line at level 8+. Low HP, reroll slow rolls and
+        all-ins keep their roll.
+        """
+        econ = analysis.econ
+        if econ.recommendation not in (EconAction.ROLL, EconAction.LEVEL_AND_ROLL):
+            return
+        if hp_bucket(state.hp) in ("low", "critical") or style.startswith("reroll"):
+            return
+        streak = state.streak or 0
+        level = econ.target_level if econ.recommendation == EconAction.LEVEL_AND_ROLL else state.level
+        late_fast = style in ("fast8", "fast9") and (level or 0) >= 8
+        if streak < WIN_STREAK_CHECK and not late_fast:
+            return
+        if self._has_roll_target(analysis):
+            return
+        if econ.recommendation == EconAction.LEVEL_AND_ROLL and econ.target_level:
+            econ.recommendation = EconAction.LEVEL
+            econ.reason = f"升到 {econ.target_level} 级；这回合搜到关键牌的概率很低，先不搜"
+        else:
+            econ.recommendation = EconAction.SAVE
+            econ.target_level = None
+            if streak >= WIN_STREAK_CHECK:
+                econ.reason = f"连胜 {streak} 场，这回合搜到关键牌的概率很低：不搜，存钱"
+            else:
+                econ.reason = "搜到升星的概率很低：先不搜，存钱准备升级"
+        econ.roll_budget = 0
+
     def _chase_three_star(self, o: Owned, level: int, style: str) -> bool:
         """Is rolling for a 3-star of this (already 2-star) unit a real plan?
 
@@ -169,9 +332,8 @@ class Analyzer:
         copies are missing. A 2-star 1-2 cost at level 8 on a fast 8 line is
         not a roll target, the 4-5 cost upgrades are.
         """
-        rr = reroll_level(style)
-        reroll_cost = {5: 1, 6: 2, 7: 3}.get(rr) if rr is not None else None
-        if reroll_cost is not None and o.cost <= reroll_cost:
+        cap = reroll_cost(style)
+        if cap is not None and o.cost <= cap:
             return True
         if o.copies >= 7:
             return True
@@ -347,14 +509,15 @@ class Analyzer:
         if len(state.bench) >= mech.bench_size:
             out.append("备战席已满，先卖掉用不上的棋子，不然买不了新英雄")
 
+        used = self.team_slots_used(state)  # Elder Dragon takes 2 slots
         if (
             state.level
             and "board" in state.field_age
             and planning
             and stage >= 2
-            and len(state.board) < state.level
+            and used < state.level
         ):
-            free = state.level - len(state.board)
+            free = state.level - used
             if state.bench:
                 out.append(f"场上只有 {len(state.board)} 个英雄，还能再上 {free} 个，把备战席的棋子放上去")
             else:
@@ -393,6 +556,9 @@ class Analyzer:
             out.append(f"血量只剩 {state.hp}，非常危险，这回合必须全力补强阵容")
         elif bucket == "low":
             out.append(f"血量 {state.hp} 偏低，别再贪经济，优先稳血")
+
+        if self.comp_hint and not self._hint_matches_any():
+            out.append(f"没有阵容匹配「{self.comp_hint}」，按自动推荐")
 
         unresolved = [u.name for u in state.all_units() if u.api_name.startswith("?")]
         unresolved += [u.name for u in state.shop_units if u is not None and u.api_name.startswith("?")]

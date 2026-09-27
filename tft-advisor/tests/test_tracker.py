@@ -536,3 +536,108 @@ def test_unknown_snapshot_not_counted_twice(tracker):
     # A genuinely different nameless board still counts.
     tracker.ingest(obs(purpose="scout", viewing_own_board=False, board=["Kayle", "Draven"]))
     assert tracker.taken_by_player()[UNKNOWN_PLAYER] == {"TFT99_Kayle": 1, "TFT99_Draven": 1}
+
+
+# ---------------------------------------------------------------------------
+# 4-star units and the vision wire format
+# ---------------------------------------------------------------------------
+
+
+def test_four_star_unit_holds_nine_copies(set_data, mech):
+    from tft_advisor.engine.probability import owned_copies, pool_remaining
+    from tft_advisor.models import Unit
+
+    assert [Unit(api_name="x", name="x", star=s).copies for s in (0, 1, 2, 3, 4)] == [1, 1, 3, 9, 9]
+    garen = set_data.resolve_champion("Garen")
+    four = Unit(api_name=garen.api_name, name=garen.name, cost=garen.cost, star=4)
+    per_unit, per_cost = pool_remaining(set_data, mech, owned_copies([four]))
+    size = mech.pool_size[garen.cost]
+    assert per_unit[garen.api_name] == size - 9
+    assert per_cost[garen.cost] == size * len(set_data.champions_by_cost(garen.cost)) - 9
+
+
+def test_tracker_counts_a_four_star_as_nine_copies(tracker):
+    st = tracker.ingest(own_frame(stage="5-1", board=[uo("Garen", 4, row=0, col=3)], bench=[]))
+    assert st.board[0].star == 4
+    assert sum(u.copies for u in st.all_units()) == 9
+
+
+def _schema_complexity(model) -> tuple[int, int]:
+    """(optional parameters, union typed parameters) the API counts for a schema."""
+    from anthropic import transform_schema
+    from pydantic import TypeAdapter
+
+    schema = transform_schema(TypeAdapter(model).json_schema())
+    optional = unions = 0
+
+    def walk(node) -> None:
+        nonlocal optional, unions
+        if isinstance(node, dict):
+            props = node.get("properties")
+            if isinstance(props, dict):
+                required = set(node.get("required", []))
+                for key, spec in props.items():
+                    optional += key not in required
+                    if isinstance(spec, dict) and ("anyOf" in spec or isinstance(spec.get("type"), list)):
+                        unions += 1
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(schema)
+    return optional, unions
+
+
+def test_structured_output_schemas_fit_the_api_limits():
+    # Platform docs, structured outputs "Schema complexity limits": at most 24
+    # optional parameters and 16 union typed parameters per request.
+    from tft_advisor.models import ScreenObservation, ScreenObservationWire, StrategistAdvice
+
+    for model in (ScreenObservationWire, StrategistAdvice):
+        optional, unions = _schema_complexity(model)
+        assert optional <= 24 and unions <= 16, (model.__name__, optional, unions)
+    assert _schema_complexity(ScreenObservationWire) == (0, 0)
+    # The rich ScreenObservation itself is over the limits: never send it as output_format.
+    optional, unions = _schema_complexity(ScreenObservation)
+    assert optional > 24 or unions > 16
+
+
+def test_wire_observation_converts_back(tracker):
+    from tft_advisor.models import ScreenObservationWire
+
+    wire = ScreenObservationWire.model_validate(
+        {
+            "screen_type": "planning",
+            "unreadable": ["hp", "players", "streak"],
+            "viewing_own_board": True,
+            "viewed_player_name": "",
+            "stage": "3-2",
+            "gold": 34,
+            "level": 6,
+            "xp_current": 4,
+            "xp_needed": 36,
+            "hp": 0,
+            "streak": 0,
+            "shop": [{"name": "Graves", "cost": 1}, {"name": "", "cost": 0}, {"name": "Wisp: Grow Up", "cost": 3}],
+            "shop_locked": False,
+            "board": [{"name": "Garen", "star": 2, "items": [], "row": 0, "col": 3}],
+            "bench": [{"name": "Lucian", "star": 1, "items": [], "row": -1, "col": 2}],
+            "item_bench": [],
+            "players": [],
+            "traits": [{"name": "Knight", "count": 1, "active": False, "next_breakpoint": 0}],
+            "augment_choices": [],
+            "augments": [],
+            "notes": [],
+        }
+    )
+    screen = wire.to_screen()
+    assert screen.hp is None and screen.players is None and screen.streak is None  # unreadable -> null
+    assert screen.item_bench == [] and screen.augments == []  # visible and empty stays []
+    assert screen.viewed_player_name is None and screen.stage == "3-2" and screen.gold == 34
+    assert [(s.name, s.cost) for s in screen.shop] == [("Graves", 1), (None, None), ("Wisp: Grow Up", 3)]
+    assert screen.board[0].row == 0 and screen.bench[0].row is None and screen.bench[0].col == 2
+    assert screen.traits[0].next_breakpoint is None
+    st = tracker.ingest(Observation(screen=screen, source="claude", purpose="auto"))
+    assert st.gold == 34 and st.level == 6 and [u.name for u in st.board] == ["Garen"]

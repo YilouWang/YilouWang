@@ -37,6 +37,7 @@ class Mechanics:
     passive_xp_per_round: int = 2
     bench_size: int = 9
     shop_slots: int = 5
+    wisp_every: int = 0  # 1 shop in N hides one champion slot under a Wisp (0 = none)
     max_level: int = 10
     carousel_round: int = 4
     pve_round: int = 7  # x-7 is PvE from stage 2 on; every round of stage 1 is PvE/carousel
@@ -132,6 +133,15 @@ class Mechanics:
                 best, best_key = lvl, parsed.key
         return best
 
+    def shop_schedule(self, wisp_every: Optional[int] = None) -> tuple[int, ...]:
+        """Champion slots per consecutive shop, repeating: with a Wisp in
+        every other shop (5, 4); a Wisp in every shop (4,); no Wisps (5,)."""
+        n = self.wisp_every if wisp_every is None else wisp_every
+        slots = max(1, self.shop_slots)
+        if n is None or n <= 0 or slots <= 1:
+            return (slots,)
+        return tuple([slots] * (n - 1) + [slots - 1])
+
     def odds(self, level: int, cost: int) -> float:
         lvl = min(max(level, 1), self.max_level)
         row = self.shop_odds.get(lvl)
@@ -162,6 +172,7 @@ def _from_dict(raw: dict[str, Any]) -> Mechanics:
             "passive_xp_per_round",
             "bench_size",
             "shop_slots",
+            "wisp_every",
             "max_level",
             "carousel_round",
             "pve_round",

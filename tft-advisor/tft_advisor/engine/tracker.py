@@ -624,7 +624,8 @@ class GameTracker:
         for slot in slots[: self._mech.shop_slots]:
             name = (slot.name or "").strip() or None
             cost = _to_int(slot.cost)
-            if cost is not None and not 1 <= cost <= 10:
+            lo, hi = (0, 60) if is_wisp_name(name) else (1, 10)  # Wisps can be free or cost more than 10
+            if cost is not None and not lo <= cost <= hi:
                 cost = None
             if name is None:
                 shop.append(ShopSlot(name=None, cost=cost))

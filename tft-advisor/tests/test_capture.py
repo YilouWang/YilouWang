@@ -1077,3 +1077,298 @@ def test_calibrate_main_reports_capture_error_once(tmp_path, monkeypatch, capsys
     out = capsys.readouterr().out
     assert "no screen" in out and "截图失败：截图失败" not in out
     assert not any(d in out for d in EM_DASHES)
+
+
+# ---- game window lookup never opens processes; foreground check (review findings) ----
+
+
+class _FakeWinUser32:
+    """Top level windows as {hwnd: (title, pid, (w, h))}; everything else fails loudly."""
+
+    def __init__(self, windows: dict, foreground: int = 0) -> None:
+        self.windows = windows
+        self.foreground = foreground
+
+    def FindWindowW(self, _cls, title):  # noqa: N802 - Win32 names
+        return next((h for h, (t, _p, _s) in self.windows.items() if t == title), 0)
+
+    def IsWindowVisible(self, hwnd):  # noqa: N802
+        return hwnd in self.windows
+
+    def IsWindow(self, hwnd):  # noqa: N802
+        return hwnd in self.windows
+
+    def IsIconic(self, _hwnd):  # noqa: N802
+        return False
+
+    def EnumWindows(self, callback, lparam):  # noqa: N802
+        for hwnd in list(self.windows):
+            callback(hwnd, lparam)
+        return True
+
+    def GetWindowTextLengthW(self, hwnd):  # noqa: N802
+        return len(self.windows[hwnd][0])
+
+    def GetWindowTextW(self, hwnd, buf, _n):  # noqa: N802
+        buf.value = self.windows[hwnd][0]
+        return len(buf.value)
+
+    def GetWindowThreadProcessId(self, hwnd, ref):  # noqa: N802
+        if hwnd not in self.windows:
+            return 0
+        ref._obj.value = self.windows[hwnd][1]
+        return 1
+
+    def GetClientRect(self, hwnd, ref):  # noqa: N802
+        w, h = self.windows[hwnd][2]
+        ref._obj.left, ref._obj.top, ref._obj.right, ref._obj.bottom = 0, 0, w, h
+        return True
+
+    def ClientToScreen(self, _hwnd, ref):  # noqa: N802
+        ref._obj.x, ref._obj.y = 0, 0
+        return True
+
+    def GetForegroundWindow(self):  # noqa: N802
+        return self.foreground
+
+
+class _FakeWinKernel32:
+    """Toolhelp snapshot over {pid: exe}; any other kernel32 call is recorded as forbidden."""
+
+    def __init__(self, processes: dict) -> None:
+        self.processes = processes
+        self.snapshots = 0
+        self.closed: list = []
+        self.forbidden: list[str] = []
+        self.fail = False
+        self.invalid = None  # INVALID_HANDLE_VALUE, set by the fixture
+        self._iter = iter(())
+
+    def CreateToolhelp32Snapshot(self, flags, pid):  # noqa: N802
+        assert flags == 0x2 and pid == 0  # TH32CS_SNAPPROCESS, all processes
+        self.snapshots += 1
+        return self.invalid if self.fail else 77
+
+    def _fill(self, ref):
+        try:
+            pid, exe = next(self._iter)
+        except StopIteration:
+            return False
+        ref._obj.th32ProcessID = pid
+        ref._obj.szExeFile = exe
+        return True
+
+    def Process32FirstW(self, snap, ref):  # noqa: N802
+        assert snap == 77 and ref._obj.dwSize > 0
+        self._iter = iter(self.processes.items())
+        return self._fill(ref)
+
+    def Process32NextW(self, snap, ref):  # noqa: N802
+        assert snap == 77
+        return self._fill(ref)
+
+    def CloseHandle(self, handle):  # noqa: N802
+        self.closed.append(handle)
+        return True
+
+    def __getattr__(self, name):
+        self.forbidden.append(name)
+        raise AssertionError(f"kernel32.{name} must not be used")
+
+
+@pytest.fixture
+def fake_win32_windows(monkeypatch):
+    import ctypes
+    from ctypes import wintypes
+
+    invalid = ctypes.c_void_p(-1).value
+    windows = {
+        11: ("Mail - Inbox", 300, (1900, 1000)),  # a bigger window of another app
+        12: ("Unreal splash", 200, (100, 80)),  # game helper window, too small
+        13: ("TFT (DX12)", 200, (1600, 900)),  # the game, unknown title
+    }
+    user32 = _FakeWinUser32(windows)
+    kernel32 = _FakeWinKernel32({4: "System", 200: "TFTClient-Win64-Shipping.exe", 300: "mail.exe"})
+    kernel32.invalid = invalid
+    fake = {
+        "ctypes": ctypes,
+        "wintypes": wintypes,
+        "user32": user32,
+        "kernel32": kernel32,
+        "enum_proc": lambda fn: fn,
+        "PROCESSENTRY32W": screen._processentry32w(ctypes, wintypes),
+        "INVALID_HANDLE_VALUE": invalid,
+    }
+    monkeypatch.setattr(screen, "_win32", lambda: fake)
+    monkeypatch.setattr(screen, "_pid_cache", {})
+    return types.SimpleNamespace(user32=user32, kernel32=kernel32, windows=windows)
+
+
+def test_game_window_found_by_pid_without_opening_any_process(fake_win32_windows, monkeypatch):
+    fw = fake_win32_windows
+    assert screen._find_game_hwnd("Teamfight Tactics") == 13
+    assert screen._find_game_hwnd("Teamfight Tactics", include_minimized=True) == 13
+    assert fw.kernel32.forbidden == []  # only the process snapshot was used
+    assert fw.kernel32.snapshots == 1  # cached between searches
+    assert fw.kernel32.closed == [77]  # the snapshot handle is released
+    monkeypatch.setattr(screen, "PROCESS_SNAPSHOT_TTL_S", 0.0)
+    assert screen._find_game_hwnd("Teamfight Tactics") == 13
+    assert fw.kernel32.snapshots == 2
+
+    # The configured title still wins, without any process snapshot.
+    monkeypatch.setattr(screen, "_pid_cache", {})
+    fw.windows[14] = ("Teamfight Tactics", 999, (800, 600))
+    snaps = fw.kernel32.snapshots
+    assert screen._find_game_hwnd("Teamfight Tactics") == 14
+    assert fw.kernel32.snapshots == snaps
+
+    # Game not running: nothing matches (the mail window is never picked).
+    del fw.windows[13], fw.windows[14]
+    assert screen._find_game_hwnd("Teamfight Tactics") is None
+    # A failed snapshot does not break title matching.
+    fw.kernel32.fail = True
+    monkeypatch.setattr(screen, "_pid_cache", {})
+    fw.windows[15] = ("League of Legends (TM) Client", 500, (1024, 768))
+    assert screen._find_game_hwnd("Teamfight Tactics") == 15
+    assert fw.kernel32.forbidden == []
+
+
+def test_capture_sources_never_open_processes_or_send_input():
+    banned = ("OpenProcess", "ReadProcessMemory", "WriteProcessMemory", "SendInput", "keybd_event", "mouse_event")
+    files = sorted(screen.Path(screen.__file__).parent.glob("*.py"))
+    assert files
+    for f in files:
+        text = f.read_text(encoding="utf-8")
+        assert not any(b in text for b in banned), f.name
+
+
+def test_is_game_foreground_matches_game_process(fake_win32_windows):
+    fw = fake_win32_windows
+    fw.user32.foreground = 13
+    assert screen._is_game_foreground(13) is True
+    fw.windows[16] = ("Game popup", 200, (400, 300))  # another window of the game process
+    fw.user32.foreground = 16
+    assert screen._is_game_foreground(13) is True
+    fw.user32.foreground = 11  # mail in front of the game
+    assert screen._is_game_foreground(13) is False
+    fw.user32.foreground = 0  # focus in transition
+    assert screen._is_game_foreground(13) is False
+    assert screen._is_game_foreground(None) is False
+
+
+def test_game_foreground_is_recorded_per_frame_and_thread(fake_mss, monkeypatch):
+    state = {"exists": True, "minimized": False}
+    _fake_window(monkeypatch, state)
+    focus = {"seq": []}
+
+    def is_fg(hwnd):
+        assert hwnd == 42
+        return focus["seq"].pop(0) if len(focus["seq"]) > 1 else focus["seq"][0]
+
+    monkeypatch.setattr(screen, "_is_game_foreground", is_fg)
+    cap = ScreenCapturer(CaptureConfig(use_window=True))
+
+    focus["seq"] = [True]
+    assert cap.game_foreground() is False  # nothing grabbed, game window not looked up yet
+    assert cap.grab() is not None and cap.last_source == "window"
+    assert cap.game_foreground() is True
+    live: list = []
+    t = threading.Thread(target=lambda: live.append(cap.game_foreground()))
+    t.start()
+    t.join()
+    assert live == [True]  # a thread that has not grabbed gets a live check
+
+    # Another app in front of the game: the frame is still returned (explicit
+    # hotkeys), but it is flagged so automatic analysis never uses it.
+    focus["seq"] = [False]
+    assert cap.grab() is not None and cap.last_source == "window"
+    assert cap.game_foreground() is False
+
+    # Alt-tab during the grab: focus must hold before and after.
+    focus["seq"] = [True, False]
+    assert cap.grab() is not None
+    assert cap.game_foreground() is False
+
+    # Per thread: a worker grab with the game focused does not clear this thread's flag.
+    focus["seq"] = [False]
+    assert cap.grab() is not None
+    other: list = []
+    focus["seq"] = [True]
+
+    def worker() -> None:
+        cap.grab()
+        other.append(cap.game_foreground())
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join()
+    assert other == [True]
+    assert cap.game_foreground() is False
+
+    # Window gone: monitor fallback is never "game in the foreground".
+    state["exists"] = False
+    cap._hwnd = None
+    assert cap.grab() is not None and cap.last_source == "monitor"
+    assert cap.game_foreground() is False
+    # Minimized: no frame and not foreground.
+    state.update(exists=True, minimized=True)
+    cap._next_search = 0.0  # skip the search throttle
+    assert cap.grab() is None and cap.last_source == "minimized"
+    assert cap.game_foreground() is False
+    cap.close()
+
+    # Window capture turned off by the player, or not Windows: unknown.
+    off = ScreenCapturer(CaptureConfig(use_window=False))
+    assert off.grab() is not None and off.last_source == "monitor"
+    assert off.game_foreground() is None
+    off.close()
+    monkeypatch.setattr(screen, "_on_windows", lambda: False)
+    elsewhere = ScreenCapturer(CaptureConfig(use_window=True))
+    assert elsewhere.grab() is not None and elsewhere.game_foreground() is None
+    elsewhere.close()
+
+
+def test_auto_job_skips_frame_when_another_app_covers_the_game(fake_mss, monkeypatch, tmp_path):
+    """End to end: a gated auto job must not perceive a frame of a covered game window."""
+    from tft_advisor.app import AdvisorApp, Job
+    from tft_advisor.config import Config
+    from tft_advisor.data.setdata import SetData, bundled_sample
+    from tft_advisor.models import Observation, ScreenObservation, ScreenType
+
+    class Perceiver:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def perceive(self, image, purpose="auto", hint=None):
+            self.calls.append(purpose)
+            screen_obs = ScreenObservation(screen_type=ScreenType.PLANNING, stage="3-2", gold=31, level=6, hp=70)
+            return Observation(screen=screen_obs, source="test", purpose=purpose)
+
+    state = {"exists": True, "minimized": False}
+    _fake_window(monkeypatch, state)
+    focus = {"fg": False}
+    monkeypatch.setattr(screen, "_is_game_foreground", lambda hwnd: focus["fg"])
+    cfg = Config()
+    cfg.data.cache_dir = str(tmp_path / "cache")
+    cfg.capture.screenshot_dir = str(tmp_path / "shots")
+    cfg.ui.open_browser = False
+    cfg.hotkeys.enabled = False
+    perceiver = Perceiver()
+    cap = ScreenCapturer(cfg.capture)
+    app = AdvisorApp(
+        cfg,
+        set_data=SetData.from_cdragon(bundled_sample(), source="bundled-sample"),
+        perceiver=perceiver,
+        fast_perceiver=None,
+        use_llm=False,
+        console=False,
+        capturer=cap,
+    )
+    try:
+        assert app.run_job(Job(3, "auto", gated=True)) is None
+        assert perceiver.calls == []  # the app in front of the game was never sent
+        focus["fg"] = True
+        assert app.run_job(Job(3, "auto", gated=True)) is not None
+        assert perceiver.calls == ["auto"]
+    finally:
+        cap.close()

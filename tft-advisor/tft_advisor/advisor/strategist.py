@@ -7,6 +7,7 @@ Never raises: on any failure ``advise`` returns the rules advice unchanged and
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from typing import Any, Callable, Iterable, Optional
@@ -19,6 +20,23 @@ from .prompts import ASK_INSTRUCTIONS, build_state_message, build_strategist_sys
 from .rules import ACTION_MAX, FIELD_MAX, HEADLINE_MAX, MAX_ACTIONS, PLAN_MAX, clip, sanitize
 
 ASK_MAX_CHARS = 600
+
+# Labels the dashboard already prints in front of these fields: a reply that
+# repeats one would read "装备 装备：...".
+_FIELD_LABELS = {
+    "comp": ("阵容",),
+    "items": ("装备",),
+    "positioning": ("站位",),
+    "augment": ("海克斯强化", "海克斯", "增强"),
+}
+
+
+def _strip_label(text: str, field: str) -> str:
+    for label in _FIELD_LABELS.get(field, ()):
+        m = re.match(rf"\s*{re.escape(label)}\s*[:：]\s*", text)
+        if m:
+            return text[m.end() :]
+    return text
 
 
 def _looks_like_llm(obj: Any) -> bool:
@@ -113,8 +131,8 @@ class ClaudeStrategist:
             confidence = 0.5
         confidence = max(0.0, min(1.0, confidence))
 
-        def opt(value: Optional[str], fallback: Optional[str]) -> Optional[str]:
-            text = clip(value, FIELD_MAX, "…") if value else ""
+        def opt(value: Optional[str], fallback: Optional[str], field: str = "") -> Optional[str]:
+            text = clip(_strip_label(value, field), FIELD_MAX, "…") if value else ""
             return text or fallback
 
         stage = str(state.stage) if state.stage is not None else rules_advice.stage
@@ -122,10 +140,10 @@ class ClaudeStrategist:
             headline=headline,
             actions=actions,
             plan=clip(out.plan, PLAN_MAX, "…") or rules_advice.plan,
-            comp=opt(out.comp, rules_advice.comp),
-            items=opt(out.items, rules_advice.items),
-            positioning=opt(out.positioning, rules_advice.positioning),
-            augment=opt(out.augment, rules_advice.augment),
+            comp=opt(out.comp, rules_advice.comp, "comp"),
+            items=opt(out.items, rules_advice.items, "items"),
+            positioning=opt(out.positioning, rules_advice.positioning, "positioning"),
+            augment=opt(out.augment, rules_advice.augment, "augment"),
             # Keep the planner's open request when the model does not ask for one.
             scout_request=opt(out.scout_request, rules_advice.scout_request),
             confidence=confidence,

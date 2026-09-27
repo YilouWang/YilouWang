@@ -51,6 +51,9 @@ class Mechanics:
     carousel_round: int = 4              # x-4 is the carousel from stage 2
     stage_damage: dict[int, int]         # stage -> base damage on loss
     standard_levels: dict[str, int]      # round -> level a standard line reaches ("2-1": 4, ...)
+    wisp_every: int = 0                  # 1 shop in N hides a champion slot under a Set 18 Wisp
+    extra: dict[str, Any]                # [extra] tables (team_slots, wisp_every_shop, upgraded_slots, ...)
+    def shop_schedule(self, wisp_every: int | None = None) -> tuple[int, ...]  # champion slots per shop, repeating
     def interest(self, gold: int) -> int
     def streak_gold(self, streak: int | None) -> int      # abs(streak)
     def income(self, gold: int, streak: int | None, won: bool | None = None) -> int
@@ -92,18 +95,25 @@ Runtime source: CommunityDragon `…/cdragon/tft/{zh_cn,en_us}.json`, cached in
 ```python
 @dataclass
 class CompDef: name: str; units: list[str]; carry: str | None; carry_items: list[str];
-               traits: list[str]; style: str  # "fast8" | "reroll" | "standard"
-               tier: str; notes: str
-def load_comps(path: str | None, set_data: SetData) -> list[CompDef]
+               traits: list[str]; style: str  # standard | fast8 | fast9 | reroll1 | reroll2 | reroll3
+               tier: str; notes: str; early; item_holders; positions; stars; difficulty;
+               reroll_units: list[str]  # units a reroll line slow rolls for (3-star targets)
+               name_en: str             # name as written in the file; `name` is name_zh when the set data is Chinese
+def load_comps(path: str | None, set_data: SetData, log=None) -> list[CompDef]
 ```
 
 ### `tft_advisor/engine/`
 * `probability.py`: pool model + rolldown Markov chain.
-  `compute_hit_odds(state, set_data, mech, taken: dict[str,int], targets=None) -> list[HitOdds]`,
-  `rolldown_probability(...)`, `p_unit_per_slot(...)`.
-* `economy.py`: `plan_economy(state, mech, style="standard") -> EconPlan`.
-* `items.py`: `plan_items(state, set_data, comp=None) -> list[ItemSuggestion]`.
-* `comps_engine.py`: `suggest_comps(state, set_data, comps, taken_by_player) -> list[CompSuggestion]`.
+  `compute_hit_odds(state, set_data, mech, taken: dict[str,int], targets=None, budgets=..., level=None, shop=None) -> list[HitOdds]`
+  (`level`: odds at the level after a planned level up; `shop`: `ShopModel` with the Wisp / Inferno
+  shop shape, default from `shop_model(state, set_data, mech)`),
+  `rolldown_probability(..., shop=None)`, `p_shop_shows(...)`, `p_unit_per_slot(...)`.
+* `economy.py`: `plan_economy(state, mech, style="standard", key_star=None) -> EconPlan`
+  (`key_star`: star level of the reroll target / carry; a reroll line levels normally once it is 3-star).
+* `items.py`: `plan_items(state, set_data, comp=None, hp_bucket="unknown", profile_hints=None) -> list[ItemSuggestion]`
+  (`profile_hints`: unit -> "ad" / "ap" / "tank" from the comp library's item plans).
+* `comps_engine.py`: `suggest_comps(state, set_data, comps, taken_by_player, top_n=3, hint="") -> list[CompSuggestion]`
+  (`hint` matches comp names in both languages, traits and champion names).
 * `tracker.py`: `GameTracker(set_data, mech).ingest(obs) -> GameState`, `.state`,
   `.taken_copies()`, `.taken_by_player()`, `.set_field(name, value)`, `.reset()`.
 * `analyzer.py`: `Analyzer(set_data, mech, comps).analyze(state, taken) -> Analysis`.
@@ -111,7 +121,10 @@ def load_comps(path: str | None, set_data: SetData) -> list[CompDef]
 ### `tft_advisor/vision/`
 * `base.py`: `Perceiver` protocol `perceive(image, purpose="auto", hint=None) -> Observation`,
   `PerceptionHint`, `PerceptionError`.
-* `claude_vision.py`: `ClaudeVisionPerceiver(client, cfg: AnthropicConfig, set_data)`.
+* `claude_vision.py`: `ClaudeVisionPerceiver(llm, cfg: AnthropicConfig, set_data)`. The structured
+  output schema is `models.ScreenObservationWire` (every field required, no unions, an
+  `unreadable` list instead of nulls) because `ScreenObservation` is over the API's schema
+  complexity limits (24 optional / 16 union parameters); `.to_screen()` converts back.
 * `ocr.py`: optional RapidOCR fast path for stage / gold / level / shop names.
 * `mock.py`: `MockPerceiver` replays `ScreenObservation` JSON files.
 * `liveclient.py`: optional poller for `https://127.0.0.1:2999/liveclientdata/*`.
@@ -146,16 +159,44 @@ records requests and returns scripted replies, so the real SDK path runs offline
 * `overlay.py`: optional tkinter always-on-top overlay.
 * `voice.py`: optional TTS (pyttsx3).
 
-### `tft_advisor/app.py` / `cli.py`
+### `tft_advisor/app.py` / `cli.py` / `config.py` / `review.py`
 `AdvisorApp` wires everything, owns threads (capture loop, analysis worker,
-hotkeys, dashboard). `cli.py` exposes `run`, `demo`, `replay`, `odds`, `data`,
-`doctor`, `calibrate`.
+strategy worker, hotkeys, dashboard). `GameLogger` writes one
+`~/.tft_advisor/logs/game-<start>.jsonl` per game (rotated when the tracker
+sees a new game or on 新对局; the newest `[data] keep_game_logs` are kept).
+`cli.py` exposes `run`, `demo`, `replay`, `odds`, `data`, `doctor`,
+`calibrate`, `review`, `init`; `--config` is accepted before or after the
+command. Config / input errors print one Chinese line (`错误: ...`, exit 2);
+`TFT_ADVISOR_DEBUG=1` shows the traceback.
+
+`config.py`: lookup order `--config`, `$TFT_ADVISOR_CONFIG` (must exist when
+set), `~/.tft_advisor/config.toml`; the current directory is never searched.
+`load_config` accepts UTF-8 with or without BOM, checks types (bool / number /
+string), ranges (`Config.validate()`), hotkey names, `https://` for
+`cdragon_base` and rejects network paths for `cache_dir` / `screenshot_dir`.
+
+`review.py`: `latest_log`, `load_records` (skips broken / non-object lines),
+`summarize_log` (last game in the file only, one row per round; advice-only
+`purpose="strategy"` records update that round's advice), `format_summary`,
+`llm_review` (em dashes removed).
 
 ## Threading model
 
 * capture thread: grabs a frame every `poll_interval_s`, feeds `RoundWatcher`.
+  Frames that are not the game window in the foreground (window not found,
+  minimized, covered; `last_source != "window"` or
+  `capturer.game_foreground()` is False) are skipped and pause auto mode, so
+  the desktop or another app is never sent to Claude. Auto jobs are "gated":
+  the worker grabs their frame and checks it again.
 * worker thread: single-slot job queue (latest job wins) runs
-  perceive → ingest → analyze → rules → (LLM strategist) → publish.
+  perceive → ingest → analyze → rules → publish. Player-triggered jobs
+  (manual / scout / shop, hotkeys and dashboard buttons) carry the frame
+  grabbed at trigger time. Each job remembers the 新对局 generation it was
+  created in; a result from before a reset is dropped.
+* strategy thread (when a strategist exists and `start()` ran): single slot,
+  runs the Claude strategist after auto / manual / reanalyze jobs and
+  publishes its advice only if the game, round and request are still current.
+  Without `start()` (replay, tests) the strategist runs inline in `run_job`.
 * dashboard: `ThreadingHTTPServer` in a daemon thread.
 * hotkeys: Win32 message loop thread.
 * main thread: tkinter overlay mainloop when enabled, otherwise waits on a stop event.

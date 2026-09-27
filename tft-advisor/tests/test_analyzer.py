@@ -128,9 +128,12 @@ def test_mid_game_analysis(analyzer):
     assert analyzer.last_errors == []
     assert out.stage == "3-2"
 
-    # Comp: gunslinger pirates, style fast8 -> standard level timing at 3-2.
+    # Comp: gunslinger pirates, style fast8 -> standard level timing at 3-2
+    # (3-2 keeps ~20 gold, so 32 gold only pays for the level).
     assert out.comps[0].name == "枪手海盗"
-    assert out.econ.recommendation == EconAction.LEVEL_AND_ROLL and out.econ.target_level == 6
+    assert out.econ.recommendation in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL)
+    assert out.econ.target_level == 6
+    assert out.econ.roll_budget <= max(0, 32 - 20 - 20)
 
     # Odds: carry first when the shop can show it (5 cost: not at level 5), then comp units
     # closest to their next star; capped at 8; the player's own "Me" entry in taken is ignored.
@@ -371,3 +374,114 @@ def test_two_star_legendary_carry_is_not_the_first_roll_target(set_data, mech):
     d9 = make_state("5-1", board=[("Draven", 2), "Katarina", "Darius"], bench=["Draven"], gold=40, level=9, hp=70)
     first = Analyzer(set_data, mech, [dcomp]).analyze(d9).odds[0]
     assert first.unit == "Draven" and first.goal_star == 3
+
+
+# ---------------------------------------------------------------------------
+# Set 18 regressions (bundled snapshot + comp library)
+# ---------------------------------------------------------------------------
+
+from .conftest import s18_comps, s18_set_data, s18_state  # noqa: E402
+
+VEIGAR_BOARD = [
+    ("Veigar", 3, ("Jeweled Gauntlet", "Blue Buff", "Hextech Gunblade")),
+    ("Ornn", 3),
+    "Alistar",
+    "Rek'Sai",
+    "LeBlanc",
+]
+
+
+@pytest.fixture(scope="module")
+def s18(mech):
+    return Analyzer(s18_set_data(), mech, s18_comps())
+
+
+def test_s18_reroll_carry_three_star_levels_up(s18):
+    for stage, hp, gold in (("5-1", 70, 90), ("5-5", 40, 60), ("6-2", 30, 60)):
+        st = s18_state(stage, board=VEIGAR_BOARD, level=5, gold=gold, hp=hp, xp_current=0)
+        out = s18.analyze(st)
+        assert out.comps[0].name == "永恒之森 维迦", stage
+        assert out.econ.recommendation in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL), stage
+        assert out.econ.target_level and out.econ.target_level > 5
+        assert not any(w in out.econ.reason for w in ("慢搜", "赌狗", "三星")), out.econ.reason
+        # Level behind the curve is reported again once the reroll is done.
+        assert any("等级落后" in w for w in out.warnings)
+
+
+def test_s18_reroll_style_needs_the_reroll_units_not_the_item_carry(s18):
+    # Ezreal pair, no Kha'Zix: Lunarwood Kha'zix (3-cost reroll, Ezreal carry) is not a reroll yet.
+    ez = s18_state(
+        "5-1", board=["Ezreal", "Ornn", "Hecarim", "Fiddlesticks", "Diana", "Alistar", "LeBlanc"], bench=["Ezreal"],
+        level=7, gold=60, hp=60, xp_current=0,
+    )
+    top = s18.analyze(ez).comps[0]
+    assert s18._style_for(top, ez) == "standard"
+    assert "三星" not in s18.analyze(ez).econ.reason
+    # Sivir pair on a Hunter board: Caitlyn Hunters (Sivir carry) is not a 2-cost reroll.
+    sivir = s18_state(
+        "4-5", board=["Sivir", "Caitlyn", "Sejuani", "Scuttlecrab", "Rakan", "Cinderling"], bench=["Sivir"],
+        level=6, gold=60, hp=60, xp_current=0,
+    )
+    out = s18.analyze(sivir)
+    assert s18._style_for(out.comps[0], sivir) == "standard"
+    assert out.econ.recommendation in (EconAction.LEVEL, EconAction.LEVEL_AND_ROLL)
+    # A real Caitlyn reroll (5 copies) is one, although it holds no Sivir.
+    cait = s18_state(
+        "3-5", board=[("Caitlyn", 2), "Sejuani", "Scuttlecrab", "Rakan", "Cinderling", "Sivir"],
+        bench=["Caitlyn", "Caitlyn"], level=6, gold=60, hp=70, xp_current=0,
+    )
+    out = s18.analyze(cait)
+    assert out.comps[0].name == "凯特琳 猎人" and s18._style_for(out.comps[0], cait) == "reroll2"
+    assert out.econ.recommendation == EconAction.SLOW_ROLL
+
+
+def test_s18_level_and_roll_odds_use_the_new_level(s18):
+    st = s18_state(
+        "4-2", board=["Ahri", "Morgana", "Karma", "Yorick", "Sett", "Leona", "Cassiopeia"], bench=["Ahri"],
+        level=7, xp_current=40, gold=60, hp=55,
+    )
+    out = s18.analyze(st)
+    assert out.econ.recommendation == EconAction.LEVEL_AND_ROLL and out.econ.target_level == 8
+    assert out.odds and all(o.level == 8 for o in out.odds)
+    ahri = next(o for o in out.odds if o.unit == "阿狸")
+    assert ahri.p_goal_by_gold[30] > 0.5
+
+
+def test_s18_fast8_two_star_board_does_not_roll_every_round(s18):
+    comp = next(c for c in s18_comps() if c.name_en == "Ahri Morgana")
+    for stage, gold in (("4-5", 60), ("5-2", 70), ("5-5", 64)):
+        st = s18_state(stage, board=[(u, 2) for u in comp.units][:8], level=8, gold=gold, hp=82, xp_current=0, streak=6)
+        out = s18.analyze(st)
+        assert out.econ.roll_budget == 0, (stage, out.econ.reason)
+    st = s18_state("5-1", board=[(u, 2) for u in comp.units][:8], level=8, gold=90, hp=82, xp_current=0, streak=6)
+    out = s18.analyze(st)
+    assert out.econ.recommendation == EconAction.LEVEL and out.econ.target_level == 9
+
+
+def test_s18_win_streak_roll_without_a_target_is_dropped(s18):
+    board = [(n, 2) for n in ("Yorick", "Rakan", "Leona", "Karma", "Caitlyn", "Sejuani", "Ahri")]
+    win = s18.analyze(s18_state("4-2", board=board, level=7, gold=36, hp=64, streak=2, xp_current=0))
+    assert win.econ.recommendation == EconAction.SAVE and win.econ.roll_budget == 0
+    assert "连胜" in win.econ.reason
+    # Without a streak the medium-HP roll-down stays.
+    plain = s18.analyze(s18_state("4-2", board=board, level=7, gold=36, hp=64, streak=-1, xp_current=0))
+    assert plain.econ.recommendation == EconAction.ROLL
+
+
+def test_s18_elder_dragon_takes_two_team_slots(s18):
+    comp = next(c for c in s18_comps() if c.name_en == "Dragon 9")
+    board = [(u, 2) for u in comp.units][:8]
+    assert "远古巨龙" in [u if isinstance(u, str) else u[0] for u in board]
+    st = s18_state("5-3", board=board, level=9, gold=40, hp=60, xp_current=0)
+    assert not any("空位" in w or "还能再上" in w for w in s18.analyze(st).warnings)
+    unread = s18_state("5-3", board=board, gold=40, hp=60)
+    assert s18.estimate_level(unread) == 9
+
+
+def test_s18_unmatched_comp_hint_warns(mech):
+    st = s18_state("3-2", board=["Yorick", "Rakan", "Leona", "Karma", "Caitlyn"], level=6, gold=30, hp=70)
+    warned = Analyzer(s18_set_data(), mech, s18_comps(), comp_hint="枪手").analyze(st)
+    assert "没有阵容匹配「枪手」，按自动推荐" in warned.warnings
+    ok = Analyzer(s18_set_data(), mech, s18_comps(), comp_hint="法师").analyze(st)
+    assert not any("没有阵容匹配" in w for w in ok.warnings)
+    no_dash(warned)

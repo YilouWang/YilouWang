@@ -5,7 +5,12 @@ Topics used across the app:
   "analysis"  Analysis.model_dump(mode="json")
   "advice"    Advice.model_dump(mode="json")
   "requests"  list of ScoutRequest dicts (current open human requests)
-  "status"    {"auto": bool, "busy": bool, "last_error": str|None, "calls": int, ...}
+  "status"    {"auto": bool, "busy": bool, "last_error": str|None, "calls": int,
+               "thinking": bool (Claude strategy call running), "auto_paused": bool
+               (game window missing / not in the foreground), "capture_error": str|None,
+               "comp_hint": str (current target comp, "" = auto), "perceiver": str
+               ("manual" = no way to read the screen), "hotkeys": {...}, ...}
+               "calls" counts Claude calls since the program started (not per game).
   "log"       {"level": "info"|"warn"|"error", "text": str, "ts": float}
   "answer"    {"question": str, "answer": str, "ts": float}   (reply to an "ask" command)
 

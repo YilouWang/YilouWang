@@ -20,8 +20,8 @@ You are a precise screen reader for Teamfight Tactics (TFT), Riot Games' auto ba
 
 GROUND RULES
 1. Read ONLY what is visible in the images. Never infer from game knowledge, never estimate, never fill in "typical" values.
-2. Use null for any field that is not visible or that you cannot read with confidence. Never guess numbers: a wrong gold, level, XP or HP value is much worse than null.
-3. An empty list means "this area is visible and empty" (for example an empty bench is []); null means "not visible / not readable".
+2. Every field of the JSON object is required. When a top-level field is not visible or you cannot read it with confidence, put its name in the "unreadable" list and fill it with a placeholder: -1 for gold, xp_current and hp, 0 for level, xp_needed and streak, "" for text, false for booleans, [] for lists. Never guess numbers: a wrong gold, level, XP or HP value is much worse than listing the field as unreadable.
+3. An empty list that is NOT in "unreadable" means "this area is visible and empty" (for example an empty bench is []); a field listed in "unreadable" means "not visible / not readable".
 4. Names: when what you see maps to an entry of the NAME LISTS below, output the name EXACTLY as written in that list (either the Chinese or the English form, whichever matches the client language). If you cannot map it, write what you read literally and add a note.
 5. Several images may be provided. IMAGE 1 is usually the full screenshot (downscaled); the other images are high-resolution crops of the SAME frame at the same moment. Prefer the crops for small text and numbers, and use the full screenshot for layout and context.
 6. notes: short remarks about anything uncertain or notable (for example an unclear star level), written in Simplified Chinese, at most 5 notes, no dash punctuation.
@@ -36,23 +36,23 @@ SCREEN TYPES (screen_type)
 HUD LAYOUT (16:9)
 - Stage indicator: top center, format "stage-round" such as "3-2". Output it exactly as "S-R" (digits and a hyphen).
 - The BOTTOM HUD always belongs to the LOCAL player (the person playing), EVEN WHILE the camera shows another player's board:
-  * Shop: 5 champion cards in a row at the bottom center, read left to right. Each card shows the champion name (bottom left of the card) and its gold cost (bottom right, next to a coin). The card frame color also shows the cost: gray 1, green 2, blue 3, purple 4, gold 5. A bought or empty slot is {"name": null, "cost": null}. When the shop is visible always output exactly 5 slots.
+  * Shop: 5 champion cards in a row at the bottom center, read left to right. Each card shows the champion name (bottom left of the card) and its gold cost (bottom right, next to a coin). The card frame color also shows the cost: gray 1, green 2, blue 3, purple 4, gold 5. A bought or empty slot is {"name": "", "cost": 0}. When the shop is visible always output exactly 5 slots.
   * shop_locked: the padlock icon next to the shop; closed / highlighted means locked.
   * Gold: the number next to the coin icon, centered just above the shop.
-  * Level and XP: on the left of the shop, above the Buy XP and Refresh buttons, shown like "Lv. 6" (Chinese client: "6级" or "等级 6") with an XP bar labeled "x/y": level, xp_current = x, xp_needed = y. At max level there is no "x/y": leave both XP fields null.
-  * Streak: a flame icon (win streak) or an ice / blue icon (loss streak) next to the gold with a number N. Output streak = +N for a win streak and -N for a loss streak. No icon visible: null.
+  * Level and XP: on the left of the shop, above the Buy XP and Refresh buttons, shown like "Lv. 6" (Chinese client: "6级" or "等级 6") with an XP bar labeled "x/y": level, xp_current = x, xp_needed = y. At max level there is no "x/y": list xp_current and xp_needed in unreadable.
+  * Streak: a flame icon (win streak) or an ice / blue icon (loss streak) next to the gold with a number N. Output streak = +N for a win streak and -N for a loss streak. No streak icon while the gold area is visible: 0. Gold area not visible: list streak in unreadable.
 - The BOARD, BENCH, TRAIT PANEL, ITEM BENCH and the TOP BANNER belong to the player whose board is shown (the owner of the arena the camera is on):
   * Board: the hex grid in the middle, 4 rows of 7 hexes. row 0 = front row, nearest the center line of the arena (farthest from the bench); row 3 = back row, nearest the bench. col 0 = leftmost hex of that row as seen on screen, up to col 6.
-  * Bench: the row of 9 slots between the board and the shop. For bench units row = null and col = slot index 0-8 from the left.
+  * Bench: the row of 9 slots between the board and the shop. For bench units row = -1 and col = slot index 0-8 from the left (-1 if unsure).
   * Star level: the 1-3 small stars above a unit's health bar (1 bronze star, 2 silver stars, 3 gold stars). If unclear use 1 and add a note.
   * Items: small square icons just under a unit's health bar. Name each one if you recognize it from the item list; otherwise leave that unit's items empty and add a note such as "某单位有 2 件无法识别的装备".
   * item_bench: unequipped components / items lying on the left side of the arena next to the tactician area.
-  * Traits: vertical panel on the left edge: trait name, number of unique units, breakpoints such as "2 / 4 / 6". Active traits have a colored hexagon (bronze, silver, gold, prismatic), inactive ones are gray. next_breakpoint = the next breakpoint above the current count, null at the maximum.
-- Player list: right edge, up to 8 rows ordered top to bottom as shown, each with a name (or only a portrait) and an HP number. The local player's row is highlighted (lighter background or distinct frame): mark it is_self = true. Players with 0 HP or grayed out are eliminated (hp 0).
+  * Traits: vertical panel on the left edge: trait name, number of unique units, breakpoints such as "2 / 4 / 6". Active traits have a colored hexagon (bronze, silver, gold, prismatic), inactive ones are gray. next_breakpoint = the next breakpoint above the current count, 0 at the maximum or when unreadable.
+- Player list: right edge, up to 8 rows ordered top to bottom as shown, each with a name (or only a portrait) and an HP number. The local player's row is highlighted (lighter background or distinct frame): mark it is_self = true. Players with 0 HP or grayed out are eliminated (hp 0). A row whose HP you cannot read: hp -1.
 - hp (top level): the HP of the player whose board is shown. For the local player read it from the highlighted row of the player list.
-- viewing_own_board: true when the camera shows the local player's own arena; false when it shows another player's arena (scouting: a banner with another player's name near the top, another tactician, a different board); null when unclear.
-- viewed_player_name: the owner of the board shown, from the top banner or the selected row of the player list, when readable.
-- Augments: augment_choices = the names on the offered cards, left to right (augment_select screen only). augments = augments the player already owns, only when their names are readable; otherwise null.
+- viewing_own_board: true when the camera shows the local player's own arena; false when it shows another player's arena (scouting: a banner with another player's name near the top, another tactician, a different board); when unclear, list viewing_own_board in unreadable.
+- viewed_player_name: the owner of the board shown, from the top banner or the selected row of the player list, when readable; otherwise "" and list it in unreadable.
+- Augments: augment_choices = the names on the offered cards, left to right (augment_select screen only). augments = augments the player already owns, only when their names are readable; otherwise list augments in unreadable. Outside the augment_select screen augment_choices is [].
 - During carousel, combat or loading still fill every HUD field that is visible (stage, gold, level, player list).
 """
 
@@ -109,7 +109,7 @@ UNREAL CLIENT HUD (Set 18 and later), these override the generic layout above wh
 - Trait panel: just right of the item column; each row is a trait icon, the unit count, the trait name and its breakpoints.
 - Player list: right edge; the local player's row is drawn larger with a bigger HP number.
 - When the camera shows another player's arena, that player's name and level appear on a plate above their arena.
-- Carousel: the ring of champions in the middle belongs to nobody: leave board, bench, traits and item_bench null.
+- Carousel: the ring of champions in the middle belongs to nobody: list board, bench, traits and item_bench in unreadable.
 - Not champions, never list them as units: Elderwood plants (Stonebark Tree, Lifebloom, Deepwood Protector), summons (Azir soldiers, Zyra plants), the tactician (little legend), training dummies.
 - Lux has trait forms ("Lux (Coven)" etc.): output the plain champion name from the NAME LISTS and put the form in a note.
 - Units can reach 4 stars in this set (4 small stars): star = 4.
@@ -140,8 +140,9 @@ _PURPOSE_TEXT = {
     ),
     "shop": (
         "TASK: SHOP ONLY. Only the bottom HUD is provided. Fill shop (exactly 5 slots, left to right), "
-        "shop_locked, gold, level, xp_current, xp_needed and streak. Leave every other field null "
-        "(board, bench, players, traits, augments). screen_type = planning when the shop is visible."
+        "shop_locked, gold, level, xp_current, xp_needed and streak. List every other field in unreadable "
+        "(stage, hp, board, bench, item_bench, players, traits, augments, augment_choices, viewed_player_name, "
+        "viewing_own_board). screen_type = planning when the shop is visible."
     ),
 }
 
@@ -205,7 +206,7 @@ def build_user_text(purpose: str, hint: Optional[PerceptionHint], image_labels: 
             lines.append("HINTS from earlier frames (may be outdated; the image always wins):")
             lines += hint_lines
     lines.append("")
-    lines.append("Return only the JSON object. Use null for anything not visible or not readable.")
+    lines.append('Return only the JSON object. List every field that is not visible or not readable in "unreadable".')
     return "\n".join(lines)
 
 

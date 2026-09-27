@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 import time
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -144,6 +144,197 @@ class ScreenObservation(BaseModel):
     notes: list[str] = Field(default_factory=list, description="Anything uncertain or notable")
 
 
+# --------------------------------------------------------------------------
+# Wire format for Claude vision (structured output)
+# --------------------------------------------------------------------------
+#
+# ScreenObservation has ~30 optional fields and ~24 nullable unions. Claude's
+# structured outputs cap a request at 24 optional parameters and 16 union
+# typed parameters (platform docs, "Schema complexity limits"), so it cannot
+# be sent as ``output_config.format``. The wire models below carry the same
+# information with every field required and no unions: unknown scalars use
+# sentinels and ``unreadable`` lists the fields that were not visible, which
+# keeps the "null vs empty list" distinction. ``to_screen()`` converts back.
+
+WireField = Literal[
+    "viewing_own_board",
+    "viewed_player_name",
+    "stage",
+    "gold",
+    "level",
+    "xp_current",
+    "xp_needed",
+    "hp",
+    "streak",
+    "shop",
+    "shop_locked",
+    "board",
+    "bench",
+    "item_bench",
+    "players",
+    "traits",
+    "augment_choices",
+    "augments",
+]
+WIRE_FIELDS: tuple[str, ...] = WireField.__args__  # type: ignore[attr-defined]
+
+
+class UnitObsWire(BaseModel):
+    name: str = Field(description="Champion name exactly as displayed / recognized")
+    star: int = Field(description="Star level 1-3 (4 only for special cases)")
+    items: list[str] = Field(description="Item names held by the unit, [] when none")
+    row: int = Field(description="Board row 0=front .. 3=back; -1 on the bench")
+    col: int = Field(description="Board column 0=left .. 6=right; bench slot 0-8 on the bench; -1 unknown")
+
+    def to_obs(self) -> UnitObs:
+        return UnitObs(
+            name=self.name,
+            star=self.star,
+            items=list(self.items),
+            row=self.row if self.row >= 0 else None,
+            col=self.col if self.col >= 0 else None,
+        )
+
+
+class ShopSlotWire(BaseModel):
+    name: str = Field(description="Champion name ('Wisp: <name>' for a Wisp); empty string for an empty slot")
+    cost: int = Field(description="Gold cost; 0 when unknown or empty")
+
+    def to_obs(self) -> ShopSlot:
+        return ShopSlot(name=self.name.strip() or None, cost=self.cost if self.cost > 0 else None)
+
+
+class PlayerObsWire(BaseModel):
+    name: str
+    hp: int = Field(description="HP; -1 when unreadable")
+    is_self: bool
+
+    def to_obs(self) -> PlayerObs:
+        return PlayerObs(name=self.name, hp=self.hp if self.hp >= 0 else None, is_self=self.is_self)
+
+
+class TraitObsWire(BaseModel):
+    name: str
+    count: int = Field(description="Number of unique units contributing")
+    active: bool = Field(description="True when a breakpoint is reached")
+    next_breakpoint: int = Field(description="Next breakpoint; 0 when none or unreadable")
+
+    def to_obs(self) -> TraitObs:
+        return TraitObs(
+            name=self.name,
+            count=self.count,
+            active=self.active,
+            next_breakpoint=self.next_breakpoint if self.next_breakpoint > 0 else None,
+        )
+
+
+class ScreenObservationWire(BaseModel):
+    """Structured-output schema for Claude vision (see the comment above).
+
+    Every field is required. A field listed in ``unreadable`` becomes ``None``
+    in the ScreenObservation whatever placeholder value it carries; an empty
+    list NOT listed there means "visible and empty".
+    """
+
+    screen_type: ScreenType
+    unreadable: list[WireField] = Field(
+        description="Fields that are not visible or not readable on this screenshot (they become null)"
+    )
+    viewing_own_board: bool = Field(description="False when the camera shows another player's board (scouting)")
+    viewed_player_name: str = Field(description="Owner of the board shown; empty string if unreadable")
+    stage: str = Field(description="Round indicator like '3-2'; empty string if unreadable")
+    gold: int
+    level: int
+    xp_current: int
+    xp_needed: int
+    hp: int = Field(description="HP of the player whose board is shown")
+    streak: int = Field(description="+N win streak, -N loss streak, 0 for none")
+    shop: list[ShopSlotWire] = Field(description="5 shop slots left to right")
+    shop_locked: bool
+    board: list[UnitObsWire]
+    bench: list[UnitObsWire]
+    item_bench: list[str] = Field(description="Unequipped items / components")
+    players: list[PlayerObsWire] = Field(description="Player list with HP, top to bottom")
+    traits: list[TraitObsWire]
+    augment_choices: list[str] = Field(description="Augments currently offered")
+    augments: list[str] = Field(description="Augments already owned, if visible")
+    notes: list[str] = Field(description="Anything uncertain or notable")
+
+    @classmethod
+    def from_screen(cls, screen: "ScreenObservation | dict") -> "ScreenObservationWire":
+        """Inverse of ``to_screen`` (``None`` fields go to ``unreadable``). Used by
+        tests and tools that script replies in the ScreenObservation shape."""
+        s = screen if isinstance(screen, ScreenObservation) else ScreenObservation.model_validate(screen)
+        unreadable = [f for f in WIRE_FIELDS if getattr(s, f) is None]
+
+        def unit(u: UnitObs) -> dict:
+            return {
+                "name": u.name,
+                "star": u.star,
+                "items": list(u.items),
+                "row": -1 if u.row is None else u.row,
+                "col": -1 if u.col is None else u.col,
+            }
+
+        return cls(
+            screen_type=s.screen_type,
+            unreadable=unreadable,  # type: ignore[arg-type]
+            viewing_own_board=bool(s.viewing_own_board),
+            viewed_player_name=s.viewed_player_name or "",
+            stage=s.stage or "",
+            gold=-1 if s.gold is None else s.gold,
+            level=0 if s.level is None else s.level,
+            xp_current=-1 if s.xp_current is None else s.xp_current,
+            xp_needed=0 if s.xp_needed is None else s.xp_needed,
+            hp=-1 if s.hp is None else s.hp,
+            streak=s.streak or 0,
+            shop=[{"name": x.name or "", "cost": x.cost or 0} for x in s.shop or []],
+            shop_locked=bool(s.shop_locked),
+            board=[unit(u) for u in s.board or []],
+            bench=[unit(u) for u in s.bench or []],
+            item_bench=list(s.item_bench or []),
+            players=[{"name": p.name, "hp": -1 if p.hp is None else p.hp, "is_self": p.is_self} for p in s.players or []],
+            traits=[
+                {"name": t.name, "count": t.count, "active": t.active, "next_breakpoint": t.next_breakpoint or 0}
+                for t in s.traits or []
+            ],
+            augment_choices=list(s.augment_choices or []),
+            augments=list(s.augments or []),
+            notes=list(s.notes),
+        )
+
+    def to_screen(self) -> ScreenObservation:
+        missing = set(self.unreadable)
+
+        def val(name: str, value):
+            return None if name in missing else value
+
+        stage = self.stage.strip()
+        name = self.viewed_player_name.strip()
+        return ScreenObservation(
+            screen_type=self.screen_type,
+            viewing_own_board=val("viewing_own_board", self.viewing_own_board),
+            viewed_player_name=val("viewed_player_name", name or None),
+            stage=val("stage", stage or None),
+            gold=val("gold", self.gold if self.gold >= 0 else None),
+            level=val("level", self.level if self.level > 0 else None),
+            xp_current=val("xp_current", self.xp_current if self.xp_current >= 0 else None),
+            xp_needed=val("xp_needed", self.xp_needed if self.xp_needed > 0 else None),
+            hp=val("hp", self.hp if self.hp >= 0 else None),
+            streak=val("streak", self.streak),
+            shop=val("shop", [s.to_obs() for s in self.shop]),
+            shop_locked=val("shop_locked", self.shop_locked),
+            board=val("board", [u.to_obs() for u in self.board]),
+            bench=val("bench", [u.to_obs() for u in self.bench]),
+            item_bench=val("item_bench", list(self.item_bench)),
+            players=val("players", [p.to_obs() for p in self.players]),
+            traits=val("traits", [t.to_obs() for t in self.traits]),
+            augment_choices=val("augment_choices", list(self.augment_choices)),
+            augments=val("augments", list(self.augments)),
+            notes=list(self.notes),
+        )
+
+
 class Observation(BaseModel):
     """A ScreenObservation plus capture metadata."""
 
@@ -174,8 +365,12 @@ class Unit(BaseModel):
 
     @property
     def copies(self) -> int:
-        """Number of 1-star copies this unit represents (1, 3 or 9)."""
-        return 3 ** (max(1, self.star) - 1)
+        """Number of 1-star copies this unit represents (1, 3 or 9).
+
+        A 4-star (Set 18 Solar 8 ascension) is an upgraded 3-star and still
+        holds 9 copies of the pool, not 27.
+        """
+        return 3 ** (min(max(1, self.star), 3) - 1)
 
 
 class OpponentSnapshot(BaseModel):

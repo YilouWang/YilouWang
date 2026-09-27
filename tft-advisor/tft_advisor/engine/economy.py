@@ -6,7 +6,16 @@ Encodes the standard TFT playbook:
     unless the line is reroll (stay low and slow roll above 50).
   * Fast 8 reaches level 8 at 4-1 / 4-2; fast 9 then goes 9 around 5-1 / 5-2.
   * Big roll-downs happen at fixed stabilization points (3-2 / 4-1 / 4-2)
-    and whenever HP is low; at critical HP spend everything.
+    and whenever HP is low; at critical HP spend everything. 3-2 keeps about
+    20 gold unless HP is critical.
+  * Streaks: a loss streak with enough HP keeps the streak (no 3-2 roll);
+    a win streak means the board is stable, so roll-down points only level.
+  * Reroll lines level on the standard curve in stage 2, reach the reroll
+    level in stage 3 (3-5 for 3-cost rerolls) and slow roll above 50. Once
+    the reroll target is 3-star (``key_star >= 3``) or from 4-5 on, they
+    level like a standard line again.
+  * Fast 8 / fast 9 at level 8+ roll only while the carry is below 2-star
+    (``key_star``); with a 2-star carry they save for level 9 instead.
 Budgets are always affordable: a plan never says "roll" with less gold than
 one reroll, and never says "level" when the XP cannot be bought.
 """
@@ -21,6 +30,11 @@ from ..models import EconAction, EconPlan, GameState, StageRound
 STYLES = ("standard", "fast8", "fast9", "reroll1", "reroll2", "reroll3")
 
 ROLLDOWN_ROUNDS = {(3, 2), (4, 1), (4, 2)}
+REROLL_END = (4, 5)  # reroll lines stop staying low from here on, 3-star or not
+STREAK_LEN = 3  # a streak worth playing around (3+ wins / losses)
+LOSS_STREAK_HP_FLOOR = {3: 45}  # stage -> HP above which a loss streak skips the roll-down
+EARLY_RESERVE_ROUND = (3, 2)  # roll-down that keeps ~20 gold unless HP is critical
+EARLY_RESERVE = 20
 
 
 def hp_bucket(hp: Optional[int]) -> str:
@@ -58,7 +72,20 @@ def _wanted_level(sr: StageRound, std_level: int, style: str, bucket: str) -> in
     return want
 
 
-def plan_economy(state: GameState, mech: Mechanics, style: str = "standard") -> EconPlan:
+def reroll_cost(style: str) -> Optional[int]:
+    """Highest unit cost a reroll line wants to 3-star (reroll1 -> 1, ...)."""
+    return {"reroll1": 1, "reroll2": 2, "reroll3": 3}.get(style)
+
+
+def plan_economy(
+    state: GameState, mech: Mechanics, style: str = "standard", key_star: Optional[int] = None
+) -> EconPlan:
+    """Save / level / roll plan for this round.
+
+    ``key_star``: star level of the unit the line is built around (the reroll
+    target on reroll lines, the carry otherwise); 0 = not owned yet, None =
+    unknown (no target comp).
+    """
     gold = max(0, state.gold or 0)
     sr: Optional[StageRound] = state.stage
     level_estimated = state.level is None
@@ -69,6 +96,7 @@ def plan_economy(state: GameState, mech: Mechanics, style: str = "standard") -> 
     cap_gold = mech.interest_step * mech.interest_cap
     roll = max(1, mech.roll_cost)
     style = style if style in STYLES else "standard"
+    streak = state.streak or 0
 
     plan = EconPlan(
         gold=gold,
@@ -118,6 +146,12 @@ def plan_economy(state: GameState, mech: Mechanics, style: str = "standard") -> 
 
     std_level = mech.standard_level_at(sr) or level
     rr = reroll_level(style)
+    if rr is not None and ((key_star or 0) >= 3 or sr.key >= REROLL_END):
+        # The reroll is over (target already 3-star, or too late to keep
+        # staying low): level like a standard line from the current level.
+        rr = None
+        style = "standard"
+        plan.style = style
 
     # --- Critical HP: everything into the board -----------------------------
     if bucket == "critical" and stage >= 3:
@@ -126,16 +160,21 @@ def plan_economy(state: GameState, mech: Mechanics, style: str = "standard") -> 
         return done(EconAction.ALL_IN, f"血量 {hp}，危险：all-in 搜牌补强阵容，不要存钱", gold)
 
     # --- Reroll lines --------------------------------------------------------
-    if rr is not None:
-        if level < rr and (stage >= 3 or level + 1 <= std_level):
-            target, spend = affordable_target(rr, 0)
+    # Stage 2 follows the standard curve (with an interest floor, below);
+    # the reroll level comes in stage 3 (3-5 for 3-cost rerolls).
+    if rr is not None and stage >= 3:
+        goal = rr if rr < 7 or sr.key >= (3, 5) else min(rr, max(level, std_level))
+        if level < goal:
+            target, spend = affordable_target(goal, 0)
             if target is not None:
-                return done(EconAction.LEVEL, f"赌狗阵容：先升到 {target} 级再开始慢搜", 0, target)
-        if level >= rr and stage >= 3:
+                tail = "再开始慢搜" if target >= rr else f"，之后到 {rr} 级慢搜"
+                return done(EconAction.LEVEL, f"赌狗阵容：先升到 {target} 级{tail}", 0, target)
+        if level >= rr:
             if bucket == "low":
                 return done(EconAction.ROLL, f"血量 {hp} 偏低：搜到 20 左右保血", gold - 20)
             if bucket == "medium" and stage >= 4:
-                return done(EconAction.ROLL, f"血量 {hp}，第{stage}阶段还没三星：搜到 20 左右追三星", gold - 20)
+                chase = "还没三星：" if key_star is not None else "："
+                return done(EconAction.ROLL, f"血量 {hp}，第{stage}阶段{chase}搜到 20 左右追三星", gold - 20)
             if gold > cap_gold:
                 return done(EconAction.SLOW_ROLL, f"慢搜：只花 {cap_gold} 以上的部分", gold - cap_gold)
             return done(EconAction.SAVE, f"慢搜节奏：攒回 {cap_gold} 再搜")
@@ -143,39 +182,72 @@ def plan_economy(state: GameState, mech: Mechanics, style: str = "standard") -> 
     # --- Standard / fast 8 / fast 9 -----------------------------------------
     is_rolldown_point = sr.key in ROLLDOWN_ROUNDS
     want_level = _wanted_level(sr, std_level, style, bucket)
+    # Streaks: losing on purpose with enough HP keeps the streak gold; a win
+    # streak means the board already holds, so roll-down points only level.
+    floor = LOSS_STREAK_HP_FLOOR.get(stage)
+    keep_streak = streak <= -STREAK_LEN and floor is not None and hp is not None and hp >= floor
+    stable = streak >= STREAK_LEN and bucket in ("healthy", "medium", "unknown")
+    rolldown = is_rolldown_point and bucket in ("low", "medium") and not keep_streak and not stable
+    low_hp = bucket == "low" and stage >= 3
+    early_reserve = sr.key == EARLY_RESERVE_ROUND
 
     if level < want_level and level < mech.max_level:
         keep = 0 if bucket == "low" or is_rolldown_point else 10
         target, spend = affordable_target(want_level, keep)
         if target is not None:
             behind = f"（标准是 {want_level} 级）" if target < want_level else ""
-            if is_rolldown_point and bucket in ("low", "medium"):
-                reserve = 0 if bucket == "low" else 10
-                return done(
-                    EconAction.LEVEL_AND_ROLL,
-                    f"{sr.stage}-{sr.round} 是关键节点：升到 {target} 级后搜牌稳血{behind}",
-                    gold - spend - reserve,
-                    target,
-                )
-            return done(EconAction.LEVEL, f"按节奏升到 {target} 级{behind}", 0, target)
+            if rolldown or low_hp:
+                if early_reserve:
+                    reserve = EARLY_RESERVE
+                elif rolldown:
+                    reserve = 0 if bucket == "low" else 10
+                else:
+                    reserve = 10  # low HP outside the roll-down rounds
+                if rolldown:
+                    reason = f"{sr.stage}-{sr.round} 是关键节点：升到 {target} 级后搜牌稳血{behind}"
+                else:
+                    reason = f"血量 {hp} 偏低：升到 {target} 级后搜牌补强{behind}"
+                return done(EconAction.LEVEL_AND_ROLL, reason, gold - spend - reserve, target)
+            if keep_streak and is_rolldown_point:
+                reason = f"连败 {-streak} 场且血量还够：升到 {target} 级但别搜牌，继续吃连败金币"
+            elif stable and is_rolldown_point:
+                reason = f"连胜 {streak} 场阵容够强：升到 {target} 级，不用搜牌"
+            else:
+                reason = f"按节奏升到 {target} 级{behind}"
+            return done(EconAction.LEVEL, reason, 0, target)
 
-    if is_rolldown_point and bucket in ("low", "medium"):
-        keep = 0 if bucket == "low" else 20
+    if rolldown:
+        keep = EARLY_RESERVE if early_reserve else (0 if bucket == "low" else 20)
         return done(EconAction.ROLL, f"血量 {hp}：这回合搜牌稳住，保留约 {keep} 金币", gold - keep)
 
-    if bucket == "low" and stage >= 3:
+    if low_hp:
         return done(EconAction.ROLL, f"血量 {hp} 偏低：搜到 10-20 金币补强", gold - 10)
 
-    # Fast 8 / fast 9 roll-down once the target level is reached.
+    # Fast 8 / fast 9 at level 8+: roll only while the carry is not 2-star.
     if style in ("fast8", "fast9") and level >= 8 and sr.key >= (4, 2) and gold > 10:
-        if style == "fast9" and level < 9 and bucket in ("healthy", "medium") and sr.key < (5, 2):
-            return done(EconAction.SLOW_ROLL, "速9：8级小搜稳血，留钱冲 9 级", gold - cap_gold)
-        return done(EconAction.ROLL, f"{level} 级搜 4 费主C和二星，搜到 10 左右", gold - 10)
+        carry_ready = key_star is not None and key_star >= 2
+        if not carry_ready and (key_star is not None or is_rolldown_point):
+            if style == "fast9" and level < 9 and bucket in ("healthy", "medium") and sr.key < (5, 2):
+                return done(EconAction.SLOW_ROLL, "速9：8级小搜稳血，留钱冲 9 级", gold - cap_gold)
+            return done(EconAction.ROLL, f"{level} 级搜主C二星，搜到 10 左右", gold - 10)
+        if carry_ready and level < min(9, mech.max_level) and to_next is not None:
+            if sr.key < (5, 1):
+                return done(EconAction.SAVE, "主C已两星，不用再搜：存钱，5-1 后升 9 级找 5 费")
+            if gold - to_next >= 10:
+                return done(EconAction.LEVEL, "主C已两星：升 9 级找 5 费", 0, level + 1)
+            return done(EconAction.SAVE, f"主C已两星，不用再搜：存够 {to_next + 10} 金币就升 9 级")
 
     # Spare gold above the interest cap goes into XP (tempo) or rolls late game.
+    reroll_cap = rr is not None and level + 1 > rr  # a reroll line does not overlevel
     if gold > cap_gold:
         extra = gold - cap_gold
-        if level < mech.max_level and to_next is not None and to_next <= extra and (stage <= 4 or level < 9):
+        if (
+            level < mech.max_level
+            and to_next is not None
+            and to_next <= extra
+            and (stage <= 4 or level < 9)
+            and not reroll_cap
+        ):
             return done(EconAction.LEVEL, f"利息已满：多出的 {extra} 金币拿来升 {level + 1} 级", 0, level + 1)
         if stage >= 4:
             return done(EconAction.SLOW_ROLL, f"利息已满：用多出的 {extra} 金币搜牌", extra)
@@ -188,11 +260,14 @@ def plan_economy(state: GameState, mech: Mechanics, style: str = "standard") -> 
         and to_next <= gold
         and not level_estimated
         and level < want_level + 1
+        and not reroll_cap
         and mech.interest(gold - to_next) == mech.interest(gold)
         and stage >= 2
     ):
         return done(EconAction.LEVEL, f"只差 {plan.xp_to_next} 经验，买一次就升级且不掉利息", 0, level + 1)
 
+    if keep_streak and is_rolldown_point:
+        return done(EconAction.SAVE, f"连败 {-streak} 场且血量还够：别搜牌，继续吃连败金币和利息")
     nxt = _next_interest_step(gold, mech)
     if nxt is not None:
         return done(EconAction.SAVE, f"存钱吃利息：下一个利息点 {nxt}（还差 {nxt - gold}）")

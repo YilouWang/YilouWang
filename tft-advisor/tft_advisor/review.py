@@ -16,22 +16,49 @@ from .models import StageRound
 
 
 def latest_log(directory: Path) -> Optional[Path]:
-    logs = sorted(directory.glob("game-*.jsonl"))
+    """Newest ``game-*.jsonl`` by name (names start with the local start time).
+
+    Sorted by stem so ``game-...-123-1.jsonl`` (same-millisecond collision)
+    comes after ``game-...-123.jsonl``.
+    """
+    try:
+        logs = sorted((p for p in directory.glob("game-*.jsonl") if p.is_file()), key=lambda p: p.stem)
+    except OSError:
+        return None
     return logs[-1] if logs else None
 
 
 def load_records(path: Path) -> list[dict[str, Any]]:
+    """JSON objects of a log file; blank, broken, non-object and undecodable lines are skipped."""
     out = []
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             line = line.strip()
             if not line:
                 continue
             try:
-                out.append(json.loads(line))
+                obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if isinstance(obj, dict):
+                out.append(obj)
     return out
+
+
+def _game_of(rec: dict[str, Any]) -> Optional[str]:
+    gid = rec.get("game_id")
+    if not gid and isinstance(rec.get("state"), dict):
+        gid = rec["state"].get("game_id")
+    return str(gid) if gid else None
+
+
+def last_game(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Only the records of the last game in the file (older logs may mix games)."""
+    games = [g for g in (_game_of(r) for r in records) if g]
+    if not games:
+        return records
+    last = games[-1]
+    return [r for r in records if _game_of(r) in (None, last)]
 
 
 def _stage_of(state: dict[str, Any]) -> Optional[StageRound]:
@@ -49,19 +76,28 @@ def _stage_of(state: dict[str, Any]) -> Optional[StageRound]:
 def summarize_log(records: list[dict[str, Any]], mech: Mechanics) -> dict[str, Any]:
     """Collapse the log to one row per round (last record of each round wins)."""
     rounds: dict[tuple[int, int], dict[str, Any]] = {}
-    for rec in records:
-        state = rec.get("state") or {}
+    for rec in last_game(records):
+        state = rec.get("state")
+        if not isinstance(state, dict):
+            # Advice-only record (Claude strategy that arrived after the rules advice).
+            sr = StageRound.parse(rec.get("stage")) if isinstance(rec.get("stage"), str) else None
+            advice = rec.get("advice")
+            if sr is not None and sr.key in rounds and isinstance(advice, dict) and advice.get("headline"):
+                rounds[sr.key]["advice"] = advice.get("headline")
+            continue
         sr = _stage_of(state)
         if sr is None:
             continue
-        econ = ((rec.get("analysis") or {}).get("econ")) or {}
+        analysis = rec.get("analysis") if isinstance(rec.get("analysis"), dict) else {}
+        econ = analysis.get("econ") if isinstance(analysis.get("econ"), dict) else {}
+        advice = rec.get("advice") if isinstance(rec.get("advice"), dict) else {}
         rounds[sr.key] = {
             "stage": f"{sr.stage}-{sr.round}",
             "hp": state.get("hp"),
             "gold": state.get("gold"),
             "level": state.get("level"),
-            "board": [f"{u.get('name')}{'★' * int(u.get('star') or 1)}" for u in state.get("board") or []],
-            "advice": (rec.get("advice") or {}).get("headline"),
+            "board": [f"{u.get('name')}{'★' * int(u.get('star') or 1)}" for u in state.get("board") or [] if isinstance(u, dict)],
+            "advice": advice.get("headline"),
             "econ": econ.get("recommendation"),
         }
     timeline = [rounds[k] for k in sorted(rounds)]
@@ -106,9 +142,13 @@ def summarize_log(records: list[dict[str, Any]], mech: Mechanics) -> dict[str, A
     }
 
 
+def _cell(v: Any) -> str:
+    return "-" if v is None else str(v)  # 0 gold / 0 hp are real values, not "unknown"
+
+
 def format_summary(summary: dict[str, Any]) -> str:
     lines = [
-        f"回合数: {summary['rounds']}  最后回合: {summary.get('final_stage')}  最后血量: {summary.get('final_hp')}",
+        f"回合数: {summary['rounds']}  最后回合: {_cell(summary.get('final_stage'))}  最后血量: {_cell(summary.get('final_hp'))}",
         f"最终阵容: {' '.join(summary.get('final_board') or []) or '未知'}",
         "升级时间: "
         + (", ".join(f"{x['level']}级@{x['reached_at']}" + (f"(标准{x['standard_level_then']})" if x.get("standard_level_then") else "") for x in summary["level_timing"]) or "无记录"),
@@ -118,7 +158,7 @@ def format_summary(summary: dict[str, Any]) -> str:
         "回合  血量  金币  等级  建议",
     ]
     for row in summary["timeline"]:
-        lines.append(f"{row['stage']:>4}  {str(row.get('hp') or '-'):>4}  {str(row.get('gold') or '-'):>4}  {str(row.get('level') or '-'):>4}  {row.get('advice') or ''}")
+        lines.append(f"{row['stage']:>4}  {_cell(row.get('hp')):>4}  {_cell(row.get('gold')):>4}  {_cell(row.get('level')):>4}  {row.get('advice') or ''}")
     return "\n".join(lines)
 
 
@@ -131,7 +171,10 @@ Keep it under 350 Chinese characters."""
 
 
 def llm_review(llm: Any, model: str, effort: str, summary: dict[str, Any]) -> str:
+    from .advisor.rules import sanitize
     from .llm import text_block
 
     payload = json.dumps({k: v for k, v in summary.items()}, ensure_ascii=False, sort_keys=True)
-    return llm.text(model=model, effort=effort, system=REVIEW_SYSTEM, content=[text_block(payload)], purpose="review")
+    text = llm.text(model=model, effort=effort, system=REVIEW_SYSTEM, content=[text_block(payload)], purpose="review")
+    # Player-facing text never contains em dashes, whatever the model wrote.
+    return sanitize(text, keep_newlines=True)

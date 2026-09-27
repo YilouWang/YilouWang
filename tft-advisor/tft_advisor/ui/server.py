@@ -14,11 +14,27 @@ Routes::
 
 Security model:
   * localhost mode (host 127.0.0.1 / localhost / ::1): no token, but the Host
-    header must be a loopback name (blocks DNS rebinding) and a cross-origin
-    ``Origin`` is rejected (blocks CSRF from other web pages).
+    header must be a loopback name (blocks DNS rebinding) and an ``Origin``
+    other than the dashboard itself (scheme, loopback host AND port) is
+    rejected, so pages served from other local ports (dev servers, Jupyter)
+    cannot send commands either. ``Sec-Fetch-Site`` other than same-origin /
+    none is rejected on ``/api/*``.
   * LAN mode (any other host, e.g. 0.0.0.0 to open it from a phone): a random
-    token is generated at start and required on every ``/api/*`` request as
-    ``?token=...`` or ``X-Token`` header. The printed URL carries the token.
+    token is required on every ``/api/*`` request as ``?token=...`` or
+    ``X-Token`` header. The printed URL carries the token. The token is saved
+    in ``token_file`` (default ``~/.tft_advisor/dashboard_token``) so a phone
+    bookmark keeps working across runs; delete the file (or pass
+    ``new_token=True``) to rotate it.
+  * ``POST /api/command`` needs ``Content-Type: application/json`` (a "simple"
+    cross-site request cannot send that without a CORS preflight, which this
+    server never approves).
+  * Connections are capped (in total and per LAN client) and the request line,
+    headers and body must arrive within a total deadline, so a slow client on
+    the Wi-Fi cannot pin an unbounded number of threads.
+
+``POST /api/command`` answers ``{"ok": false, "rejected": true, "error": ...}``
+(HTTP 400) when the app refused the command (for example a manual correction
+out of range), and passes along warnings the app logged while handling it.
 
 The server only reads the bus and publishes commands; it never touches the game.
 """
@@ -27,9 +43,13 @@ from __future__ import annotations
 
 import dataclasses
 import errno
+import io
+import ipaddress
 import json
 import math
+import os
 import queue
+import re
 import secrets
 import socket
 import socketserver
@@ -39,8 +59,8 @@ import time
 from datetime import date, datetime
 from enum import Enum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import PurePath
-from typing import Any, Callable, Optional
+from pathlib import Path, PurePath
+from typing import Any, Callable, Optional, Union
 from urllib.parse import parse_qs, urlsplit
 
 from ..bus import EventBus
@@ -53,7 +73,20 @@ MAX_BODY_BYTES = 16 * 1024
 KEEPALIVE_S = 15.0
 PORT_ATTEMPTS = 11  # the configured port plus the next 10
 MAX_SSE_CLIENTS = 32
+MAX_CONNECTIONS = 64  # handler threads in total (SSE streams included)
+MAX_CONNECTIONS_PER_IP = 16  # per non-loopback client (one phone needs a handful)
+HEADER_TIMEOUT_S = 10.0  # total time for the request line + headers
+BODY_TIMEOUT_S = 10.0  # total time for a (small) request body after the headers
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+DEFAULT_TOKEN_FILE = "~/.tft_advisor/dashboard_token"
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{22,128}")
+_JSON_TYPES = frozenset({"application/json"})
+_SAME_ORIGIN_FETCH = frozenset({"same-origin", "none"})
+# Commands the app handles synchronously and purely (validation only): any
+# warning it logs while handling them means the command was refused.
+_STRICT_COMMANDS = frozenset({"set_field"})
+# How the app words a refused command ("命令 set_field 失败: ...", "修正失败：...").
+_FAILED_PREFIX_RE = re.compile(r"^(?:命令\s*\S+\s*失败|修正失败)\s*[:：]\s*")
 
 _MAX_STR = 500  # longest free-text argument (questions)
 _MAX_SHORT_STR = 200
@@ -163,18 +196,28 @@ def _is_scalar(v: Any) -> bool:
     return False
 
 
-def _opt_str(payload: dict[str, Any], key: str, limit: int = _MAX_SHORT_STR) -> Optional[str]:
+# C0/C1 controls (terminal escapes), bidi overrides; newlines only where allowed.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+
+
+def _clean_str(v: str, multiline: bool = False) -> str:
+    if not multiline:
+        v = v.replace("\n", " ").replace("\t", " ")
+    return _CONTROL_CHARS.sub("", v.replace("\r", ""))
+
+
+def _opt_str(payload: dict[str, Any], key: str, limit: int = _MAX_SHORT_STR, multiline: bool = False) -> Optional[str]:
     v = payload.get(key)
     if v is None:
         return None
     if not isinstance(v, str):
         raise CommandError(f"参数 {key} 必须是文本")
-    v = v.strip()[:limit]
+    v = _clean_str(v, multiline).strip()[:limit]
     return v or None
 
 
-def _req_str(payload: dict[str, Any], key: str, limit: int = _MAX_SHORT_STR) -> str:
-    v = _opt_str(payload, key, limit)
+def _req_str(payload: dict[str, Any], key: str, limit: int = _MAX_SHORT_STR, multiline: bool = False) -> str:
+    v = _opt_str(payload, key, limit, multiline)
     if not v:
         raise CommandError(f"缺少参数 {key}")
     return v
@@ -195,7 +238,7 @@ def validate_command(payload: Any) -> tuple[str, dict[str, Any]]:
     if cmd == "scout":
         args["player"] = _opt_str(payload, "player", 64)
     elif cmd == "ask":
-        args["question"] = _req_str(payload, "question", _MAX_STR)
+        args["question"] = _req_str(payload, "question", _MAX_STR, multiline=True)
     elif cmd == "dismiss":
         args["id"] = _req_str(payload, "id", 128)
     elif cmd == "set_field":
@@ -205,7 +248,7 @@ def validate_command(payload: Any) -> tuple[str, dict[str, Any]]:
         value = payload.get("value")
         if not _is_scalar(value):
             raise CommandError("参数 value 必须是数字或文本")
-        args["value"] = value.strip()[:32] if isinstance(value, str) else value
+        args["value"] = _clean_str(value).strip()[:32] if isinstance(value, str) else value
     elif cmd == "set_comp":
         args["comp"] = _opt_str(payload, "comp", _MAX_SHORT_STR) or ""
     extras = 0
@@ -216,7 +259,7 @@ def validate_command(payload: Any) -> tuple[str, dict[str, Any]]:
             continue
         if not _is_scalar(value) or extras >= _MAX_EXTRA_ARGS:
             continue
-        args[key] = value[:_MAX_SHORT_STR] if isinstance(value, str) else value
+        args[key] = _clean_str(value)[:_MAX_SHORT_STR] if isinstance(value, str) else value
         extras += 1
     return cmd, args
 
@@ -263,6 +306,69 @@ def _host_header_name(value: str) -> str:
     return value.split(":", 1)[0]
 
 
+def _is_loopback_ip(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(str(ip).split("%", 1)[0])
+    except ValueError:
+        return False
+    mapped = getattr(addr, "ipv4_mapped", None)
+    return bool(addr.is_loopback or (mapped is not None and mapped.is_loopback))
+
+
+def load_or_create_token(path: Union[str, "os.PathLike[str]"], *, new: bool = False, log: Callable[[str], Any] = print) -> str:
+    """The LAN token saved in ``path``; created (0600) when missing, invalid or ``new``.
+
+    Falls back to a token for this run only when the file cannot be written.
+    """
+    file = Path(os.path.expanduser(str(path)))
+    if not new:
+        try:
+            saved = file.read_text(encoding="utf-8").strip()
+            if _TOKEN_RE.fullmatch(saved):
+                return saved
+        except (OSError, UnicodeDecodeError):
+            pass
+    token = secrets.token_urlsafe(16)
+    try:
+        file.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(token + "\n")
+    except OSError as exc:
+        log(f"看板令牌无法保存到 {file}（{exc}），本次运行使用临时令牌")
+    return token
+
+
+class _DeadlineReader(socket.SocketIO):
+    """Raw socket reader that enforces the handler's *total* read deadline.
+
+    A plain socket timeout applies to each ``recv`` only, so a client sending
+    one header byte every few seconds could hold its thread forever.
+    """
+
+    def __init__(self, sock: socket.socket, handler: "_Handler") -> None:
+        super().__init__(sock, "rb")
+        self._handler = handler
+
+    def readinto(self, b: Any) -> Optional[int]:
+        deadline = self._handler._read_deadline
+        if deadline is None:
+            return super().readinto(b)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("request too slow")
+        normal = self._handler.timeout
+        sock = self._sock  # type: ignore[attr-defined]
+        sock.settimeout(remaining if normal is None else min(remaining, normal))
+        try:
+            return super().readinto(b)
+        finally:
+            try:
+                sock.settimeout(normal)  # writes (SSE) keep the normal timeout
+            except OSError:
+                pass
+
+
 class _Server(ThreadingHTTPServer):
     daemon_threads = True
     # On Windows SO_REUSEADDR lets a second process bind a port that is already
@@ -270,6 +376,56 @@ class _Server(ThreadingHTTPServer):
     allow_reuse_address = sys.platform != "win32"
     request_queue_size = 32
     dashboard: "DashboardServer"
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._conn_lock = threading.Lock()
+        self._conn_total = 0
+        self._conn_by_ip: dict[str, int] = {}
+        super().__init__(*args, **kwargs)
+
+    # ---- connection caps: one thread per connection, so bound them ---------
+    def _admit(self, client_address: Any) -> bool:
+        ip = str(client_address[0]) if isinstance(client_address, (tuple, list)) and client_address else ""
+        per_ip_cap = not _is_loopback_ip(ip)  # the PC's own browser is trusted
+        with self._conn_lock:
+            if self._conn_total >= MAX_CONNECTIONS:
+                return False
+            if per_ip_cap and self._conn_by_ip.get(ip, 0) >= MAX_CONNECTIONS_PER_IP:
+                return False
+            self._conn_total += 1
+            self._conn_by_ip[ip] = self._conn_by_ip.get(ip, 0) + 1
+            return True
+
+    def _release(self, client_address: Any) -> None:
+        ip = str(client_address[0]) if isinstance(client_address, (tuple, list)) and client_address else ""
+        with self._conn_lock:
+            self._conn_total = max(0, self._conn_total - 1)
+            left = self._conn_by_ip.get(ip, 0) - 1
+            if left > 0:
+                self._conn_by_ip[ip] = left
+            else:
+                self._conn_by_ip.pop(ip, None)
+
+    @property
+    def open_connections(self) -> int:
+        with self._conn_lock:
+            return self._conn_total
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        if not self._admit(client_address):
+            self.shutdown_request(request)  # over the cap: drop it without a thread
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._release(client_address)  # the thread never started
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._release(client_address)
 
     def server_bind(self) -> None:
         if sys.platform == "win32" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
@@ -310,7 +466,25 @@ class _Handler(BaseHTTPRequestHandler):
     timeout = 30  # socket timeout: a stuck client cannot pin a thread forever
     server: _Server
 
+    _read_deadline: Optional[float] = None
+
     # ---- plumbing ---------------------------------------------------------
+    def setup(self) -> None:
+        self._read_deadline = time.monotonic() + HEADER_TIMEOUT_S
+        super().setup()
+        try:
+            reader = io.BufferedReader(_DeadlineReader(self.connection, self))
+        except Exception:  # pragma: no cover - keep the stock reader (per-recv timeout only)
+            return
+        self.rfile.close()  # only drops the socket's makefile reference
+        self.rfile = reader
+
+    def parse_request(self) -> bool:
+        ok = super().parse_request()
+        # Headers are in; a request body (<= 16 KB) gets its own short deadline.
+        self._read_deadline = time.monotonic() + BODY_TIMEOUT_S
+        return ok
+
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - silence access log
         pass
 
@@ -359,21 +533,33 @@ class _Handler(BaseHTTPRequestHandler):
         return _host_header_name(host) in LOCAL_HOSTS
 
     def _origin_allowed(self) -> bool:
-        """Reject requests whose Origin is another site (CSRF guard)."""
+        """Reject requests from any page but the dashboard itself (CSRF guard)."""
+        fetch_site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+        if fetch_site and fetch_site not in _SAME_ORIGIN_FETCH:
+            return False  # cross-site, or same-site from another port / subdomain
         origin = (self.headers.get("Origin") or "").strip()
         if not origin:
             return True  # same-origin GETs and non-browser clients send no Origin
         if origin == "null":
             return False  # sandboxed iframes, file:// pages
         try:
-            netloc = urlsplit(origin).netloc.lower()
+            parts = urlsplit(origin)
+            netloc = parts.netloc.lower()
+            port = parts.port or (443 if parts.scheme == "https" else 80)
         except ValueError:
             return False
         host = (self.headers.get("Host") or "").lower()
-        if netloc == host:
-            return True
-        # Same loopback machine reached via a different loopback name.
-        return not self.dash.lan_mode and _host_header_name(netloc) in LOCAL_HOSTS and _host_header_name(host) in LOCAL_HOSTS
+        if self.dash.lan_mode:
+            return netloc == host
+        # Localhost mode: the dashboard itself (any loopback name), but only on
+        # its own scheme and port: another local page (dev server, Jupyter, a
+        # downloaded HTML file served on some port) must not send commands.
+        return (
+            parts.scheme == "http"
+            and _host_header_name(netloc) in LOCAL_HOSTS
+            and _host_header_name(host) in LOCAL_HOSTS
+            and port == self.dash.port
+        )
 
     def _token_ok(self, query: dict[str, list[str]]) -> bool:
         expected = self.dash.token
@@ -467,6 +653,12 @@ class _Handler(BaseHTTPRequestHandler):
         if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
             self._error(411, "需要 Content-Length")
             return
+        # Forces a CORS preflight for cross-site pages (text/plain bodies need none).
+        ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        if ctype not in _JSON_TYPES:
+            self._drain_body()
+            self._error(415, "请求类型必须是 application/json")
+            return
         try:
             length = int(self.headers.get("Content-Length") or "0")
         except ValueError:
@@ -490,8 +682,14 @@ class _Handler(BaseHTTPRequestHandler):
         except CommandError as exc:
             self._error(exc.status, str(exc))
             return
-        self.dash.bus.command(cmd, **args)
-        self._send_json(200, {"ok": True, "cmd": cmd})
+        error, warnings = self.dash.run_command(cmd, args)
+        if error:
+            self._send_json(400, {"ok": False, "rejected": True, "cmd": cmd, "error": error})
+            return
+        reply: dict[str, Any] = {"ok": True, "cmd": cmd}
+        if warnings:
+            reply["warnings"] = warnings
+        self._send_json(200, reply)
 
     def _drain_body(self, length: Optional[int] = None) -> None:
         """Read (and discard) a request body so closing the socket does not RST the reply."""
@@ -592,6 +790,9 @@ class DashboardServer:
 
     ``start()`` returns the URL to open on this PC (with ``?token=`` in LAN
     mode). ``lan_url`` holds the address a phone on the same network can use.
+
+    ``token_file``: where the LAN token is kept between runs (``None`` = a new
+    token every run). ``new_token=True`` replaces the saved token (rotation).
     """
 
     def __init__(
@@ -601,12 +802,16 @@ class DashboardServer:
         log: Callable[[str], Any] = print,
         *,
         keepalive_s: float = KEEPALIVE_S,
+        token_file: Optional[Union[str, "os.PathLike[str]"]] = DEFAULT_TOKEN_FILE,
+        new_token: bool = False,
     ) -> None:
         self.bus = bus
         self.cfg = cfg
         self.log = log
         self.keepalive_s = max(0.05, float(keepalive_s))
         self.lan_mode = not is_local_host(cfg.host)
+        self.token_file = token_file
+        self.new_token = new_token
         self.token: Optional[str] = None
         self.url: Optional[str] = None
         self.lan_url: Optional[str] = None
@@ -657,7 +862,10 @@ class DashboardServer:
             self.log(f"端口 {base_port} 已被占用，改用 {self.port}")
 
         if self.lan_mode:
-            self.token = secrets.token_urlsafe(16)
+            if self.token_file:
+                self.token = load_or_create_token(self.token_file, new=self.new_token, log=self.log)
+            else:
+                self.token = secrets.token_urlsafe(16)
             suffix = f"/?token={self.token}"
             wildcard = bind_host in ("", "0.0.0.0", "::")
             local_host = ("[::1]" if bind_host == "::" else "127.0.0.1") if wildcard else _url_host(bind_host)
@@ -675,7 +883,12 @@ class DashboardServer:
         self.log(f"看板已启动: {self.url}")
         if self.lan_mode:
             self.log(f"手机或局域网访问: {self.lan_url}")
-            self.log("令牌只在本次运行有效，不要把链接发给别人。手机打不开时，请在 Windows 防火墙里允许 Python 访问专用网络。")
+            if self.token_file:
+                where = os.path.expanduser(str(self.token_file))
+                self.log(f"令牌保存在 {where}，以后启动不变，手机可以直接收藏这个链接；想换新令牌就删除这个文件再启动。不要把链接发给别人。")
+            else:
+                self.log("令牌只在本次运行有效，不要把链接发给别人。")
+            self.log("手机打不开时，请在 Windows 防火墙里允许 Python 访问专用网络。")
         return self.url
 
     def stop(self) -> None:
@@ -721,6 +934,37 @@ class DashboardServer:
         with self._lock:
             self._sse_clients = max(0, self._sse_clients - 1)
 
+    def run_command(self, cmd: str, args: dict[str, Any]) -> tuple[Optional[str], list[str]]:
+        """Publish a command and report what the app said about it: ``(error, warnings)``.
+
+        ``EventBus.publish`` runs handlers synchronously in this thread, so a
+        warning the app logs from this thread while handling the command belongs
+        to it. The app reports a failed command as ``命令 <cmd> 失败: <reason>``;
+        for ``set_field`` (pure validation) any warning means it was refused.
+        Other warnings (for example a failed screenshot before an analysis, or
+        a hint about the target comp) are passed along; the command still ran.
+        """
+        me = threading.get_ident()
+        said: list[str] = []
+
+        def capture(_topic: str, payload: Any) -> None:
+            if threading.get_ident() != me or not isinstance(payload, dict):
+                return
+            if payload.get("level") in ("warn", "error"):
+                said.append(str(payload.get("text") or "").strip())
+
+        unsubscribe = self.bus.subscribe("log", capture)
+        try:
+            self.bus.command(cmd, **args)
+        finally:
+            unsubscribe()
+        said = [s for s in said if s]
+        failed = [s for s in said if _FAILED_PREFIX_RE.match(s)]
+        if failed or (said and cmd in _STRICT_COMMANDS):
+            reason = _FAILED_PREFIX_RE.sub("", (failed or said)[0], count=1).strip()
+            return (reason or "命令未执行")[:_MAX_SHORT_STR], []
+        return None, [s[:_MAX_SHORT_STR] for s in said[:3]]
+
     def health(self) -> dict[str, Any]:
         return {
             "ok": True,
@@ -749,5 +993,6 @@ __all__ = [
     "dumps",
     "is_local_host",
     "jsonable",
+    "load_or_create_token",
     "validate_command",
 ]

@@ -15,7 +15,15 @@ Game window lookup (Windows): TFT moved to Unreal Engine with Set 18
 "League of Legends (TM) Client" title, so ``find_window_rect`` first tries the
 configured title, then any visible top level window whose title is a known TFT
 title or whose owning executable is a known TFT game process, and keeps the
-largest one.
+largest one. Executable names come from a Toolhelp process snapshot (the
+system's process list, cached a few seconds) and windows are matched by PID:
+no handle to the game process (anti-cheat protected) or any other process is
+ever opened.
+
+Window frames are screen pixels of the game's client area, so another app in
+front of the game would be captured too. ``ScreenCapturer.game_foreground()``
+tells whether the game had focus when the calling thread's last frame was
+taken; automatic analysis skips frames where it is False.
 """
 
 from __future__ import annotations
@@ -42,6 +50,8 @@ KNOWN_WINDOW_TITLES: tuple[str, ...] = ("League of Legends (TM) Client", "Teamfi
 KNOWN_PROCESS_NAMES: tuple[str, ...] = ("TFT.exe", "TFTClient-Win64-Shipping.exe", "League of Legends.exe")
 #: Client areas smaller than this are splash / helper windows, not the game.
 MIN_WINDOW_SIZE = (320, 200)
+#: Seconds a process snapshot (PIDs of the game executables) is reused.
+PROCESS_SNAPSHOT_TTL_S = 5.0
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
 
@@ -52,6 +62,8 @@ IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
 _dpi_lock = threading.Lock()
 _dpi_done: Optional[bool] = None
 _win32_cache: dict[str, Any] = {}
+_pid_lock = threading.Lock()
+_pid_cache: dict[str, Any] = {}  # {"key": frozenset of names, "at": monotonic, "pids": frozenset}
 
 
 def set_dpi_awareness() -> bool:
@@ -120,20 +132,49 @@ def _win32() -> dict[str, Any]:
     user32.ClientToScreen.restype = wintypes.BOOL
     user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
     user32.GetWindowThreadProcessId.restype = wintypes.DWORD
-    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.QueryFullProcessImageNameW.argtypes = [
-        wintypes.HANDLE,
-        wintypes.DWORD,
-        wintypes.LPWSTR,
-        ctypes.POINTER(wintypes.DWORD),
-    ]
-    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = wintypes.HWND
+
+    entry_type = _processentry32w(ctypes, wintypes)
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(entry_type)]
+    kernel32.Process32FirstW.restype = wintypes.BOOL
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(entry_type)]
+    kernel32.Process32NextW.restype = wintypes.BOOL
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
 
-    _win32_cache.update(ctypes=ctypes, wintypes=wintypes, user32=user32, kernel32=kernel32, enum_proc=enum_proc)
+    _win32_cache.update(
+        ctypes=ctypes,
+        wintypes=wintypes,
+        user32=user32,
+        kernel32=kernel32,
+        enum_proc=enum_proc,
+        PROCESSENTRY32W=entry_type,
+        INVALID_HANDLE_VALUE=ctypes.c_void_p(-1).value,
+    )
     return _win32_cache
+
+
+def _processentry32w(ctypes: Any, wintypes: Any) -> Any:
+    """``PROCESSENTRY32W`` (tlhelp32.h)."""
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),  # ULONG_PTR
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    return PROCESSENTRY32W
 
 
 def _window_title(hwnd: int) -> str:
@@ -146,24 +187,71 @@ def _window_title(hwnd: int) -> str:
     return buf.value
 
 
-def _process_name(hwnd: int) -> Optional[str]:
-    """Executable basename owning a window (needs no special privileges)."""
+def _window_pid(hwnd: Any) -> Optional[int]:
+    """PID of the process owning a window (a window query, no process handle)."""
     w = _win32()
-    wintypes = w["wintypes"]
-    pid = wintypes.DWORD()
+    pid = w["wintypes"].DWORD()
     if not w["user32"].GetWindowThreadProcessId(hwnd, w["ctypes"].byref(pid)) or not pid.value:
         return None
-    handle = w["kernel32"].OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
-    if not handle:
-        return None
+    return int(pid.value)
+
+
+def _running_processes() -> list[tuple[int, str]]:
+    """``(pid, executable name)`` of every running process.
+
+    Read from a Toolhelp snapshot of the system's process list: no handle to
+    any process is opened, so the anti-cheat protected game is never touched.
+    """
+    w = _win32()
+    ctypes, kernel32 = w["ctypes"], w["kernel32"]
+    snap = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if not snap or snap == w["INVALID_HANDLE_VALUE"]:
+        return []
+    out: list[tuple[int, str]] = []
     try:
-        size = wintypes.DWORD(32768)
-        buf = w["ctypes"].create_unicode_buffer(size.value)
-        if not w["kernel32"].QueryFullProcessImageNameW(handle, 0, buf, w["ctypes"].byref(size)):
-            return None
-        return buf.value.replace("/", "\\").rsplit("\\", 1)[-1]
+        entry = w["PROCESSENTRY32W"]()
+        entry.dwSize = ctypes.sizeof(entry)
+        ok = kernel32.Process32FirstW(snap, ctypes.byref(entry))
+        while ok:
+            out.append((int(entry.th32ProcessID), str(entry.szExeFile)))
+            ok = kernel32.Process32NextW(snap, ctypes.byref(entry))
     finally:
-        w["kernel32"].CloseHandle(handle)
+        kernel32.CloseHandle(snap)
+    return out
+
+
+def _game_pids(process_names: Sequence[str]) -> frozenset[int]:
+    """PIDs of running processes whose executable is one of ``process_names``.
+
+    Cached for ``PROCESS_SNAPSHOT_TTL_S`` (the capture and worker threads both
+    search while the game window is not found). Empty on any failure."""
+    key = frozenset(p.casefold() for p in process_names if p)
+    if not key:
+        return frozenset()
+    now = time.monotonic()
+    with _pid_lock:
+        if _pid_cache.get("key") == key and now - _pid_cache.get("at", float("-inf")) < PROCESS_SNAPSHOT_TTL_S:
+            return _pid_cache["pids"]
+    try:
+        pids = frozenset(pid for pid, name in _running_processes() if pid and name.casefold() in key)
+    except Exception:
+        return frozenset()
+    with _pid_lock:
+        _pid_cache.update(key=key, at=now, pids=pids)
+    return pids
+
+
+def _is_game_foreground(hwnd: Optional[int]) -> bool:
+    """True when ``hwnd`` or another window of its process has the focus."""
+    if not hwnd:
+        return False
+    fg = _win32()["user32"].GetForegroundWindow()
+    if not fg:  # focus in transition (alt-tab) or a secure desktop
+        return False
+    if int(fg) == int(hwnd):
+        return True
+    pid = _window_pid(hwnd)
+    return pid is not None and _window_pid(fg) == pid
 
 
 def _on_windows() -> bool:
@@ -214,7 +302,7 @@ def _find_game_hwnd(
                 return int(hwnd)
 
     wanted_titles = {t.casefold() for t in ([title] if title else []) + list(KNOWN_WINDOW_TITLES)}
-    wanted_procs = {p.casefold() for p in process_names}
+    game_pids = _game_pids(process_names)
     candidates: list[tuple[int, int]] = []  # (area, hwnd)
 
     def visit(hwnd: Any, _lparam: Any) -> bool:
@@ -222,9 +310,8 @@ def _find_game_hwnd(
             if not hwnd or not user32.IsWindowVisible(hwnd):
                 return True
             match = _window_title(hwnd).strip().casefold() in wanted_titles
-            if not match and wanted_procs:
-                name = _process_name(hwnd)
-                match = bool(name) and name.casefold() in wanted_procs
+            if not match and game_pids:
+                match = _window_pid(hwnd) in game_pids
             if match:
                 rect = _client_rect(hwnd)
                 if rect:
@@ -274,6 +361,9 @@ def _new_mss() -> Any:
     return factory()
 
 
+_UNSET = object()
+
+
 def _is_black(img: Image.Image, level: int = 8) -> bool:
     small = img.resize((64, 36), Image.Resampling.BOX)
     return all(hi <= level for _lo, hi in small.getextrema())
@@ -283,8 +373,10 @@ class ScreenCapturer:
     """Grabs the game window (Windows) or a monitor as an RGB ``PIL.Image``.
 
     Attributes useful for diagnostics: ``last_error`` (Chinese text or None),
-    ``last_source`` ("window" / "monitor"), ``last_rect`` (left, top, w, h),
-    ``frames`` and ``failures`` counters.
+    ``last_source`` ("window" / "monitor" / "minimized"), ``last_rect``
+    (left, top, w, h), ``frames`` and ``failures`` counters.
+    ``game_foreground()`` says whether the game had the focus when the calling
+    thread's last frame was taken.
     """
 
     #: Seconds between window searches while the game window is not found.
@@ -314,15 +406,41 @@ class ScreenCapturer:
     def window_found(self) -> bool:
         return self.last_source == "window"
 
+    def game_foreground(self) -> Optional[bool]:
+        """Did the game have the focus when this thread's last frame was taken?
+
+        True: the frame is the game window's client area and the game (or
+        another window of its process) was the foreground window just before
+        and just after the grab. False: another app had the focus, so its
+        window may cover the game in the frame, or the frame was not the game
+        window (monitor fallback, minimized, failure). None: unknown (not
+        Windows, or window capture turned off).
+
+        Per thread: the capture and worker threads grab independently. A
+        thread that has not grabbed yet gets a live check.
+        """
+        if not self.cfg.use_window or not _on_windows():
+            return None
+        recorded = getattr(self._local, "foreground", _UNSET)
+        if recorded is not _UNSET:
+            return recorded
+        return self._foreground(self._hwnd)
+
     def grab(self) -> Optional[Image.Image]:
         """One RGB frame, or None on any failure (never raises).
 
         Also None while the game window is minimized: falling back to the
         monitor would feed the desktop (or the dashboard) to the vision
-        pipeline and fire bogus round changes.
+        pipeline and fire bogus round changes. Other cases where the frame
+        may not show the game (window not found: monitor fallback; another
+        app in front of the game) still return a frame for explicit hotkey
+        requests: check ``last_source`` and ``game_foreground()`` before
+        using it automatically.
         """
         if self._closed:
             return None
+        window_mode = bool(self.cfg.use_window) and _on_windows()
+        self._local.foreground = False if window_mode else None
         try:
             window, minimized = self._window_region()
             if minimized:
@@ -331,10 +449,12 @@ class ScreenCapturer:
                 self._fail("游戏窗口已最小化，恢复游戏窗口后会继续截图")
                 return None
             sct = self._sct()
+            hwnd = self._hwnd
             if window is not None:
                 region, source = window, "window"
             else:
                 region, source = self._monitor_region(sct), "monitor"
+            focused = source == "window" and self._foreground(hwnd)
             try:
                 shot = sct.grab(region)
             except Exception:
@@ -344,6 +464,8 @@ class ScreenCapturer:
                 self._hwnd = None
                 region, source = self._monitor_region(sct), "monitor"
                 shot = sct.grab(region)
+            # Focus must hold for the whole grab (an alt-tab mid-grab is not the game).
+            focused = focused and source == "window" and self._foreground(hwnd)
             img = Image.frombytes("RGB", (int(shot.size[0]), int(shot.size[1])), shot.bgra, "raw", "BGRX")
             black = _is_black(img)
         except Exception as exc:  # noqa: BLE001 - the capture loop must never die
@@ -353,6 +475,8 @@ class ScreenCapturer:
             self._fail(self._explain(exc))
             return None
 
+        if window_mode:
+            self._local.foreground = bool(focused)
         self.last_source = source
         self.last_rect = (int(region["left"]), int(region["top"]), int(region["width"]), int(region["height"]))
         if black:
@@ -454,6 +578,13 @@ class ScreenCapturer:
             return None, False
         left, top, width, height = rect
         return {"left": left, "top": top, "width": width, "height": height}, False
+
+    @staticmethod
+    def _foreground(hwnd: Optional[int]) -> bool:
+        try:
+            return _is_game_foreground(hwnd)
+        except Exception:
+            return False
 
     @staticmethod
     def _explain(exc: Exception) -> str:

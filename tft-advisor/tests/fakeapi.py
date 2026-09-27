@@ -49,7 +49,8 @@ class FakeAnthropic:
                 self.wfile.write(data)
 
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        # a short poll keeps shutdown() (one per test) from blocking for the default 0.5 s
+        self._thread = threading.Thread(target=self._server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True)
 
     # ---- lifecycle ---------------------------------------------------------------
     def __enter__(self) -> "FakeAnthropic":
@@ -94,6 +95,13 @@ class FakeAnthropic:
 
     def queue_json(self, obj: Any, stop_reason: str = "end_turn") -> None:
         self.queue_text(json.dumps(obj, ensure_ascii=False), stop_reason)
+
+    def queue_json_wire(self, screen: Any, stop_reason: str = "end_turn") -> None:
+        """A vision reply scripted in the ScreenObservation shape, sent the way the
+        real API returns it: as the all-required ``ScreenObservationWire``."""
+        from tft_advisor.models import ScreenObservationWire
+
+        self.queue_json(ScreenObservationWire.from_screen(screen).model_dump(mode="json"), stop_reason)
 
     def queue_refusal(self) -> None:
         msg = self._message_text("", "refusal")
