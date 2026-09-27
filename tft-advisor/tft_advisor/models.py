@@ -203,12 +203,21 @@ class UnitObsWire(BaseModel):
         )
 
 
+def _is_wisp_label(name: str) -> bool:
+    return name.strip().lower().startswith(("wisp", "精灵", "灵火"))
+
+
 class ShopSlotWire(BaseModel):
     name: str = Field(description="Champion name ('Wisp: <name>' for a Wisp); empty string for an empty slot")
-    cost: int = Field(description="Gold cost; 0 when unknown or empty")
+    cost: int = Field(description="Gold price; -1 when unreadable; 0 for an empty slot or a free (0 gold) Wisp")
 
     def to_obs(self) -> ShopSlot:
-        return ShopSlot(name=self.name.strip() or None, cost=self.cost if self.cost > 0 else None)
+        name = self.name.strip() or None
+        if name is None:
+            return ShopSlot(name=None, cost=None)
+        if self.cost < 0 or (self.cost == 0 and not _is_wisp_label(name)):
+            return ShopSlot(name=name, cost=None)  # unknown price (a champion never costs 0)
+        return ShopSlot(name=name, cost=self.cost)
 
 
 class PlayerObsWire(BaseModel):
@@ -303,7 +312,10 @@ class ScreenObservationWire(BaseModel):
             xp_needed=0 if s.xp_needed is None else s.xp_needed,
             hp=-1 if s.hp is None else s.hp,
             streak=s.streak or 0,
-            shop=[{"name": x.name or "", "cost": x.cost or 0} for x in s.shop or []],
+            shop=[
+                {"name": x.name or "", "cost": 0 if not x.name else (-1 if x.cost is None else x.cost)}
+                for x in s.shop or []
+            ],
             shop_locked=bool(s.shop_locked),
             board=[unit(u) for u in s.board or []],
             bench=[unit(u) for u in s.bench or []],

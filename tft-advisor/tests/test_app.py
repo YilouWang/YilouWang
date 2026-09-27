@@ -1079,3 +1079,16 @@ def test_default_perceivers_still_auto_detect_ocr(cfg, sample, installed_ocr):
     assert app.perceiver is main and app.fast_perceiver is installed_ocr[-1]
     assert app.run_job(Job(1, "shop")) is not None
     assert installed_ocr[-1].calls == ["shop"] and main.calls == []
+
+
+def test_texts_point_to_dashboard_buttons_when_hotkeys_do_not_work(cfg, sample):
+    app = make_app(cfg, sample, [])
+    app.start(dashboard=False, hotkeys=False, voice=False, capture=False)  # e.g. not on Windows
+    try:
+        assert app.rules.unavailable_keys >= {"F6", "F7"}
+        assert app.scout_planner.hotkey_available is False
+        adv = app.run_job(Job(2, "reanalyze"))
+        text = " ".join([adv.headline] + [a.text for a in adv.actions])
+        assert "按 F6" not in text and "点看板「分析」" in text
+    finally:
+        app.stop()

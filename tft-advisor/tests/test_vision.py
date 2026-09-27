@@ -1342,3 +1342,23 @@ def test_vision_prompt_asks_for_the_viewed_players_level(set_data):
     assert "viewed_player_level:" in system
     scout = build_user_text("scout", None, [])
     assert "viewed_player_level" in scout and "对手等级" not in scout
+
+
+def test_wire_shop_prices_free_wisp_unknown_and_empty():
+    from tft_advisor.models import ScreenObservation, ScreenObservationWire, ShopSlot
+
+    wire = ScreenObservationWire.from_screen(ScreenObservation(shop=[
+        ShopSlot(name="Wisp: Beggar's Wisp", cost=0),
+        ShopSlot(name="Ahri", cost=None),
+        ShopSlot(name=None, cost=None),
+        ShopSlot(name="Karma", cost=1),
+        ShopSlot(name="Wisp: Grow Up", cost=None),
+    ]))
+    assert [s.cost for s in wire.shop] == [0, -1, 0, 1, -1]
+    back = wire.to_screen().shop
+    assert [(s.name, s.cost) for s in back] == [
+        ("Wisp: Beggar's Wisp", 0), ("Ahri", None), (None, None), ("Karma", 1), ("Wisp: Grow Up", None),
+    ]
+    # A champion reported at 0 gold is an unknown price, not a free unit.
+    from tft_advisor.models import ShopSlotWire
+    assert ShopSlotWire(name="Ahri", cost=0).to_obs().cost is None

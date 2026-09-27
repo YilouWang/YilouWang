@@ -283,6 +283,16 @@ class RulesAdvisor:
         self.mech = mech or load_mechanics()
         self.set_data = set_data
         self.claude_enabled = claude_enabled
+        # Keys that could not be registered as global hotkeys (set by the app).
+        self.unavailable_keys: set[str] = set()
+
+    _BUTTONS = {"analyze": "点看板「分析」", "scout": "点看板「记录对手」", "shop": "点看板「读商店」"}
+
+    def _press(self, kind: str) -> str:
+        """'按 F7' when the hotkey works, otherwise the dashboard button to tap."""
+        key = str(getattr(self.hotkeys, kind, "") or "")
+        usable = self.hotkeys.enabled and key and key.strip().lower() not in {k.strip().lower() for k in self.unavailable_keys}
+        return f"按 {key} " if usable else self._BUTTONS.get(kind, "点看板按钮")
 
     # ------------------------------------------------------------------ public
     def advise(self, state: GameState, analysis: Analysis) -> Advice:
@@ -333,7 +343,7 @@ class RulesAdvisor:
 
         for i, req in enumerate(analysis.scout_requests[:2]):
             who = req.target_player or "对手"
-            add(ActionType.SCOUT, f"点开「{who}」的棋盘后按 {self.hotkeys.scout}", 2 if i == 0 else 3)
+            add(ActionType.SCOUT, f"点开「{who}」的棋盘后{self._press('scout').rstrip()}", 2 if i == 0 else 3)
 
         if analysis.warnings:
             add(ActionType.OTHER, analysis.warnings[0], 3)
@@ -411,7 +421,7 @@ class RulesAdvisor:
                 return f"选秀：拿{carousel_pick[0]}"
             return "选秀：拿坦克装备或缺的英雄" if carry_full else "选秀：拿主C装备散件"
         if state.stage is None:
-            return f"按 {self.hotkeys.analyze} 分析当前局面"
+            return f"{self._press('analyze')}分析当前局面"
         can_roll = econ.roll_budget >= self.mech.roll_cost
         if rec == EconAction.ALL_IN:
             return "血量危险，all-in搜牌" if can_roll else "血量危险：没钱了，调站位卖闲置"
@@ -596,7 +606,7 @@ class RulesAdvisor:
         can_roll = budget >= self.mech.roll_cost
         out: list[tuple[ActionType, str, int]] = []
         if state.stage is None:
-            out.append((ActionType.OTHER, f"进入对局后按 {self.hotkeys.analyze} 分析", 1))
+            out.append((ActionType.OTHER, f"进入对局后{self._press('analyze')}分析", 1))
             return out
         if carousel:
             return out

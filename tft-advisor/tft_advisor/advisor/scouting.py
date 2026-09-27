@@ -30,6 +30,8 @@ FIRST_SCOUT_ROUND = (2, 5)
 UNKNOWN_BOARD_BONUS = 15
 
 REQUEST_TEXT = "请点开右侧玩家列表里「{name}」的棋盘，然后按 {hotkey} 记录（看完点自己头像回来）"
+# Used when the scout hotkey could not be registered (the dashboard button still works).
+REQUEST_TEXT_BUTTON = "请点开右侧玩家列表里「{name}」的棋盘，然后点看板上的「记录对手」（看完点自己头像回来）"
 
 _NO_NEW_REQUEST_SCREENS = {ScreenType.CAROUSEL, ScreenType.AUGMENT_SELECT, ScreenType.LOADING, ScreenType.POST_GAME}
 
@@ -76,6 +78,7 @@ class ScoutPlanner:
     ) -> None:
         self.max_per_stage = max(0, int(max_per_stage))
         self.hotkey = hotkey
+        self.hotkey_available = True  # the app sets False when the global hotkey failed
         self.clock = clock
         self.carousel_round = mech.carousel_round if mech is not None else 4
         self.expire_after_rounds = max(1, int(expire_after_rounds))
@@ -270,7 +273,7 @@ class ScoutPlanner:
             rid = request_id(sr.stage, p.name)
             req = ScoutRequest(
                 id=rid,
-                text=REQUEST_TEXT.format(name=p.name, hotkey=self.hotkey),
+                text=(REQUEST_TEXT if self.hotkey_available else REQUEST_TEXT_BUTTON).format(name=p.name, hotkey=self.hotkey),
                 target_player=p.name,
                 reason=self._reason(p.hp, snap, hits, flagged),
                 created_at=self.clock(),

@@ -895,6 +895,13 @@ class AdvisorApp:
                     self.info(f"部分热键不可用（{'、'.join(failed)}），其余热键正常；不可用的请用网页上的按钮")
                 else:
                     self.info("全局热键不可用：请用网页上的按钮")
+        # Rules and scouting texts must not name keys that do nothing (hotkeys
+        # off, not on Windows, or taken by another program): they point to the
+        # dashboard buttons instead.
+        registered = {str(k).strip().lower() for k in (getattr(self._hotkeys, "registered", None) or [])}
+        keys = [self.cfg.hotkeys.analyze, self.cfg.hotkeys.scout, self.cfg.hotkeys.toggle_auto, self.cfg.hotkeys.shop]
+        self.rules.unavailable_keys = {k for k in keys if k.strip().lower() not in registered}
+        self.scout_planner.hotkey_available = self.cfg.hotkeys.scout.strip().lower() in registered
         # Claude must not name keys that do nothing: without any registered
         # hotkey it points the player to the dashboard buttons instead.
         if self.strategist is not None and hasattr(self.strategist, "hotkeys"):
