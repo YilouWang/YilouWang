@@ -478,6 +478,15 @@ def _pick_holder(role: str, item: Item, ctx: _Ctx) -> Optional[Unit]:
     units = [u for u in ctx.units if ctx.free(u) and not u.api_name.startswith("?")]
     if not units:
         units = [u for u in ctx.units if ctx.free(u)]
+    # A benched unit only holds items when it is worth fielding: part of the
+    # target comp, already upgraded, or a 4-5 cost. A cheap off-comp bench unit
+    # is about to be sold and items on it do nothing meanwhile. With nobody
+    # left the item waits on the bench.
+    units = [
+        u
+        for u in units
+        if ctx.on_board(u) or u.api_name in ctx.comp_apis or u.star >= 2 or (u.cost or 0) >= 4
+    ]
     if ctx.carry_unit is not None and item.api_name in ctx.carry_held and item.kind == "completed":
         # A second copy of an item the carry holds goes to a secondary unit
         # (or waits): the carry's slot is for its missing carry items.

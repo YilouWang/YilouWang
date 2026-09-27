@@ -412,6 +412,8 @@ def test_s18_ad_ap_item_for_a_benched_unit_is_not_slammed_now():
     flail = next(s for s in out.items if s.item == "强袭者的链枷")
     if flail.holder == "沃里克":
         assert flail.priority == 2 and "上场" in flail.reason
+    elif flail.holder is None:
+        assert flail.priority == 2  # nobody fits: keep the components
     else:
         assert flail.holder in [u.name for u in st.board]
 
@@ -449,3 +451,11 @@ def test_s18_duplicate_of_a_held_carry_item_goes_to_another_unit():
     carousel.stage, carousel.screen_type = StageRound.parse("4-4"), ScreenType.CAROUSEL
     adv = RulesAdvisor(mech=load_mechanics(), set_data=s18_set_data()).advise(carousel, _s18_plan(carousel))
     assert "装备已满" not in adv.headline and "海妖之怒" in " ".join(a.text for a in adv.actions)
+
+
+
+def test_cheap_off_comp_bench_unit_never_gets_items(set_data):
+    # A 1-cost 1-star on the bench is sell material: the item waits instead.
+    st = make_state("4-3", board=[("Braum", 1, (), 0, 3)], bench=[("Graves", 1)], item_bench=["B.F. Sword", "Recurve Bow"])
+    out = plan_items(st, set_data, hp_bucket="medium")
+    assert all(s.holder != "Graves" for s in out)
