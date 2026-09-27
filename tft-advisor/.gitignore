@@ -5,3 +5,5 @@ __pycache__/
 captures/
 *.tmp
 tft_advisor.toml
+build/
+dist/
