@@ -364,3 +364,59 @@ def test_config_example_comments_sit_on_their_own_key():
     assert "OCR" in ocr.split("#", 1)[1]
     reserve = next(line for line in text.splitlines() if line.startswith("shop_reserve_calls"))
     assert "OCR" not in reserve
+
+
+# ---------------------------------------------------------------------------
+# Augment picker: timing written in the effect, HP, effect-based labels
+# ---------------------------------------------------------------------------
+
+
+def _aug():
+    from tft_advisor.data.augments import AugmentData, pick_augment
+
+    return AugmentData.load(18), pick_augment
+
+
+@pytest.mark.parametrize(
+    "choices, stage, rnd, level, hp, want, bad",
+    [
+        (["Epic Rolldown", "Ascension", "Clockwork Accelerator"], 4, 2, 8, 60, None, "Epic Rolldown"),  # already level 8
+        (["游神的眷顾", "飞升", "星界赐福 II"], 4, 2, 8, 60, None, "游神的眷顾"),  # levels 5-8 all passed
+        (["强化之能量", "认知税", "烧起来"], 4, 2, 7, 60, None, "强化之能量"),  # no augment after 4-2
+        (["休眠锻炉", "集中火力", "星界赐福 I"], 4, 2, None, 25, None, "休眠锻炉"),  # 8 fights away at 25 HP
+        (["认知税", "集中火力", "星界赐福 I"], 3, 2, 6, 30, None, "认知税"),  # low HP: no economy at 3-2
+        (["手气不错", "拥抱 I", "应急护甲 I"], 3, 2, 6, 30, None, "手气不错"),
+        (["Epic Rolldown", "Ascension", "Clockwork Accelerator"], 4, 2, 7, 60, "Epic Rolldown", None),  # level 8 ahead
+        (["休眠锻炉", "集中火力", "星界赐福 I"], 4, 2, 7, 80, "休眠锻炉", None),  # healthy: the forge is fine
+        (["认知税", "集中火力", "星界赐福 I"], 2, 1, 4, 100, "认知税", None),  # early and healthy: economy
+    ],
+)
+def test_augment_pick_reads_the_effect_timing(choices, stage, rnd, level, hp, want, bad):
+    data, pick = _aug()
+    name, reason = pick(choices, data, stage, hp, [], level=level, round_no=rnd, augment_rounds=("2-1", "3-2", "4-2"))
+    if want:
+        assert name == want
+    if bad:
+        assert name != bad
+    assert reason and "—" not in reason
+
+
+def test_augment_pick_without_level_estimates_it_from_the_stage():
+    data, pick = _aug()
+    # "Next augment one tier higher" is dead at stage 4 even without the round.
+    name, _reason = pick(["强化之能量", "认知税", "烧起来"], data, 4, 60, [])
+    assert name != "强化之能量"
+
+
+def test_augment_labels_come_from_the_effect():
+    from tft_advisor.data.augments import effect_kinds
+
+    data, pick = _aug()
+    assert effect_kinds(data.lookup("宝宝学院")) == ["战力"]  # team AD/AP, not rolling
+    assert "搜牌" in effect_kinds(data.lookup("英勇福袋"))  # duplicators
+    assert "装备" in effect_kinds(data.lookup("休眠锻炉"))
+    assert "装备" not in effect_kinds(data.lookup("应急护甲 I"))  # "units without items" is not an item
+    name, reason = pick(["宝宝学院", "飞升", "发条增速器"], data, 3, 35, [], level=6, round_no=2)
+    assert "帮助搜牌" not in reason
+    _name, reason = pick(["大而有力"], data, 4, 60, [], level=7, round_no=2)
+    assert reason != "彩色" and reason

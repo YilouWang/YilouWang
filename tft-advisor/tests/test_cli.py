@@ -861,3 +861,31 @@ def test_replay_mock_and_demo_never_use_an_installed_ocr(home, offline_data, tmp
     assert cli.main(["demo", "--steps", "2", "--interval", "0", "--no-dashboard"]) == 0
     assert made == []
     assert "(没有结果" not in capsys.readouterr().out
+
+
+def test_run_names_only_hotkeys_that_work(home, offline_data, monkeypatch, capsys):
+    import socket
+
+    import tft_advisor.capture.hotkeys as hk
+    from tft_advisor.app import AdvisorApp
+
+    class Stub:
+        def __init__(self, bindings, log=print):
+            self.registered = [k for k in bindings if k != "F7"]  # F7 taken by another program
+            self.failed = {"F7": "taken"}
+
+        def start(self):
+            return False
+
+        def stop(self):
+            pass
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    monkeypatch.setattr(hk, "HotkeyManager", Stub)
+    monkeypatch.setattr(AdvisorApp, "wait", lambda self: None)
+    monkeypatch.setattr(cli, "_open", lambda *a, **k: None)
+    assert cli.main(["run", "--no-vision-llm", "--no-auto", "--port", str(port)]) == 0
+    line = next(x for x in capsys.readouterr().out.splitlines() if x.startswith("热键"))
+    assert "F6=分析" in line and "F9=读商店" in line and "F7" not in line

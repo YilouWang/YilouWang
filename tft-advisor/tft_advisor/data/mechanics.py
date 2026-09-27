@@ -74,9 +74,6 @@ class Mechanics:
         return total
 
     # ---- experience ---------------------------------------------------------
-    def xp_needed(self, level: int) -> Optional[int]:
-        return self.xp_to_level.get(level)
-
     def xp_to_next(self, level: Optional[int], xp_current: Optional[int]) -> Optional[int]:
         if level is None or level >= self.max_level:
             return None
@@ -122,6 +119,12 @@ class Mechanics:
     def is_augment(self, sr: Optional[StageRound]) -> bool:
         return sr is not None and f"{sr.stage}-{sr.round}" in self.augment_rounds
 
+    def max_round_damage(self, stage: Optional[int]) -> int:
+        """Most player HP one lost fight can plausibly cost at this stage: the
+        stage's base damage plus surviving units (used to spot HP misreads)."""
+        base = self.stage_damage.get(stage or 0, max(self.stage_damage.values(), default=0) if stage else 0)
+        return min(100, base + 20)
+
     def standard_level_at(self, sr: Optional[StageRound]) -> Optional[int]:
         """Level a standard line should have reached by this round."""
         if sr is None:
@@ -149,10 +152,6 @@ class Mechanics:
         if row is None or not 1 <= cost <= len(row):
             return 0.0
         return row[cost - 1]
-
-
-def _int_keys(d: dict[str, Any]) -> dict[int, Any]:
-    return {int(k): v for k, v in d.items()}
 
 
 def _from_dict(raw: dict[str, Any]) -> Mechanics:

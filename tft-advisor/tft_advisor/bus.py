@@ -6,6 +6,8 @@ Topics used across the app:
   "advice"    Advice.model_dump(mode="json")
   "requests"  list of ScoutRequest dicts (current open human requests)
   "status"    {"auto": bool, "busy": bool, "last_error": str|None, "calls": int,
+               "last_error_ts": float|None (when last_error happened; a later
+               success of the same source clears both),
                "thinking": bool (Claude strategy call running), "auto_paused": bool
                (game window missing / not in the foreground), "capture_error": str|None,
                "comp_hint": str (current target comp, "" = auto), "perceiver": str

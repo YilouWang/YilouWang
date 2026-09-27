@@ -61,13 +61,16 @@ def _looks_like_llm(obj: Any) -> bool:
 class ClaudeStrategist:
     """``llm`` is a ``tft_advisor.llm.LLM``. For compatibility with the
     architecture doc a raw ``anthropic.Anthropic`` client is also accepted and
-    wrapped in an ``LLM``."""
+    wrapped in an ``LLM``. Everything after ``set_data`` is keyword-only: a
+    reference text passed where ``clock`` was expected would otherwise fail
+    every call silently."""
 
     def __init__(
         self,
         llm: Any,
         cfg: AnthropicConfig,
         set_data: SetData,
+        *,
         clock: Callable[[], float] = time.time,
         extra_reference: str = "",
         hotkeys: Optional[HotkeyConfig] = None,

@@ -209,12 +209,16 @@ def test_stage_one_after_stage_two_is_a_new_game(tracker, clock):
     tracker.ingest(obs(purpose="scout", viewing_own_board=False, viewed_player_name="A", board=["Ahri"]))
     old_id = tracker.state.game_id
     clock.tick(600)
+    # One 1-x reading is not enough (a digit misread early in stage 2 would
+    # wipe the game); the next consistent reading confirms the new game.
     st = tracker.ingest(own_frame(stage="1-2", gold=1))
-    assert str(st.stage) == "1-2"
+    assert str(st.stage) == "4-3" and st.game_id == old_id
+    st = tracker.ingest(own_frame(stage="1-3", gold=3))
+    assert str(st.stage) == "1-3"
     assert st.game_id != old_id
     assert st.board == [] and st.level is None and st.hp is None and st.opponents == {} and st.players == []
-    assert st.gold == 1
-    assert [h.stage for h in st.history] == ["1-2"]
+    assert st.gold == 3
+    assert [h.stage for h in st.history] == ["1-3"]
     assert tracker.taken_copies() == {}
 
 
@@ -759,3 +763,325 @@ def test_wire_schema_text_is_model_facing():
         desc = props[name].get("description", "")
         assert placeholder in desc and "unreadable" in desc, name
     assert "viewed_player_level" in props
+
+
+# ---------------------------------------------------------------------------
+# Vision noise: stage runs, new games, suspicious numbers, ownership
+# ---------------------------------------------------------------------------
+
+LOBBY1 = (("Me", 40), ("Kaiser", 55), ("Bolt", 30), ("Cyan", 20), ("Dora", 61), ("Echo", 12), ("Fay", 0), ("Gus", 0))
+LOBBY2 = (("Me", 100), ("Anna", 100), ("Bert", 100), ("Cleo", 100), ("Dan", 100), ("Ezra", 100), ("Finn", 100), ("Gia", 100))
+
+
+def test_new_game_found_without_stage_one_or_post_game(tracker):
+    tracker.ingest(own_frame(stage="5-2", level=8, hp=40, board=["Graves", "Ahri"], players=players(*LOBBY1, me="Me")))
+    tracker.ingest(obs(purpose="scout", viewing_own_board=False, viewed_player_name="Kaiser", board=[uo("Lucian", 3), "Ashe"]))
+    tracker.ingest(own_frame(stage="5-3", hp=40))
+    old_id = tracker.state.game_id
+    # The window closed after elimination; the next game starts at 2-1 with a new lobby.
+    st = tracker.ingest(own_frame(stage="2-1", level=4, hp=100, board=["Garen"], players=players(*LOBBY2, me="Me")))
+    assert st.game_id != old_id and str(st.stage) == "2-1"
+    assert st.opponents == {} and tracker.taken_copies() == {}
+    assert [h.stage for h in st.history] == ["2-1"] and st.hp == 100
+    st = tracker.ingest(own_frame(stage="2-2", level=4, hp=100, players=players(*LOBBY2, me="Me")))
+    assert str(st.stage) == "2-2" and st.game_id != old_id
+
+
+def test_consistent_lower_run_is_followed_even_without_lobby_evidence(tracker):
+    # Only the stage is readable: two consecutive consistent lower readings
+    # still move the stage (a correction), so it never stays frozen at 5-3.
+    tracker.ingest(own_frame(stage="5-3", level=8, hp=40))
+    st = tracker.ingest(own_frame(stage="2-1"))
+    assert str(st.stage) == "5-3"
+    st = tracker.ingest(own_frame(stage="2-2"))
+    assert str(st.stage) == "2-2"
+
+
+def test_forward_misread_is_corrected_by_later_consistent_readings(tracker):
+    tracker.ingest(own_frame(stage="3-2", gold=36, level=6, hp=70))
+    tracker.ingest(own_frame(stage="4-3"))  # misread of 3-3, one stage ahead: accepted at first
+    st = tracker.ingest(own_frame(stage="3-5"))
+    assert str(st.stage) == "4-3"
+    st = tracker.ingest(own_frame(stage="3-6"))
+    assert str(st.stage) == "3-6"
+    assert [h.stage for h in st.history] == ["3-2", "3-6"]
+
+
+def test_confirmed_big_jump_misread_does_not_freeze_the_stage(tracker):
+    tracker.ingest(own_frame(stage="3-2"))
+    tracker.ingest(own_frame(stage="8-2"))
+    st = tracker.ingest(own_frame(stage="8-2"))  # the same misread twice (auto + F6)
+    assert str(st.stage) == "8-2"
+    tracker.ingest(own_frame(stage="3-3"))
+    st = tracker.ingest(own_frame(stage="3-5"))
+    assert str(st.stage) == "3-5"
+
+
+def test_single_stage_one_misread_early_in_stage_two_keeps_the_game(tracker):
+    lobby = players(("Me", 100), ("Kaiser", 100), ("Bolt", 100), ("Cyan", 100), me="Me")
+    tracker.ingest(own_frame(stage="2-1", level=4, hp=100, board=["Garen"], players=lobby))
+    tracker.ingest(obs(purpose="scout", viewing_own_board=False, viewed_player_name="Kaiser", board=["Ahri"]))
+    tracker.ingest(own_frame(stage="2-2", level=4, hp=100, players=lobby))
+    old_id = tracker.state.game_id
+    st = tracker.ingest(own_frame(stage="1-2", level=4, hp=100, players=lobby))  # "2-2" misread
+    assert st.game_id == old_id and str(st.stage) == "2-2"
+    st = tracker.ingest(own_frame(stage="2-3", level=4, hp=100, players=lobby))
+    assert st.game_id == old_id and "Kaiser" in st.opponents
+    assert [h.stage for h in st.history] == ["2-1", "2-2", "2-3"]
+
+
+def test_misclassified_post_game_then_lower_misread_keeps_the_game(tracker):
+    tracker.ingest(own_frame(stage="4-1", hp=50, board=["Graves"], players=players(("Me", 50), ("Kaiser", 60), me="Me")))
+    tracker.ingest(own_frame(stage="4-2", hp=50))
+    tracker.ingest(obs(purpose="scout", viewing_own_board=False, viewed_player_name="Kaiser", board=["Ahri"]))
+    old_id = tracker.state.game_id
+    # A round result banner called post-game (the stage is still on screen)...
+    tracker.ingest(obs(screen_type=ScreenType.POST_GAME, stage="4-2"))
+    st = tracker.ingest(own_frame(stage="4-1"))  # ...then a round digit misread
+    assert st.game_id == old_id and "Kaiser" in st.opponents and str(st.stage) == "4-2"
+    # Even a plausible end screen resets only on an early stage or a new lobby.
+    tracker.ingest(obs(screen_type=ScreenType.POST_GAME))
+    st = tracker.ingest(own_frame(stage="4-1"))
+    assert st.game_id == old_id
+
+
+def test_gold_jump_needs_a_second_reading(tracker):
+    tracker.ingest(own_frame(stage="4-1", gold=42, level=7, board=["Graves"]))
+    st = tracker.ingest(own_frame(gold=142))  # "42" with a stray digit
+    assert st.gold == 42
+    st = tracker.ingest(own_frame(gold=44))
+    assert st.gold == 44
+    tracker.ingest(own_frame(gold=95))  # a real +51 (sold a board, augment gold)
+    st = tracker.ingest(own_frame(gold=95))
+    assert st.gold == 95
+    # A new round brings income: +20 is fine without a second reading.
+    st = tracker.ingest(own_frame(stage="4-2", gold=115))
+    assert st.gold == 115
+
+
+def test_level_never_goes_down_on_one_reading_and_xp_survives_a_flicker(tracker, mech):
+    tracker.ingest(own_frame(stage="4-1", level=7, xp_current=20, xp_needed=56))
+    st = tracker.ingest(own_frame(level=1, xp_current=20, xp_needed=56))  # "7" read as "1"
+    assert st.level == 7 and st.xp_current == 20
+    st = tracker.ingest(own_frame(level=8))  # one frame reads 8 with no XP
+    assert st.level == 8 and st.xp_current is None
+    tracker.ingest(own_frame(level=7))
+    st = tracker.ingest(own_frame(level=7))  # read twice: the 8 was the misread
+    assert st.level == 7 and st.xp_current == 20 and st.xp_needed == 56
+    # A dashboard correction applies at once.
+    st = tracker.set_field("level", 6)
+    assert st.level == 6
+
+
+def test_hp_digit_drop_prefers_the_player_list(tracker):
+    tracker.ingest(own_frame(stage="4-1", hp=60, players=players(("Me", 60), ("Kaiser", 70), me="Me")))
+    st = tracker.ingest(own_frame(stage="4-2", hp=6, players=players(("Me", 60), ("Kaiser", 70), me="Me")))
+    assert st.hp == 60 and next(p for p in st.players if p.name == "Me").hp == 60
+    assert st.history[-1].hp == 60
+    # Only the top HP, implausible: needs a second reading.
+    st = tracker.ingest(own_frame(hp=6))
+    assert st.hp == 60
+    st = tracker.ingest(own_frame(hp=6))
+    assert st.hp == 6 and next(p for p in st.players if p.name == "Me").hp == 6
+    # HP does not come back up on one reading.
+    st = tracker.ingest(own_frame(hp=60))
+    assert st.hp == 6
+
+
+def test_big_real_loss_is_accepted_when_both_readings_agree(tracker):
+    tracker.ingest(own_frame(stage="5-1", hp=70, players=players(("Me", 70), ("Kaiser", 70), me="Me")))
+    st = tracker.ingest(own_frame(stage="5-2", hp=35, players=players(("Me", 35), ("Kaiser", 70), me="Me")))
+    assert st.hp == 35
+
+
+def test_scout_frame_labeled_own_does_not_replace_our_board(tracker):
+    lobby = players(("Me", 62), ("Kaiser", 48), ("Bolt", 30), me="Me")
+    tracker.ingest(own_frame(
+        stage="4-1", hp=62, level=7, board=[uo("Ahri", 2), uo("Morgana", 2), "Braum", "Shen", "Garen", "Pyke"],
+        bench=["Kayle"], item_bench=["B.F. Sword"], players=lobby,
+    ))
+    for purpose in ("scout", "manual"):
+        st = tracker.ingest(obs(
+            purpose=purpose, stage="4-1", viewing_own_board=True, hp=48, level=7,
+            board=[uo("Lucian", 2), uo("Ashe", 2), "Vayne", uo("Darius", 2), "Draven"], bench=["Ashe"],
+            item_bench=["Recurve Bow", "Recurve Bow"], players=lobby,
+        ))
+        assert [u.name for u in st.board][:2] == ["Ahri", "Morgana"] and [u.name for u in st.bench] == ["Kayle"]
+        assert st.item_bench == ["B.F. Sword"] and st.hp == 62
+        assert next(p for p in st.players if p.name == "Me").hp == 62
+        # Filed under the player whose listed HP is on screen.
+        assert [u.name for u in st.opponents["Kaiser"].board][0] == "Lucian"
+    # The scout key pressed on our own board (one unit bought) is still ours.
+    st = tracker.ingest(obs(purpose="scout", viewing_own_board=True, hp=62, players=lobby,
+                            board=[uo("Ahri", 2), uo("Morgana", 2), "Braum", "Shen", "Garen", "Pyke", "Kayle"]))
+    assert len(st.board) == 7
+
+
+def test_wrong_first_self_flag_is_corrected(tracker):
+    tracker.ingest(obs(stage="1-2", players=[PlayerObs(name="Kaiser", hp=100, is_self=True), PlayerObs(name="Me", hp=100)]))
+    assert tracker.state.self_name == "Kaiser"
+    rows = [PlayerObs(name="Me", hp=72, is_self=True), PlayerObs(name="Kaiser", hp=91), PlayerObs(name="Bolt", hp=50)]
+    tracker.ingest(own_frame(stage="3-1", hp=72, board=["Garen", "Graves"], players=rows))
+    st = tracker.ingest(own_frame(stage="3-2", hp=72, players=rows))
+    assert st.self_name == "Me" and st.hp == 72
+    assert next(p for p in st.players if p.name == "Kaiser").hp == 91
+    assert [p.name for p in st.players if p.is_self] == ["Me"]
+    # Kaiser can be scouted now.
+    st = tracker.ingest(obs(purpose="scout", viewing_own_board=False, viewed_player_name="Kaiser", board=["Ahri", "Shen"]))
+    assert "Kaiser" in st.opponents and "Kaiser" in tracker.taken_by_player()
+    assert tracker.self_name_confirmed
+
+
+def test_one_stray_self_flag_does_not_switch(tracker):
+    tracker.ingest(own_frame(stage="3-1", players=players(("Me", 70), ("Kaiser", 80), me="Me")))
+    tracker.ingest(own_frame(stage="3-1", players=players(("Me", 70), ("Kaiser", 80), me="Me")))
+    st = tracker.ingest(own_frame(stage="3-2", players=players(("Me", 70), ("Kaiser", 80), me="Kaiser")))
+    assert st.self_name == "Me"
+    st = tracker.ingest(own_frame(stage="3-2", players=players(("Me", 70), ("Kaiser", 80), me="Me")))
+    assert st.self_name == "Me"
+
+
+def test_own_board_with_a_model_read_name_is_ours(tracker):
+    lobby = players(("Me", 70), ("Kaiser", 60), me="Me")
+    board = ["Ahri", "Garen", "Graves", "Braum", "Shen"]
+    tracker.ingest(own_frame(stage="3-2", board=board, players=lobby))
+    st = tracker.ingest(obs(stage="3-3", viewing_own_board=False, viewed_player_name="Kaiser", level=6, board=board, players=lobby))
+    assert st.opponents == {} and tracker.taken_by_player() == {} and st.level == 6
+
+
+def test_star_ups_after_a_roll_still_look_like_our_board(tracker):
+    tracker.ingest(own_frame(stage="4-1", level=7, board=["Ahri", "Garen", "Graves", "Braum", "Shen", "Pyke", "Lucian"]))
+    st = tracker.ingest(obs(
+        stage="4-2", viewing_own_board=False, level=8,
+        board=[uo("Ahri", 2), uo("Garen", 2), uo("Graves", 2), uo("Braum", 2), "Shen", "Pyke", "Lucian", "Kayle"],
+    ))
+    assert st.level == 8 and len(st.board) == 8 and st.opponents == {}
+    # The bottom HUD applies even when the board is filed under an opponent.
+    st = tracker.ingest(obs(stage="4-2", viewing_own_board=False, viewed_player_name="Bob", level=9, board=["Draven", "Ashe"]))
+    assert st.level == 9 and "Bob" in st.opponents
+
+
+def test_augment_screen_bench_read_is_not_an_unknown_opponent(tracker):
+    tracker.ingest(own_frame(stage="4-1", level=7, board=["Ahri", "Garen", "Graves", "Braum", "Shen", "Pyke", "Lucian"],
+                             bench=["Kayle", "Akali", "Draven"]))
+    st = tracker.ingest(obs(stage="4-2", screen_type=ScreenType.AUGMENT_SELECT, viewing_own_board=False, level=8,
+                            board=["Ahri"], bench=["Kayle", "Akali", "Draven"]))
+    assert st.opponents == {} and tracker.taken_by_player() == {} and st.level == 8
+
+
+def test_stale_unknown_snapshot_is_superseded(tracker):
+    tracker.ingest(own_frame(stage="3-2", board=["Garen"], players=players(("Me", 70), ("Kaiser", 50), ("Bolt", 50), me="Me")))
+    tracker.ingest(obs(purpose="scout", viewing_own_board=False, hp=50, board=["Lucian", "Ashe", "Vayne", uo("Kayle", 2)]))
+    assert UNKNOWN_PLAYER in tracker.taken_by_player()
+    tracker.ingest(own_frame(stage="4-2"))
+    assert UNKNOWN_PLAYER not in tracker.taken_by_player()  # a stage old
+    tracker.ingest(obs(purpose="scout", viewing_own_board=False, hp=50, board=["Draven"]))
+    tracker.ingest(obs(purpose="scout", viewing_own_board=False, viewed_player_name="Kaiser",
+                       board=[uo("Lucian", 2), uo("Ashe", 2), "Vayne", uo("Kayle", 2)]))
+    assert set(tracker.taken_by_player()) == {"Kaiser"}
+    assert tracker.taken_copies()["TFT99_Kayle"] == 3
+
+
+def test_short_chinese_names_match_with_one_wrong_character(tracker):
+    lobby = players(("我自己", 70), ("月光", 60), ("小明", 50), me="我自己")
+    tracker.ingest(own_frame(stage="3-1", board=["Garen"], players=lobby))
+    st = tracker.ingest(obs(purpose="scout", viewing_own_board=False, viewed_player_name="月先", board=["Kayle", "Kayle"],
+                            players=players(("我自己", 70), ("月先", 60), ("小明", 50))))
+    assert sorted(p.name for p in st.players) == sorted(["我自己", "月光", "小明"])
+    assert set(st.opponents) == {"月光"}
+    tracker.ingest(obs(purpose="scout", viewing_own_board=False, viewed_player_name="月光", board=["Kayle", "Kayle", "Teemo"]))
+    assert set(tracker.taken_by_player()) == {"月光"}
+    # Different digits are different players, not a misread.
+    assert tracker._canonical_player("P2", ["P1"]) == "P2"
+    assert tracker._canonical_player("Zcd", ["Zed", "Kaiser"]) == "Zed"
+
+
+def test_snapshot_of_a_name_missing_from_a_full_lobby_is_ignored(tracker):
+    lobby = players(("Me", 70), ("A1", 60), ("B1", 60), ("C1", 60), ("D1", 60), ("E1", 60), ("F1", 60), ("G1", 60), me="Me")
+    tracker.ingest(obs(purpose="scout", viewing_own_board=False, viewed_player_name="Ghost", board=["Kayle"]))
+    assert "Ghost" in tracker.taken_by_player()
+    tracker.ingest(own_frame(stage="3-1", players=lobby))
+    assert "Ghost" not in tracker.taken_by_player()
+
+
+def test_combat_frame_with_enemy_units_keeps_our_board(tracker):
+    own = ["Ahri", "Garen", "Graves", "Braum", "Shen", "Pyke", "Lucian"]
+    tracker.ingest(own_frame(stage="4-3", level=7, board=own))
+    enemies = [uo("Ashe", 2), uo("Vayne", 2), uo("Darius", 2), "Draven", uo("Kayle", 2)]
+    st = tracker.ingest(own_frame(screen_type=ScreenType.COMBAT, level=7, board=[*own, *enemies]))
+    assert [u.name for u in st.board] == own
+    # A combat board that is not ours is ignored too (HUD still applies).
+    st = tracker.ingest(own_frame(screen_type=ScreenType.COMBAT, level=7, streak=2, board=enemies))
+    assert [u.name for u in st.board] == own and st.streak == 2
+
+
+def test_unit_missed_for_one_frame_is_kept_with_its_hex(tracker):
+    board = [uo("Ahri", 2, row=3, col=0), uo("Garen", row=0, col=3), uo("Graves", row=3, col=6), uo("Braum", row=0, col=2)]
+    tracker.ingest(own_frame(stage="3-3", gold=30, board=board, bench=["Kayle"]))
+    st = tracker.ingest(own_frame(stage="3-5", gold=30, board=board[1:], bench=["Kayle"]))  # Ahri missed
+    assert [u.name for u in st.board].count("Ahri") == 1 and len(st.board) == 4
+    # Back, read without hexes: the remembered hex returns.
+    st = tracker.ingest(own_frame(stage="3-6", gold=30, board=[uo("Ahri", 2), "Garen", "Graves", "Braum"]))
+    ahri = next(u for u in st.board if u.name == "Ahri")
+    assert (ahri.row, ahri.col) == (3, 0)
+    # Gone on two frames in a row: really gone.
+    tracker.ingest(own_frame(gold=30, board=["Garen", "Graves", "Braum"]))
+    st = tracker.ingest(own_frame(gold=30, board=["Garen", "Graves", "Braum"]))
+    assert len(st.board) == 3
+    # Sold (gold went up by its value) or benched: gone at once.
+    st = tracker.ingest(own_frame(gold=30, board=["Garen", "Graves", "Braum", "Lucian"]))
+    st = tracker.ingest(own_frame(gold=33, board=["Garen", "Graves", "Braum"]))
+    assert len(st.board) == 3
+    tracker.ingest(own_frame(gold=33, board=["Garen", "Graves", "Braum", "Lucian"]))
+    st = tracker.ingest(own_frame(gold=33, board=["Garen", "Graves", "Braum"], bench=["Lucian"]))
+    assert len(st.board) == 3
+
+
+def test_manual_corrections_are_bounded_and_accept_full_width(tracker, mech):
+    tracker.set_field("level", 8)
+    with pytest.raises(ValueError):
+        tracker.set_field("xp_current", mech.xp_to_level[8])
+    assert tracker.set_field("xp_current", mech.xp_to_level[8] - 1).xp_current == mech.xp_to_level[8] - 1
+    with pytest.raises(ValueError):
+        tracker.set_field("stage", "9-9")
+    with pytest.raises(ValueError):
+        tracker.set_field("stage", "3-8")
+    assert tracker.set_field("gold", "５５").gold == 55
+    assert str(tracker.set_field("stage", "３－２").stage) == "3-2"
+    assert tracker.set_field("streak", "－３").streak == -3
+
+
+def test_hex_positions_are_remembered_for_a_few_rounds(tracker):
+    board = [uo("Ahri", 2, row=3, col=0), uo("Shen", row=0, col=1), uo("Garen", row=0, col=3), uo("Graves", row=3, col=6)]
+    tracker.ingest(own_frame(stage="3-3", board=board))
+    tracker.ingest(own_frame(stage="3-5", board=board[2:]))  # two units missed: not kept
+    st = tracker.ingest(own_frame(stage="3-6", board=[uo("Ahri", 2), "Shen", "Garen", "Graves"]))
+    pos = {u.name: (u.row, u.col) for u in st.board}
+    assert pos["Ahri"] == (3, 0) and pos["Shen"] == (0, 1)
+
+
+def test_named_opponent_with_a_board_close_to_our_small_one(tracker):
+    # Early boards share cheap units: the banner name still wins when the
+    # boards differ (only the vision's own "own board" claim is lenient).
+    tracker.ingest(own_frame(stage="2-1", board=["Garen", "Graves"], players=players(("Me", 100), ("Alice", 100), me="Me")))
+    st = tracker.ingest(obs(stage="2-1", viewing_own_board=False, viewed_player_name="Alice", board=["Garen", "Graves", "Ahri"]))
+    assert "Alice" in st.opponents and [u.name for u in st.board] == ["Garen", "Graves"]
+
+
+def test_self_flags_on_scout_frames_do_not_move_the_local_player(tracker):
+    lobby = [PlayerObs(name="Me", hp=70, is_self=True), PlayerObs(name="Kaiser", hp=50)]
+    tracker.ingest(own_frame(stage="3-1", hp=70, board=["Garen"], players=lobby))
+    viewed = [PlayerObs(name="Me", hp=70), PlayerObs(name="Kaiser", hp=50, is_self=True)]  # the viewed row is lit
+    for _ in range(3):
+        st = tracker.ingest(obs(purpose="scout", viewing_own_board=False, viewed_player_name="Kaiser", hp=50,
+                                board=["Ahri"], players=viewed))
+    assert st.self_name == "Me" and st.hp == 70 and "Kaiser" in st.opponents
+
+
+def test_gold_augment_on_an_augment_round_is_taken_at_once(tracker, mech):
+    rnd = mech.augment_rounds[-1]
+    tracker.ingest(own_frame(stage=rnd, gold=50, screen_type=ScreenType.AUGMENT_SELECT, augment_choices=["A", "B", "C"]))
+    st = tracker.ingest(own_frame(stage=rnd, gold=95))
+    assert st.gold == 95
+    st = tracker.ingest(own_frame(stage=rnd, gold=195))  # still a misread
+    assert st.gold == 95

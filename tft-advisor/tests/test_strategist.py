@@ -573,3 +573,17 @@ def test_odds_rows_trimmed_to_useful_signal():
     analysis.econ = EconPlan(roll_budget=34, style="reroll1")
     units = [o["unit"] for o in _payload(build_state_message(GameState(), analysis, None))["odds"]]
     assert units == ["Draven", "Garen", "Vi"]
+
+
+def test_optional_constructor_arguments_are_keyword_only(set_data):
+    """ClaudeStrategist(llm, cfg, sd, "notes") used to bind the notes to
+    ``clock``: every advise() then fell back to the rules with a TypeError.
+    Now the mistake fails at construction, and the keyword form works."""
+    cfg = AnthropicConfig()
+    with FakeAnthropic() as fake:
+        llm = LLM(cfg, client=fake.client())
+        with pytest.raises(TypeError):
+            ClaudeStrategist(llm, cfg, set_data, "set notes here")
+        strat = ClaudeStrategist(llm, cfg, set_data, extra_reference="set notes here")
+        assert "set notes here" in strat.system_prompt
+        assert isinstance(strat.clock(), float)

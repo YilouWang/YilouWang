@@ -680,11 +680,36 @@ def test_plan_milestones_follow_the_line(advisor):
     base = dict(stage=StageRound.parse("4-1"), gold=40, level=7, xp_current=0, hp=80)
     std = advisor.advise(GameState(**base), Analysis(econ=EconPlan(recommendation=EconAction.SAVE, style="standard")))
     assert "4-5 升 8" in std.plan
-    fast8 = advisor.advise(GameState(**base), Analysis(econ=EconPlan(recommendation=EconAction.SAVE, style="fast8")))
+    # Medium HP: fast 8 goes 8 at 4-2 (economy._wanted_level).
+    medium = dict(base, hp=55)
+    fast8 = advisor.advise(GameState(**medium), Analysis(econ=EconPlan(recommendation=EconAction.SAVE, style="fast8")))
     assert "4-2 升 8" in fast8.plan and "4-5 升 8" not in fast8.plan
-    late = dict(base, stage=StageRound.parse("4-6"), level=8)
+    late = dict(medium, stage=StageRound.parse("4-6"), level=8)
     fast9 = advisor.advise(GameState(**late), Analysis(econ=EconPlan(recommendation=EconAction.SAVE, style="fast9")))
     assert "5-2 升 9" in fast9.plan and "5-5" not in fast9.plan
+
+
+def test_plan_milestones_match_the_econ_engine_at_healthy_hp(advisor, mech):
+    """Healthy fast lines level a round earlier (7 at 3-5, 8 at 4-1, 9 at
+    5-1): the plan must name the rounds the econ engine will act on."""
+    from tft_advisor.engine.economy import _wanted_level
+
+    early = GameState(stage=StageRound.parse("3-2"), gold=40, level=6, xp_current=0, hp=80)
+    fast8 = advisor.advise(early, Analysis(econ=EconPlan(recommendation=EconAction.SAVE, style="fast8")))
+    assert "3-5 升 7" in fast8.plan and "4-1 升 8" in fast8.plan and "4-2" not in fast8.plan
+    late = GameState(stage=StageRound.parse("4-6"), gold=40, level=8, xp_current=0, hp=80)
+    fast9 = advisor.advise(late, Analysis(econ=EconPlan(recommendation=EconAction.SAVE, style="fast9")))
+    assert "5-1 升 9" in fast9.plan and "5-2" not in fast9.plan
+    # Every milestone is exactly where the engine starts wanting that level.
+    for style in ("standard", "fast8", "fast9"):
+        for hp, bucket in ((80, "healthy"), (55, "medium")):
+            for r, lvl in advisor._milestones(style, hp):
+                if r.stage < 2:
+                    continue
+                std = mech.standard_level_at(r)
+                assert _wanted_level(r, std, style, bucket) == lvl
+                prev = StageRound(stage=r.stage, round=r.round - 1) if r.round > 1 else StageRound(stage=r.stage - 1, round=7)
+                assert _wanted_level(prev, mech.standard_level_at(prev), style, bucket) < lvl
 
 
 # ---------------------------------------------------------------------------
@@ -743,10 +768,10 @@ def test_fast_line_behind_schedule_still_hears_level_8(advisor):
         adv = advisor.advise(state, Analysis(econ=EconPlan(style="fast8", **save)))
         check_contract(adv)
         assert "尽快升 8 找 4 费主C" in adv.plan and "5-5 升 9" in adv.plan
-    # Fast 9 at 6 after 4-2: catch up to 8, then 9 at 5-2.
+    # Fast 9 at 6 after 4-2: catch up to 8, then 9 at 5-1 (healthy HP).
     state = GameState(stage=StageRound.parse("4-2"), gold=30, level=6, hp=70)
     adv = advisor.advise(state, Analysis(econ=EconPlan(style="fast9", **save)))
-    assert "尽快补到 8 级" in adv.plan and "5-2 升 9" in adv.plan
+    assert "尽快补到 8 级" in adv.plan and "5-1 升 9" in adv.plan
     # Level 7 after 5-5: one level at a time, 9 named once.
     state = GameState(stage=StageRound.parse("5-6"), gold=38, level=7, hp=70)
     adv = advisor.advise(state, Analysis(econ=EconPlan(style="standard", **save)))
@@ -871,3 +896,266 @@ def test_strategist_message_carries_augment_effects():
     payload = _json.loads(msg[msg.index("{"): msg.rindex("}") + 1])
     info = payload["augment_info"]
     assert [x["name"] for x in info] == ["Latent Forge"] and info[0]["tier"] == "S" and info[0]["effect"]
+
+
+# ---------------------------------------------------------------------------
+# Regression tests (tft-domain review, round 3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def real_sd():
+    from tft_advisor.data.setdata import bundled_snapshot
+
+    return SetData.from_cdragon(bundled_snapshot("zh_cn"), bundled_snapshot("en_us"))
+
+
+def test_carousel_counts_items_on_their_way_to_the_carry(advisor):
+    """A completed carry item on the bench, or a slam planned this round,
+    fills the carry's slot: no second copy, no components for a full carry."""
+    comp = CompSuggestion(name="X", score=0.8, carry="Draven", carry_items=["Red Buff", "Infinity Edge", "Deathblade"])
+    two = unit("Draven", 4, 2, ["Red Buff", "Infinity Edge"], row=3, col=0)
+    base = dict(stage=StageRound.parse("4-4"), gold=30, level=7, hp=60)
+    # Repro 1: Deathblade is already built and waits on the bench for Draven.
+    state = GameState(**base, board=[two], item_bench=["Deathblade"])
+    built = ItemSuggestion(item="Deathblade", components=[], holder="Draven", priority=1)
+    adv = advisor.advise(state, Analysis(comps=[comp], items=[built]))
+    check_contract(adv)
+    car = action(adv, ActionType.CAROUSEL).text
+    assert "Deathblade" not in car and "B.F. Sword" not in car and "主C装备已满" in car
+    assert adv.headline == "选秀：拿坦克装备或缺的英雄"
+    # Repro 2: the plan slams Deathblade from two swords this round.
+    state = GameState(**base, board=[two], item_bench=["B.F. Sword", "B.F. Sword"])
+    slam = ItemSuggestion(item="Deathblade", components=["B.F. Sword", "B.F. Sword"], holder="Draven", priority=1)
+    adv = advisor.advise(state, Analysis(comps=[comp], items=[slam]))
+    assert adv.headline == "选秀：拿坦克装备或缺的英雄"
+    assert "主C装备已满" in action(adv, ActionType.CAROUSEL).text
+    # One item held, Deathblade on the bench: the pick goes to the third item.
+    one = unit("Draven", 4, 2, ["Red Buff"], row=3, col=0)
+    state = GameState(**base, board=[one], item_bench=["Deathblade"])
+    adv = advisor.advise(state, Analysis(comps=[comp], items=[built]))
+    car = action(adv, ActionType.CAROUSEL).text
+    assert "Infinity Edge" in car and "Deathblade" not in car
+    # Without the comp: the fielded carry (2 damage items) counts the slam too.
+    adv = advisor.advise(GameState(**base, board=[two], item_bench=["Deathblade"]), Analysis(items=[built]))
+    assert adv.headline == "选秀：拿坦克装备或缺的英雄"
+    # Thief's Gloves fills every slot of its holder.
+    gloves = ItemSuggestion(item="Thief's Gloves", components=[], holder="Draven", priority=1)
+    empty = unit("Draven", 4, 2, row=3, col=0)
+    adv = advisor.advise(GameState(**base, board=[empty], item_bench=["Thief's Gloves"]), Analysis(comps=[comp], items=[gloves]))
+    assert adv.headline == "选秀：拿坦克装备或缺的英雄"
+
+
+def test_augment_pick_uses_the_target_comp_and_board_traits(real_sd):
+    from tft_advisor.data.augments import AugmentData
+
+    adv = RulesAdvisor(set_data=real_sd)
+    adv.augments = AugmentData.load(18)
+
+    def u(name, row, col):
+        ch = real_sd.resolve_champion(name)
+        return Unit(api_name=ch.api_name, name=ch.name, cost=ch.cost, traits=list(ch.traits), row=row, col=col)
+
+    base = dict(
+        stage=StageRound.parse("2-1"), gold=10, level=4, hp=100, screen_type=ScreenType.AUGMENT_SELECT,
+        augment_choices=["烧起来", "认知税", "手气不错"],
+    )
+    inferno = [u("韦鲁斯", 3, 0), u("阿卡丽", 0, 2), u("慎", 0, 3), u("约里克", 0, 4)]
+    comp = CompSuggestion(
+        name="日蚀骑士 近战", score=0.37, carry="韦鲁斯",
+        core_units=["蕾欧娜", "阿卡丽", "卡蜜尔", "奥恩", "韦鲁斯", "凯尔", "瑟庄妮"],
+    )
+    # Trait panel not read: the board's own 3 Inferno count.
+    out = adv.advise(GameState(**base, board=inferno), Analysis(comps=[comp]))
+    assert out.headline == "海克斯选 烧起来" and "契合当前羁绊" in out.augment
+    assert adv.advise(GameState(**base, board=inferno), Analysis()).headline == "海克斯选 烧起来"
+    # A committed comp lends its traits even before the board has them.
+    yorick = [u("约里克", 0, 4)]
+    committed = comp.model_copy(update={"score": 0.8})
+    assert adv.advise(GameState(**base, board=yorick), Analysis(comps=[committed])).headline == "海克斯选 烧起来"
+    # A loose guess only where the board already started the trait.
+    assert adv.advise(GameState(**base, board=yorick), Analysis(comps=[comp])).headline == "海克斯选 认知税"
+    started = [u("约里克", 0, 4), u("韦鲁斯", 3, 0)]
+    assert adv.advise(GameState(**base, board=started), Analysis(comps=[comp])).headline == "海克斯选 烧起来"
+
+
+def test_tank_item_carrier_is_positioned_as_the_main_tank(advisor, real_sd):
+    comp = CompSuggestion(
+        name="Warwick Reroll", score=0.8, carry="Braum",
+        carry_items=["Warmog's Armor", "Gargoyle Stoneplate", "Crownguard"], positions={"Braum": [0, 3]},
+    )
+    state = GameState(
+        stage=StageRound.parse("4-5"), gold=30, level=8, hp=60,
+        board=[unit("Braum", 2, 2, ["Warmog's Armor", "Gargoyle Stoneplate"], row=1, col=3), unit("Warwick", 1, 3, row=0, col=2)],
+    )
+    adv = advisor.advise(state, Analysis(comps=[comp]))
+    check_contract(adv)
+    assert adv.positioning == "Braum 是主坦：放前排第4格（阵容推荐站位），扛伤害保护后排输出"
+    assert all("后排角落" not in t for t in all_text(adv))
+    assert action(adv, ActionType.POSITION).text == "把 Braum 移到前排"
+    # Already in front: no move; no library spot: the middle of the front row.
+    front = state.model_copy(update={"board": [state.board[0].model_copy(update={"row": 0}), state.board[1]]})
+    adv = advisor.advise(front, Analysis(comps=[comp.model_copy(update={"positions": {}})]))
+    assert ActionType.POSITION not in types(adv)
+    assert adv.positioning.startswith("Braum 是主坦：放前排中间")
+    # A damage carry keeps the back-row advice.
+    dmg = comp.model_copy(update={"carry_items": ["Deathblade", "Giant Slayer", "Warmog's Armor"]})
+    assert "后排角落" in advisor.advise(state, Analysis(comps=[dmg])).positioning
+    # Real set data: Malphite (melee) is no "近战主C" in Warwick Reroll.
+    mal = real_sd.resolve_champion("墨菲特")
+    board = [Unit(api_name=mal.api_name, name=mal.name, cost=mal.cost, star=2, items=["狂徒铠甲", "石像鬼石板甲"], row=0, col=3)]
+    lib = CompSuggestion(
+        name="沃里克 赌狗", score=0.8, carry="墨菲特", carry_items=["狂徒铠甲", "石像鬼石板甲", "冕卫"],
+        positions={"墨菲特": [0, 3]},
+    )
+    real = RulesAdvisor(set_data=real_sd).advise(state.model_copy(update={"board": board}), Analysis(comps=[lib]))
+    assert "近战主C" not in real.positioning and real.positioning.startswith("墨菲特 是主坦：放前排第4格")
+
+
+def test_augment_text_has_no_double_punctuation_or_build_junk(real_sd):
+    from tft_advisor.advisor.rules import AUGMENT_MORE, augment_effect
+    from tft_advisor.data.augments import AugmentData
+
+    data = AugmentData.load(18)
+    assert augment_effect(data.lookup("利落保镖").desc).endswith("提升该加成2。")
+    assert augment_effect(data.lookup("遥遥领先").desc).endswith("获得4经验值。")
+    assert augment_effect(data.lookup("水乳交融").desc).endswith("攻击速度。")
+    assert augment_effect(data.lookup("双城赢家").desc) == ""  # English text in the zh field
+    adv = RulesAdvisor(set_data=real_sd, claude_enabled=True)
+    adv.augments = data
+    base = dict(stage=StageRound.parse("2-1"), gold=10, level=4, hp=100, screen_type=ScreenType.AUGMENT_SELECT)
+    for choices in (["认知税", "手气不错"], ["双城赢家"], ["利落保镖"], ["遥遥领先"], ["烧起来"]):
+        text = adv.advise(GameState(**base, augment_choices=choices), Analysis()).augment
+        assert "。，" not in text and "2022" not in text and " 10" not in text and "seconds" not in text, text
+        assert text.endswith(AUGMENT_MORE), text  # the Claude pointer is never cut off
+        assert len(text) <= 120
+    text = adv.advise(GameState(**base, augment_choices=["认知税"]), Analysis()).augment
+    assert text == "推荐 认知税（经济）：获得8金币和1经验值，详细对比看 Claude 建议"
+
+
+def test_level_8_tag_follows_the_carry(advisor):
+    save = EconPlan(recommendation=EconAction.SAVE)
+    # 5 cost carry on a fast 9 line: level 8 only stabilizes.
+    fast9 = CompSuggestion(name="Kayle 9", score=0.8, carry="Kayle", style="fast9")
+    for sr in ("3-5", "4-1"):
+        state = GameState(stage=StageRound.parse(sr), gold=40, level=7, hp=55, board=[unit("Kayle", 5, row=3, col=0)])
+        plan = advisor.advise(state, Analysis(econ=save.model_copy(update={"style": "fast9"}), comps=[fast9])).plan
+        assert "找 4 费主C" not in plan and "升 8 稳血" in plan and "升 9 找 5 费" in plan, plan
+    # Not owned yet: the cost comes from the set data.
+    state = GameState(stage=StageRound.parse("4-1"), gold=40, level=7, hp=55)
+    plan = advisor.advise(state, Analysis(econ=save, comps=[fast9.model_copy(update={"style": "standard"})])).plan
+    assert "4-5 升 8 稳血" in plan
+    # A loose comp guess keeps the standard tag.
+    loose = fast9.model_copy(update={"style": "standard", "score": 0.2})
+    assert "4-5 升 8 找 4 费主C" in advisor.advise(state, Analysis(econ=save, comps=[loose])).plan
+    # A finished reroll (4-5, standard econ again) levels to add 4 costs.
+    reroll = CompSuggestion(name="Warwick Reroll", score=0.8, carry="Warwick", style="reroll2")
+    state = GameState(stage=StageRound.parse("4-5"), gold=30, level=7, hp=60, board=[unit("Warwick", 1, 3, row=0, col=2)])
+    plan = advisor.advise(state, Analysis(econ=save, comps=[reroll])).plan
+    assert "尽快升 8 补 4 费" in plan and "找 4 费主C" not in plan
+    # A 4 cost carry already 2-star: level 8 adds 4 costs, not the carry.
+    std = CompSuggestion(name="Draven", score=0.8, carry="Draven", style="standard")
+    state = GameState(stage=StageRound.parse("4-1"), gold=30, level=7, hp=60, board=[unit("Draven", 4, 2, row=3, col=0)])
+    assert "4-5 升 8 补 4 费" in advisor.advise(state, Analysis(econ=save, comps=[std])).plan
+    one = state.model_copy(update={"board": [unit("Draven", 4, 1, row=3, col=0)]})
+    assert "4-5 升 8 找 4 费主C" in advisor.advise(one, Analysis(econ=save, comps=[std])).plan
+
+
+def test_save_headline_names_every_unit_the_buy_action_buys(advisor):
+    state = GameState(
+        stage=StageRound.parse("2-5"), gold=28, level=5, hp=80,
+        shop_units=[unit("Vi", 2), None, unit("Karma", 1), unit("Caitlyn", 3), None],
+    )
+    econ = EconPlan(recommendation=EconAction.SAVE, reason="存钱吃利息")
+    adv = advisor.advise(state, Analysis(econ=econ, shop_picks=["Karma", "Vi", "Caitlyn"]))
+    check_contract(adv)
+    buy = action(adv, ActionType.BUY).text
+    assert all(n in buy for n in ("Karma", "Vi", "Caitlyn"))
+    assert adv.headline == "买Karma、Vi、Caitlyn，其余存钱"
+    # Two copies of one unit, and names too long for the headline.
+    adv = advisor.advise(state, Analysis(econ=econ, shop_picks=["Karma", "Karma"]))
+    assert adv.headline == "买2张Karma，其余存钱"
+    long = ["Aurelion Sol Prime", "Miss Fortune Prime", "Tahm Kench Prime"]
+    adv = advisor.advise(state, Analysis(econ=econ, shop_picks=long))
+    assert len(adv.headline) <= 30 and "其余存钱" in adv.headline
+    n = len(adv.actions[0].text.split("、")) if adv.actions[0].type == ActionType.BUY else 0
+    assert f"等{n}张" in adv.headline or f"买{n}张牌" in adv.headline
+    # One pick: unchanged; level headline lists both units.
+    assert advisor.advise(state, Analysis(econ=econ, shop_picks=["Karma"])).headline == "买Karma，其余存钱"
+    level = EconPlan(recommendation=EconAction.LEVEL, target_level=6)
+    assert advisor.advise(state, Analysis(econ=level, shop_picks=["Karma", "Vi"])).headline == "升到6级，买Karma、Vi"
+
+
+def test_sanitize_keeps_rounds_and_ranges_written_with_em_dashes():
+    assert sanitize("4—1 升8") == "4-1 升8"
+    assert sanitize("搜到 10——20 金币") == "搜到 10-20 金币"
+    assert sanitize("3 — 2 搜牌") == "3-2 搜牌"
+    assert sanitize("奥恩——前排") == "奥恩，前排"
+    for t in ("4—1", "a―b", "1⸺2"):
+        assert "—" not in sanitize(t) and "―" not in sanitize(t) and "⸺" not in sanitize(t)
+
+
+def test_rules_share_the_econ_engine_tables():
+    from tft_advisor.advisor import rules
+    from tft_advisor.engine import economy
+
+    assert rules.ROLLDOWN_POINTS is economy.ROLLDOWN_ROUNDS
+    # HP 45 is "medium" in the econ buckets, 44 is "low": the rules agree.
+    assert not rules._low_hp(45) and rules._low_hp(44) and not rules._low_hp(None)
+    assert economy.hp_bucket(44) == "low" and economy.hp_bucket(45) == "medium"
+
+
+def test_augment_pick_gets_the_level_and_round_from_the_state(real_sd):
+    """The picker's timing penalty needs the real level: at level 8 on 4-2 a
+    'reach level 8' payout is already spent."""
+    from tft_advisor.data.augments import AugmentData
+
+    adv = RulesAdvisor(set_data=real_sd)
+    adv.augments = AugmentData.load(18)
+    state = GameState(
+        stage=StageRound.parse("4-2"), gold=30, level=8, hp=60,
+        augment_choices=["Epic Rolldown", "Ascension", "Clockwork Accelerator"],
+    )
+    pick = adv._augment_pick(state, Analysis())
+    assert pick is not None and pick[0] != "Epic Rolldown"
+
+
+def test_augments_read_in_english_are_named_in_chinese(real_sd):
+    from tft_advisor.data.augments import AugmentData
+
+    adv = RulesAdvisor(set_data=real_sd)
+    adv.augments = AugmentData.load(18)
+    zh = adv.augments.lookup("Latent Forge").name
+    state = GameState(stage=StageRound.parse("2-1"), gold=10, level=4, hp=100, augment_choices=["Latent Forge", "Mystery Thing"])
+    out = adv.advise(state, Analysis())
+    assert out.headline == f"海克斯选 {zh}"
+    assert out.augment.startswith(f"推荐 {zh}（Latent Forge，")
+    assert any(a.text.startswith(f"海克斯选 {zh}（Latent Forge，") for a in out.actions)
+    assert not any("）（" in a.text for a in out.actions)
+
+
+def test_pve_round_wait_is_not_headlined_as_saving_to_50(real_sd):
+    from tft_advisor.data.comps import load_comps
+    from tft_advisor.engine.analyzer import Analyzer
+
+    mech = load_mechanics()
+    analyzer = Analyzer(real_sd, mech, load_comps(None, real_sd))
+    state = GameState(stage=StageRound.parse("3-7"), gold=34, hp=30, level=6, xp_current=2)
+    analysis = analyzer.analyze(state, {})
+    assert analysis.econ.reason.startswith("野怪回合先不搜")
+    out = RulesAdvisor(set_data=real_sd, mech=mech).advise(state, analysis)
+    assert out.headline == "野怪回合先存着，4-1再搜"
+
+
+def test_long_augment_action_drops_english_name_instead_of_cutting():
+    from tft_advisor.data.augments import AugmentData
+    from tft_advisor.data.setdata import SetData, bundled_snapshot
+
+    sd = SetData.from_cdragon(bundled_snapshot("zh_cn"), bundled_snapshot("en_us"))
+    adv = RulesAdvisor(set_data=sd)
+    adv.augments = AugmentData.load(18)
+    state = GameState(stage=StageRound.parse("4-2"), gold=30, level=7, hp=60,
+                      augment_choices=["Epic Rolldown", "Frontline Foundation", "Magic Roll"])
+    act = [a for a in adv.advise(state, Analysis()).actions if a.type == ActionType.AUGMENT][0]
+    assert act.text.startswith("海克斯选 ") and len(act.text) <= 40
+    assert act.text.endswith("）") or "（" not in act.text  # never cut inside the parentheses

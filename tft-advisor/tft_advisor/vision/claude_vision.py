@@ -354,11 +354,6 @@ class ClaudeVisionPerceiver:
         self.png_optimize = False  # see encode_image: ~3x encoding time for 5 to 10 % smaller PNGs
         self.system = build_vision_system(set_data)
 
-    def set_set_data(self, set_data: "SetData") -> None:
-        """Swap set data (e.g. after a data update); rebuilds the cached system prompt."""
-        self.set_data = set_data
-        self.system = build_vision_system(set_data)
-
     # ---- images -------------------------------------------------------------
     def _image_specs(self, image: "Image.Image", purpose: str) -> list[tuple[str, "Image.Image", Optional[int]]]:
         """(label, image, JPEG quality or None for PNG) to send, in order."""

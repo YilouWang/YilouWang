@@ -25,6 +25,9 @@ Encodes the standard TFT playbook:
     (2-1, 2-5) take the level when one XP buy reaches it.
   * Critical HP buys the next level when it is cheap (a third of the gold, or
     half when behind the curve); the analyzer also compares roll-down odds.
+  * PvE rounds (x-7, ``Mechanics.is_pve``) never roll or all-in: the next
+    player fight is (x+1)-1, and rolling there gives the same board without
+    losing this round's interest. A cheap level (no interest lost) stays.
 Budgets are always affordable: a plan never says "roll" with less gold than
 one reroll, and never says "level" when the XP cannot be bought.
 """
@@ -125,6 +128,7 @@ def plan_economy(
         # "Fast 8" with a carry level 8 barely shows is a fast 9 line.
         style = "fast9"
     streak = state.streak or 0
+    pve = sr is not None and sr.stage >= 2 and mech.is_pve(sr)
 
     plan = EconPlan(
         gold=gold,
@@ -158,6 +162,18 @@ def plan_economy(
 
     def done(action: EconAction, reason: str, budget: int = 0, target: Optional[int] = None) -> EconPlan:
         budget = max(0, min(gold, budget))
+        if pve and action in (EconAction.ROLL, EconAction.ALL_IN, EconAction.LEVEL_AND_ROLL):
+            # PvE round (x-7): the next player fight is (x+1)-1 and rolling
+            # now gives the same board for it, minus this round's interest.
+            wait = f"野怪回合先不搜，下回合 {sr.stage + 1}-1 再搜稳血"
+            spend = mech.gold_to_reach(level, xp_cur, target) if target and not level_estimated else None
+            cheap = spend is not None and 0 < spend <= gold and (
+                spend <= mech.buy_xp_cost or mech.interest(gold - spend) == mech.interest(gold)
+            )
+            if action == EconAction.LEVEL_AND_ROLL and cheap:
+                action, reason, budget = EconAction.LEVEL, f"升到 {target} 级；{wait}", 0
+            else:
+                action, reason, budget, target = EconAction.SAVE, wait, 0, None
         if action == EconAction.ALL_IN:
             pass  # stays all-in with no gold: the advice is to reposition and sell
         elif action in (EconAction.ROLL, EconAction.SLOW_ROLL) and budget < roll:

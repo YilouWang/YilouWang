@@ -6,7 +6,7 @@ import pytest
 
 from tft_advisor.data.comps import load_comps
 from tft_advisor.engine.analyzer import Analyzer
-from tft_advisor.models import Analysis, EconAction, GameState, ShopSlot, StageRound, Unit
+from tft_advisor.models import Analysis, EconAction, GameState, ScreenType, ShopSlot, StageRound, Unit
 
 from .conftest import make_state
 
@@ -596,8 +596,124 @@ def test_s18_roll_down_with_nothing_to_find_is_dropped(s18, mech):
     out = s18.analyze(s18_state("4-2", board=board, level=7, xp_current=10, hp=60, gold=40, streak=-1))
     assert out.econ.recommendation == EconAction.SAVE and out.econ.roll_budget == 0, out.econ.reason
     assert "升 8 级" in out.econ.reason
-    # Reroll line at 4-1: 14 gold cannot find a 3-star, so it saves for the slow roll.
+    # Reroll line at 4-1: 10 gold cannot find a 3-star (nor any upgrade), so
+    # it saves for the slow roll. (With 34 gold the exact 14 gold budget gives
+    # a 2-star Sejuani 14%, a real target: the odds are no longer rounded
+    # down to the 10 gold bucket.)
     an = Analyzer(s18_set_data(), mech, s18_comps(), comp_hint="Caitlyn Hunters")
-    st = s18_state("4-1", board=[("Caitlyn", 2), "Tristana", "Rakan", "Sejuani", "Vi", "Sivir"], bench=["Caitlyn"], level=6, hp=50, gold=34)
+    st = s18_state("4-1", board=[("Caitlyn", 2), "Tristana", "Rakan", "Sejuani", "Vi", "Sivir"], bench=["Caitlyn"], level=6, hp=50, gold=30)
     out = an.analyze(st)
     assert out.econ.recommendation == EconAction.SAVE and "慢搜" in out.econ.reason
+
+
+# ---------------------------------------------------------------------------
+# Review round: shop / sell coherence, exact roll odds, PvE, stale shop, threads
+# ---------------------------------------------------------------------------
+
+APH_BOARD = ["Aphelios", "Nidalee", "Varus", "Diana", "Kog'Maw", "Vi"]
+
+
+def test_s18_full_bench_buys_no_off_comp_copy_it_also_sells(s18):
+    bench = ["Rakan", "Teemo", "Alistar", "Elise", "Caitlyn", "Sejuani", "Shen", "LeBlanc", "Yunara"]
+    st = _with_shop(s18_state("3-3", board=APH_BOARD, bench=bench, level=6, gold=36, hp=70),
+                    ["Rakan", "Gromp", "Kayle", "Murkwolf", "Karma"])
+    out = s18.analyze(st)
+    assert "洛" not in out.shop_picks and "洛" in out.sell_candidates
+    assert not set(out.shop_picks) & set(out.sell_candidates)
+    # One free bench slot: the second Rakan is bought, so it is not sold.
+    st = _with_shop(s18_state("3-3", board=APH_BOARD, bench=bench[:8], level=6, gold=36, hp=70),
+                    ["Rakan", "Gromp", "Kayle", "Murkwolf", "Karma"])
+    out = s18.analyze(st)
+    assert "洛" in out.shop_picks and "洛" not in out.sell_candidates
+
+
+def test_s18_late_game_does_not_buy_random_trait_units(s18):
+    board = [("Aphelios", 2), "Nidalee", "Varus", "Diana", "Kog'Maw", "Vi", "Amumu", "Sentinel"]
+    st = _with_shop(s18_state("5-2", board=board, level=8, gold=30, hp=40), ["Shen", "Akali", "Kayle", "Leona", "Caitlyn"])
+    out = s18.analyze(st)
+    assert out.shop_picks == [] and out.shop_picks_cost == 0
+    assert out.econ.roll_budget == 20  # the whole roll budget stays for rolls
+
+
+def test_s18_roll_odds_use_the_exact_budget(s18):
+    st = s18_state("3-2", board=["Varus", "Aphelios", "Diana", "Vi", "Kog'Maw", "Leona"], bench=["Varus"], level=6, gold=28, hp=55)
+    out = s18.analyze(st)
+    # 8 gold to roll: below the smallest fixed bucket, but a 24% shot at a 2-star Varus.
+    assert out.econ.recommendation == EconAction.ROLL and out.econ.roll_budget == 8
+    varus = next(o for o in out.odds if o.unit == "韦鲁斯")
+    assert 8 in varus.p_goal_by_gold and varus.p_at(8) > 0.2
+    assert varus.p_at(9) == varus.p_goal_by_gold[8] and varus.p_at(5) == 0.0
+
+
+def test_s18_rich_warning_counts_the_level_on_an_unread_level(s18):
+    board = ["Aphelios", "Nidalee", "Varus", "Diana", "Kog'Maw", "Vi", "Amumu"]
+    out = s18.analyze(s18_state("4-2", board=board, gold=110, hp=80))
+    assert out.econ.recommendation == EconAction.LEVEL and out.econ.target_level == 8
+    assert not any("太多" in w for w in out.warnings)
+    read = s18.analyze(s18_state("4-2", board=board, gold=110, hp=80, level=7))
+    assert not any("太多" in w for w in read.warnings)
+
+
+def test_s18_pve_round_waits_for_the_next_fight(s18):
+    board = [("Aphelios", 2), "Nidalee", "Varus", "Diana", "Kog'Maw", "Vi", "Amumu", "Sentinel"]
+    out = s18.analyze(s18_state("4-7", board=board, level=8, gold=52, hp=35))
+    assert out.econ.recommendation == EconAction.SAVE and out.econ.roll_budget == 0
+    assert "5-1" in out.econ.reason
+    assert any("下回合 5-1" in w for w in out.warnings) and not any("别再贪经济" in w for w in out.warnings)
+    crit = s18.analyze(s18_state("3-7", board=board[:7], level=7, gold=45, hp=15))
+    assert crit.econ.recommendation in (EconAction.SAVE, EconAction.LEVEL) and crit.econ.roll_budget == 0
+    assert not any("这回合必须" in w for w in crit.warnings)
+
+
+def test_s18_carousel_or_last_round_shop_gives_no_picks(s18):
+    board = ["Aphelios", "Nidalee", "Varus", "Diana", "Kog'Maw", "Vi"]
+    st = _with_shop(s18_state("3-4", board=board, level=6, gold=30, hp=80), ["Varus", "Varus", "Karma", "Teemo", "Gromp"])
+    assert s18.analyze(st).shop_picks  # a current shop
+    st.screen_type = ScreenType.CAROUSEL
+    assert s18.analyze(st).shop_picks == []
+    st.screen_type = ScreenType.PLANNING
+    st.field_age.update({"shop": 10.0, "round": 20.0})  # read before this round started
+    assert s18.analyze(st).shop_picks == []
+    st.field_age.update({"shop": 20.0})
+    assert s18.analyze(st).shop_picks
+
+
+def test_errors_are_kept_per_call(set_data, mech, comps, monkeypatch):
+    import tft_advisor.engine.analyzer as mod
+
+    an = Analyzer(set_data, mech, comps)
+    failing = mid_game_state()
+    other = make_state("2-1", board=["Garen"], gold=10, level=3, hp=100)
+    real_plan_items = mod.plan_items
+    real_sell = an._sell_candidates
+
+    def plan_items(state, *a, **k):
+        if state.gold == failing.gold:
+            raise RuntimeError("boom")
+        return real_plan_items(state, *a, **k)
+
+    def sell(state, *a, **k):
+        if state.gold == failing.gold:
+            an.analyze(other)  # the ask thread runs a whole analysis meanwhile
+        return real_sell(state, *a, **k)
+
+    monkeypatch.setattr(mod, "plan_items", plan_items)
+    monkeypatch.setattr(an, "_sell_candidates", sell)
+    out = an.analyze(failing)
+    assert "部分分析出错" in out.warnings[-1]
+    assert an.last_errors and "items" in an.last_errors[0]
+
+
+def test_top_comp_is_sticky_through_a_one_frame_dip(mech):
+    an = Analyzer(s18_set_data(), mech, s18_comps())
+    board = [("Ahri", 2), "Zyra", "Gnar", "Sett", "Yorick", "Diana"]
+    full = s18_state("3-3", board=board, level=6, gold=30, hp=70, game_id="g1", last_update=1.0)
+    assert an.analyze(full).comps[0].name == "阿狸 婕拉"
+    dip = s18_state("3-5", board=board[1:], level=6, gold=30, hp=70, game_id="g1", last_update=2.0)
+    out = an.analyze(dip)
+    assert out.comps[0].name == "阿狸 婕拉"  # Ahri missed once: keep the plan
+    assert an.analyze(dip).comps[0].name == "阿狸 婕拉"  # the same frame again (ask) does not count twice
+    out = an.analyze(dip.model_copy(update={"last_update": 3.0}))
+    assert out.comps[0].name != "阿狸 婕拉"  # second frame in a row: switch
+    # States without a game id (tests, one-off analyses) are not sticky.
+    assert Analyzer(s18_set_data(), mech, s18_comps()).analyze(dip.model_copy(update={"game_id": ""})).comps[0].name != "阿狸 婕拉"

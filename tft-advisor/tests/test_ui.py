@@ -1614,3 +1614,283 @@ def test_validate_command_strips_terminal_control_characters() -> None:
     # questions keep their line breaks, lose the controls
     assert validate_command({"cmd": "ask", "question": "该不该\n转法师\x07？"})[1]["question"] == "该不该\n转法师？"
     assert validate_command({"cmd": "set_field", "field": "gold", "value": "4\x1b2"})[1]["value"] == "42"
+
+
+# ---------------------------------------------------------------------------
+# page flows (ui-flows review): pause, stale top bar, dead hotkeys, comp hint,
+# new game, pending question, Wisp slot, odds on a phone
+# ---------------------------------------------------------------------------
+
+HOTKEYS = {"analyze": "F6", "scout": "F7", "shop": "F9", "toggle_auto": "F8"}
+
+
+def test_index_html_ui_flow_regressions() -> None:
+    html = INDEX.read_text(encoding="utf-8")
+    js = re.search(r"<script>(.*)</script>", html, re.S).group(1)
+    markup = html.split("<script>", 1)[0]
+    # no key is named in the markup: labels come from status.hotkeys_live (keys that really work)
+    assert not re.search(r"\bF\d{1,2}\b", markup.split("</style>", 1)[1])
+    assert "status.hotkeys_live" in js and "按 F" not in js and "再按 F7" not in js
+    # auto mode paused by the capture loop is shown, with the capture error
+    assert "status.auto_paused" in js and "status.capture_error" in js and "自动分析已暂停" in js
+    # stale look: token refused too, and the pinned stats fade (not the connection state)
+    assert "(down || authBad)" in js and '$("topwrap").classList.toggle("stale"' in js
+    assert ".topwrap.stale .stat:not(.conn)" in html and 'class="stat conn"' in html
+    assert "status.busy && connLive()" in js
+    # a pending question survives a reload (this tab) and can come from the app (any device)
+    assert "sessionStorage" in js and "status.asking" in js
+    # the page's "no comp matches" text is the analyzer's
+    from tft_advisor.engine import analyzer
+
+    src = Path(analyzer.__file__).read_text(encoding="utf-8")
+    assert "没有阵容匹配「{self.comp_hint}」" in src and 'return "没有阵容匹配「" + h + "」"' in js
+    # Wisp prefixes as the tracker's
+    from tft_advisor.engine.tracker import WISP_PREFIXES
+
+    wisp_re = re.search(r"var WISP_RE = /\^\\s\*\(([^)]*)\)", js).group(1).split("|")
+    assert set(wisp_re) == set(WISP_PREFIXES)
+    # the phone hides the odds card's secondary columns
+    phone_css = html.split("@media (max-width: 720px)", 1)[1].split("</style>", 1)[0]
+    assert "#odds .opt { display: none; }" in phone_css
+
+
+def _new_page(browser: Any, width: int = 1440, height: int = 900) -> Any:
+    ctx = browser.new_context(viewport={"width": width, "height": height}, bypass_csp=True)
+    page = ctx.new_page()
+    page.on("dialog", lambda d: d.accept())
+    return page
+
+
+def _wait_text(page: Any, selector: str, needle: str, timeout: int = 8000) -> None:
+    page.wait_for_function(
+        "([s, n]) => { const e = document.querySelector(s); return !!e && e.textContent.indexOf(n) >= 0; }",
+        arg=[selector, needle],
+        timeout=timeout,
+    )
+
+
+def test_page_shows_paused_auto_dead_hotkeys_and_fades_the_top_bar(bus: EventBus) -> None:
+    """Needs Playwright + Chromium (skipped otherwise)."""
+    pw, browser = _chromium()
+    srv = DashboardServer(bus, UIConfig(host="127.0.0.1", port=0), log=quiet, keepalive_s=0.5)
+    try:
+        srv.start()
+        status: dict[str, Any] = {
+            "auto": True,
+            "auto_paused": True,
+            "capture_error": "游戏窗口已最小化，恢复游戏窗口后会继续截图",
+            "busy": True,
+            "strategist": True,
+            "hotkeys": HOTKEYS,
+            "hotkeys_live": {k: False for k in HOTKEYS},
+        }
+        bus.publish("status", dict(status))
+        bus.publish("state", {"game_id": "g1", "stage": {"stage": 3, "round": 2}, "gold": 34, "hp": 62, "streak": -5})
+        page = _new_page(browser)
+        page.goto(srv.url)
+        _wait_text(page, "#s-conn", "实时")
+        # auto is on but paused: not a green 开, and the reason is in 提醒
+        _wait_text(page, "#s-auto", "暂停")
+        assert "warn" in page.get_attribute("#s-auto", "class")
+        warnings = page.inner_text("#warnings")
+        assert "自动分析已暂停" in warnings and "游戏窗口已最小化" in warnings
+        # no hotkey works: none is named anywhere
+        for k in HOTKEYS:
+            assert page.inner_text(f"#hk-{k}") == ""
+        assert "F6" not in page.inner_text("#headline") and "F7" not in page.inner_text("#opponents")
+        assert "分析中" in page.inner_text("#pills")
+
+        # the game is back and F6 really works: named on its button and in the hint
+        status.update(auto_paused=False, capture_error=None, hotkeys_live={**{k: False for k in HOTKEYS}, "analyze": True})
+        bus.publish("status", dict(status))
+        _wait_text(page, "#hk-analyze", "F6")
+        assert page.inner_text("#s-auto") == "开" and "暂停" not in page.inner_text("#warnings")
+        assert "按 F6" in page.inner_text("#headline") and page.inner_text("#hk-scout") == ""
+
+        # the app dies: the pinned stats fade too, the busy pill goes, the connection state stays bright
+        srv.stop()
+        page.wait_for_function("() => document.querySelector('#topwrap').classList.contains('stale')", timeout=8000)
+        page.wait_for_function("() => getComputedStyle(document.querySelector('#s-gold').parentNode).opacity < 0.6", timeout=5000)
+        assert page.eval_on_selector("#s-conn", "e => getComputedStyle(e.parentNode).opacity") == "1"
+        page.wait_for_function("() => document.querySelector('#pills').textContent.indexOf('分析中') < 0", timeout=5000)
+    finally:
+        srv.stop()
+        browser.close()
+        pw.stop()
+
+
+def test_page_marks_data_stale_when_the_token_is_refused(bus: EventBus, tmp_path: Path) -> None:
+    """LAN mode: the app restarts with a new token; the open page keeps old data, shown as old."""
+    pw, browser = _chromium()
+    token_file = tmp_path / "dashboard_token"
+    srv = DashboardServer(bus, UIConfig(host="0.0.0.0", port=0), log=quiet, keepalive_s=0.5, token_file=token_file)
+    srv2: Optional[DashboardServer] = None
+    try:
+        try:
+            srv.start()
+        except OSError as exc:  # pragma: no cover - sandbox without 0.0.0.0
+            pytest.skip(f"cannot bind 0.0.0.0: {exc}")
+        bus.publish("status", {"auto": True, "busy": True, "strategist": True})
+        bus.publish("state", {"game_id": "g1", "stage": {"stage": 3, "round": 2}, "gold": 34})
+        page = _new_page(browser)
+        page.goto(f"http://127.0.0.1:{srv.port}/?token={srv.token}")
+        _wait_text(page, "#s-conn", "实时")
+        assert "分析中" in page.inner_text("#pills")
+        port = srv.port
+        srv.stop()
+        srv2 = DashboardServer(
+            EventBus(), UIConfig(host="0.0.0.0", port=port), log=quiet, keepalive_s=0.5, token_file=token_file, new_token=True
+        )
+        srv2.start()
+        _wait_text(page, "#s-conn", "令牌错误", timeout=20000)
+        assert "访问被拒绝" in page.inner_text("#banner")
+        assert page.eval_on_selector("main.grid", "e => e.classList.contains('stale')")
+        assert page.eval_on_selector("#topwrap", "e => e.classList.contains('stale')")
+        assert "分析中" not in page.inner_text("#pills")
+    finally:
+        srv.stop()
+        if srv2 is not None:
+            srv2.stop()
+        browser.close()
+        pw.stop()
+
+
+def test_page_comp_hint_and_new_game_with_the_real_app(tmp_path: Path) -> None:
+    """A hint that matches nothing is flagged (toast + label); 新对局 resets the form and the answer."""
+    from tft_advisor.app import AdvisorApp
+    from tft_advisor.config import Config
+    from tft_advisor.data.setdata import SetData, bundled_sample
+
+    pw, browser = _chromium()
+    cfg = Config()
+    cfg.data.cache_dir = str(tmp_path / "cache")
+    cfg.capture.screenshot_dir = str(tmp_path / "shots")
+    cfg.ui.open_browser = False
+    cfg.ui.port = 0
+    cfg.hotkeys.enabled = False
+    sample = SetData.from_cdragon(bundled_sample(), source="bundled-sample")
+    app = AdvisorApp(cfg, set_data=sample, perceiver=None, fast_perceiver=None, use_llm=False, console=False)
+    url = app.start(dashboard=True, hotkeys=False, voice=False, capture=False)
+    try:
+        assert url
+        page = _new_page(browser, 390, 844)
+        page.goto(url)
+        _wait_text(page, "#s-conn", "实时")
+        # hotkeys are off: the page names no key
+        assert all(page.inner_text(f"#hk-{k}") == "" for k in HOTKEYS)
+
+        page.fill("#comp-value", "asdfqwer")
+        page.click("#comp-btn")
+        _wait_text(page, "#toast", "没有阵容匹配「asdfqwer」")
+        _wait_text(page, "#comp-cur", "自动（没有匹配 asdfqwer）")
+
+        champ = next(c.name for c in sample.champions.values())
+        page.fill("#comp-value", champ)
+        page.click("#comp-btn")
+        _wait_text(page, "#comp-cur", "当前 " + champ)
+        assert "没有匹配" not in page.inner_text("#comp-cur")
+
+        app.bus.publish("answer", {"question": "该不该转法师？", "answer": "可以转法师", "ts": time.time()})
+        _wait_text(page, "#answer", "可以转法师")
+        page.click("button[data-cmd=new_game]")
+        _wait_text(page, "#comp-cur", "当前 自动")
+        page.wait_for_function("() => document.querySelector('#comp-value').value === ''", timeout=5000)
+        page.wait_for_function("() => document.querySelector('#answer').textContent === ''", timeout=5000)
+    finally:
+        app.stop()
+        browser.close()
+        pw.stop()
+
+
+def test_page_pending_question_wisp_slot_and_odds_on_a_phone(bus: EventBus) -> None:
+    """Needs Playwright + Chromium (skipped otherwise)."""
+    pw, browser = _chromium()
+    srv = DashboardServer(bus, UIConfig(host="127.0.0.1", port=0), log=quiet, keepalive_s=0.5)
+    try:
+        srv.start()
+        bus.publish("status", {"auto": True, "strategist": True})
+        bus.publish(
+            "state",
+            {
+                "game_id": "g1",
+                "stage": {"stage": 3, "round": 2},
+                "gold": 34,
+                "shop": [{"name": "阿狸", "cost": 4}, {"name": "Wisp: Freeroller", "cost": 0}],
+                "shop_units": [{"api_name": "TFT_Ahri", "name": "阿狸", "cost": 4}, None],
+            },
+        )
+        odds = [
+            {
+                "unit": "阿狸",
+                "cost": 4,
+                "owned_copies": 3,
+                "goal_copies": 9,
+                "goal_star": 3,
+                "p_in_shop": 0.12,
+                "p_goal_by_gold": {"20": 0.2, "40": 0.45, "60": 0.71},
+                "expected_gold_to_goal": 64,
+                "remaining_in_pool": 7,
+                "level": 8,
+            }
+        ]
+        bus.publish("analysis", {"odds": odds})
+        bus.publish("answer", {"question": "现在该不该转法师？", "answer": "先别转", "ts": time.time() - 30})
+        page = _new_page(browser, 390, 844)
+        page.goto(srv.url)
+        _wait_text(page, "#s-conn", "实时")
+
+        # the Wisp keeps its name (own line + title), tagged 精灵 with its price
+        _wait_text(page, "#shop .slot.wisp", "Freeroller")
+        slot = page.query_selector("#shop .slot.wisp")
+        assert "精灵" in slot.inner_text() and "0 金" in slot.inner_text()
+        assert "Freeroller" in (slot.get_attribute("title") or "")
+        assert "Freeroller" in page.inner_text("#shop .wispline")
+
+        # odds: the gold columns fit on a phone without scrolling the table
+        wrap = page.eval_on_selector("#odds .tablewrap", "e => [e.scrollWidth, e.clientWidth]")
+        assert wrap[0] <= wrap[1] + 1, wrap
+        head = page.inner_text("#odds thead")
+        assert "60 金" in head and "期望花费" in head and "池中剩余" not in head
+        assert "★★★" in page.inner_text("#odds td.unit")
+
+        # a question in flight survives a reload (no old answer shown as the current one)
+        page.fill("#ask-q", "第三个问题")
+        page.click("#ask-btn")
+        _wait_text(page, "#answer", "思考中")
+        page.reload()
+        _wait_text(page, "#s-conn", "实时")
+        _wait_text(page, "#answer", "思考中")
+        assert "第三个问题" in page.inner_text("#answer") and "先别转" not in page.inner_text("#answer")
+        bus.publish("answer", {"question": "第三个问题", "answer": "可以转", "ts": time.time()})
+        _wait_text(page, "#answer", "可以转")
+        page.reload()
+        _wait_text(page, "#answer", "可以转")
+        assert "思考中" not in page.inner_text("#answer")
+
+        # another device's question, reported by the app while it runs
+        bus.publish("status", {"auto": True, "strategist": True, "asking": {"question": "别的设备", "ts": time.time()}})
+        _wait_text(page, "#answer", "别的设备")
+        assert "思考中" in page.inner_text("#answer")
+
+        # a shop read before this round began is labeled, not shown as live
+        assert page.query_selector("#shop .shopnote") is None
+        bus.publish(
+            "state",
+            {
+                "game_id": "g1",
+                "stage": {"stage": 3, "round": 3},
+                "shop": [{"name": "阿狸", "cost": 4}],
+                "shop_units": [{"api_name": "TFT_Ahri", "name": "阿狸", "cost": 4}],
+                "field_age": {"shop": 100.0, "round": 130.0},
+            },
+        )
+        _wait_text(page, "#shop .shopnote", "上回合的商店")
+        assert page.query_selector("#shop .shop.old") is not None
+
+        # an old error says how old it is
+        bus.publish("status", {"auto": True, "strategist": True, "last_error": "识别失败", "last_error_ts": time.time() - 300})
+        _wait_text(page, "#warnings", "分钟前）：识别失败")
+    finally:
+        srv.stop()
+        browser.close()
+        pw.stop()

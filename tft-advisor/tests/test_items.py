@@ -361,3 +361,66 @@ def test_no_half_item_hint_for_a_carry_with_full_slots(set_data):
         item_bench=["B.F. Sword"],
     )
     assert not any("还差" in s.reason for s in plan_items(full, set_data, comp=comp))
+
+
+# ---------------------------------------------------------------------------
+# Holders follow the comp library's item plan; no slam for a benched unit
+# ---------------------------------------------------------------------------
+
+APH_NID = [("Aphelios", 1, ("Red Buff",)), "Nidalee", "Varus", "Diana", "Kog'Maw", "Vi", "Amumu"]
+
+
+@pytest.mark.parametrize(
+    "components, item",
+    [
+        (["B.F. Sword", "Giant's Belt"], "斯特拉克的挑战护手"),
+        (["B.F. Sword", "Chain Vest"], "夜之锋刃"),
+        (["Negatron Cloak", "Sparring Gloves"], "水银"),
+    ],
+)
+def test_s18_bruiser_and_flex_items_skip_the_carry_that_needs_its_slots(components, item):
+    out = _s18_plan(s18_state("4-1", board=APH_NID, items=components, level=7, gold=30, hp=60))
+    assert out.comps[0].name == "厄斐琉斯 奈德丽"
+    made = next(s for s in out.items if s.item == item)
+    # Aphelios holds Red Buff and still needs Deathblade and Giant Slayer.
+    assert made.holder == "奈德丽"
+
+
+def test_s18_item_holders_plan_decides_the_holder():
+    board = ["Yorick", "Master Yi", "Rengar", "Vi", "Sett", ("Nidalee", 1, ("Guinsoo's Rageblade",)), "Kog'Maw"]
+    out = _s18_plan(s18_state("4-1", board=board, items=["Recurve Bow", "Chain Vest"], level=7, gold=30, hp=60))
+    assert out.comps[0].name == "易 雷恩加尔"
+    titan = next(s for s in out.items if s.item == "泰坦的坚决")
+    assert titan.holder in ("易", "雷恩加尔")
+
+
+def test_s18_carry_still_takes_its_own_items_and_core_damage_items():
+    out = _s18_plan(s18_state("4-1", board=APH_NID, items=["B.F. Sword", "B.F. Sword"], level=7, gold=30, hp=60))
+    assert next(s for s in out.items if s.item == "死亡之刃").holder == "厄斐琉斯"  # a carry item
+    # Infinity Edge is Nidalee's in the library plan.
+    out = _s18_plan(s18_state("4-1", board=APH_NID, items=["B.F. Sword", "Sparring Gloves"], level=7, gold=30, hp=60))
+    assert next(s for s in out.items if s.item == "无尽之刃").holder == "奈德丽"
+    # Without a library plan for it, a core damage item still suits the carry.
+    out = _s18_plan(s18_state("4-1", board=APH_NID, items=["Needlessly Large Rod", "Needlessly Large Rod"], level=7, gold=30, hp=60))
+    assert all(s.holder != "厄斐琉斯" for s in out.items)  # AP item on an AD carry: never
+
+
+def test_s18_ad_ap_item_for_a_benched_unit_is_not_slammed_now():
+    st = s18_state("2-5", board=["Karma", "Morgana", "Krug", "Sett", "Pebbles"], bench=["Warwick"],
+                   items=["Sparring Gloves", "Giant's Belt"], level=5, gold=20, hp=80)
+    out = _s18_plan(st)
+    flail = next(s for s in out.items if s.item == "强袭者的链枷")
+    if flail.holder == "沃里克":
+        assert flail.priority == 2 and "上场" in flail.reason
+    else:
+        assert flail.holder in [u.name for u in st.board]
+
+
+def test_fielded_unit_of_the_right_profile_beats_a_benched_one(set_data):
+    st = make_state("3-2", board=[("Graves", 1, (), 3, 1), ("Braum", 1, (), 0, 3)], bench=[("Draven", 2)],
+                    item_bench=["B.F. Sword", "Recurve Bow"])
+    out = plan_items(st, set_data, hp_bucket="medium")
+    assert out[0].holder == "Graves" and out[0].priority == 1
+    only_bench = make_state("3-2", board=[("Braum", 1, (), 0, 3)], bench=[("Draven", 2)], item_bench=["B.F. Sword", "Recurve Bow"])
+    out = plan_items(only_bench, set_data, hp_bucket="medium")
+    assert out[0].holder == "Draven" and out[0].priority == 2 and "上场" in out[0].reason

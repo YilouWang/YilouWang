@@ -157,7 +157,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             if lan_url and lan_url != url:
                 # The phone address is otherwise only in an earlier log line.
                 print(f"手机访问: {lan_url}（手机和电脑连同一个 Wi-Fi；打不开见 README「手机看板打不开」）")
-        print(f"热键: {hk.analyze}=分析  {hk.scout}=记录对手棋盘  {hk.shop}=读商店  {hk.toggle_auto}=自动开关   Ctrl+C 退出")
+        # Only keys that were really registered (and bound to that action) are named.
+        live = getattr(app, "_hotkeys_live", None) or {}
+        labels = [("analyze", "分析"), ("scout", "记录对手棋盘"), ("shop", "读商店"), ("toggle_auto", "自动开关")]
+        named = [f"{getattr(hk, k)}={zh}" for k, zh in labels if live.get(k)]
+        if named:
+            print("热键: " + "  ".join(named) + "   Ctrl+C 退出")
+        else:
+            print("热键不可用：用看板上的按钮操作   Ctrl+C 退出")
         _open(url, cfg, app._server)
         app.wait()
     finally:
@@ -329,9 +336,22 @@ def cmd_data(args: argparse.Namespace) -> int:
     sd = load_set_data(cfg.data, offline=args.action == "show" and args.offline)
     print(f"赛季: {sd.set_number} {sd.set_name}  来源: {sd.source}")
     print(f"英雄 {len(sd.champions)}  羁绊 {len(sd.traits)}  装备 {len(sd.items)}  各费用数量 {sd.champion_count_by_cost()}")
+    print(_mechanics_line(cfg))
     if args.action == "show" and args.full:
         print(sd.summary_text())
     return 0
+
+
+def _mechanics_line(cfg: Config) -> str:
+    """Which patch the shop odds / pool / XP numbers are from (they change between patches)."""
+    from .data.mechanics import load_mechanics
+
+    try:
+        mech = load_mechanics(cfg.data.mechanics_file or None)
+    except Exception as exc:
+        return f"机制数值: 读取失败（{exc}）"
+    where = f"（{cfg.data.mechanics_file} 覆盖）" if cfg.data.mechanics_file else "（内置）"
+    return f"机制数值: 补丁 {mech.patch or '未知'}{where}"
 
 
 # ---------------------------------------------------------------------- doctor
@@ -424,6 +444,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         _check("赛季数据", sd.source != "bundled-sample", f"S{sd.set_number} {sd.set_name}, {len(sd.champions)} 英雄 ({sd.source})")
     except Exception as exc:
         _check("赛季数据", False, str(exc))
+    print("  " + _mechanics_line(cfg))
     print("截图:")
     try:
         from .capture.screen import ScreenCapturer, find_window_rect, set_dpi_awareness

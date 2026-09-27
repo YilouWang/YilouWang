@@ -450,3 +450,33 @@ def test_stage_two_level_points_do_not_flip_with_gold(mech):
     for gold in (10, 12, 15):
         plan = plan_economy(gs("2-5", gold=gold, level=4, xp=one_buy, hp=100), mech)
         assert plan.recommendation == EconAction.LEVEL and plan.target_level == 5, gold
+
+
+# ---------------------------------------------------------------------------
+# PvE rounds and the damage model
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("stage, hp, gold, level", [("4-7", 35, 52, 8), ("3-7", 15, 45, 7), ("4-7", 20, 45, 8), ("3-7", 30, 40, 6)])
+def test_pve_round_never_rolls(mech, stage, hp, gold, level):
+    plan = plan_economy(gs(stage, gold=gold, level=level, hp=hp), mech)
+    assert plan.recommendation in (EconAction.SAVE, EconAction.LEVEL) and plan.roll_budget == 0
+    nxt = f"{int(stage[0]) + 1}-1"
+    assert "野怪回合" in plan.reason and nxt in plan.reason
+    # The same state one round later (the player fight) rolls.
+    after = plan_economy(gs(nxt, gold=gold, level=level, hp=hp), mech)
+    assert after.roll_budget > 0
+
+
+def test_pve_round_keeps_a_cheap_level(mech):
+    # Critical HP one XP buy from the next level: the level stays, the roll waits.
+    need = mech.xp_to_level[6]
+    plan = plan_economy(gs("3-7", gold=44, level=6, hp=15, xp=need - mech.xp_per_buy), mech)
+    assert plan.recommendation == EconAction.LEVEL and plan.target_level == 7 and plan.roll_budget == 0
+    assert "野怪回合" in plan.reason
+
+
+def test_max_round_damage_uses_stage_damage(mech):
+    assert mech.max_round_damage(4) == mech.stage_damage[4] + 20
+    assert mech.max_round_damage(None) >= 20
+    assert not hasattr(mech, "xp_needed")

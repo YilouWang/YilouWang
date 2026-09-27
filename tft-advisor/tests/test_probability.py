@@ -288,3 +288,31 @@ def test_scouted_copies_lower_the_odds(mech, set_data):
 def test_empty_target_list_means_no_targets(mech, set_data):
     st = make_state("3-2", board=["Graves"], level=6)
     assert compute_hit_odds(st, set_data, mech, {}, targets=[]) == []
+
+
+def test_rolldown_curve_matches_single_budgets(mech):
+    from tft_advisor.engine.probability import rolldown_curve
+
+    budgets = (0, 3, 8, 10, 24, 50, 80)
+    for level, cost, need, rem, total, shop in [
+        (8, 4, 2, 8, 90, None), (6, 1, 3, 20, 250, ShopModel((5, 4), 1)), (9, 5, 1, 5, 40, ShopModel((4,), 0)),
+    ]:
+        curve = rolldown_curve(mech, level, cost, need, rem, total, budgets, shop=shop)
+        for g in budgets:
+            assert curve[g] == rolldown_probability(mech, level, cost, need, rem, total, g, shop=shop)
+    assert rolldown_curve(mech, 8, 4, 0, 8, 90, (10,)) == {10: 1.0}
+
+
+def test_rolldown_handles_huge_budgets_without_recursion(mech):
+    # A recursive chain hit Python's recursion limit around 1000 gold.
+    p = rolldown_probability(mech, 8, 4, 2, 10, 120, 3000)
+    assert 0.99 < p <= 1.0
+    rows = best_roll_level(mech, 8, 0, 2000, 4, 2, 10, 120)
+    assert rows and all(0.0 <= r[2] <= 1.0 for r in rows)
+
+
+def test_hit_odds_p_at_prefers_the_exact_budget(mech, set_data):
+    st = make_state("3-2", board=[make_unit("Graves"), make_unit("Graves")], level=6)
+    odds = compute_hit_odds(st, set_data, mech, {}, targets=["Graves"], budgets=(10, 14, 20))[0]
+    assert odds.p_at(14) == odds.p_goal_by_gold[14] and odds.p_at(15) == odds.p_goal_by_gold[14]
+    assert odds.p_at(9) == 0.0 and odds.p_at(100) == odds.p_goal_by_gold[20]

@@ -505,6 +505,14 @@ class HitOdds(BaseModel):
     expected_gold_to_goal: Optional[float] = None
     p_goal_by_gold: dict[int, float] = Field(default_factory=dict)  # gold budget -> P(reach goal)
 
+    def p_at(self, budget: int) -> float:
+        """P(reach goal) with ``budget`` gold: the exact entry when computed,
+        otherwise the largest computed budget below it (a lower bound)."""
+        if budget in self.p_goal_by_gold:
+            return self.p_goal_by_gold[budget]
+        options = [g for g in self.p_goal_by_gold if g <= budget]
+        return self.p_goal_by_gold[max(options)] if options else 0.0
+
 
 class ItemSuggestion(BaseModel):
     item: str  # completed item display name

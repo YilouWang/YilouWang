@@ -12,12 +12,15 @@ Install with ``pip install -e ".[ocr]"``: ``rapidocr-onnxruntime`` on Python
 
 from __future__ import annotations
 
+import difflib
 import re
 import threading
 import time
 import unicodedata
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional
 
+from ..data.setdata import normalize_name
+from ..engine.tracker import is_wisp_name
 from ..models import Observation, ScreenObservation, ScreenType, ShopSlot, StageRound
 from .base import FALLBACK_REGIONS, PerceptionError, PerceptionHint, _fallback_box, crop_region, normalize_purpose
 
@@ -39,6 +42,14 @@ class OcrLine(NamedTuple):
     cx: float  # box center x
 
 MIN_CONFIDENCE = 0.5
+# An unknown name on the rightmost card is only taken for a Set 18 Wisp when read this clearly.
+WISP_MIN_CONFIDENCE = 0.8
+# Below this similarity to every champion name an unknown text is not a misread champion
+# (one wrong, missing or extra letter of any Set 18 name stays above it; CJK names are
+# 2 to 4 characters, so one wrong character of two is 0.5).
+_CHAMPION_NEAR_MISS = 0.6
+_CHAMPION_NEAR_MISS_CJK = 0.5
+_WISP_NAME_MAX = 16
 
 
 def _rapidocr_class() -> tuple[Any, dict[str, Any]]:
@@ -210,7 +221,7 @@ def normalize_engine_output(raw: Any) -> list[OcrLine]:
 def _row_joins(lines: list[OcrLine]) -> list[str]:
     """Texts of boxes on the same row joined left to right ("Miss" + "Fortune"), bottom row first."""
     rows: list[list[OcrLine]] = []
-    for ln in sorted(lines, key=lambda l: l.cy):
+    for ln in sorted(lines, key=lambda b: b.cy):
         if rows and abs(ln.cy - rows[-1][-1].cy) <= max(ln.height, rows[-1][-1].height, 1.0) * 0.5:
             rows[-1].append(ln)
         else:
@@ -218,7 +229,7 @@ def _row_joins(lines: list[OcrLine]) -> list[str]:
     out: list[str] = []
     for row in reversed(rows):
         if len(row) > 1:
-            words = [l.text.strip() for l in sorted(row, key=lambda l: l.cx)]
+            words = [b.text.strip() for b in sorted(row, key=lambda b: b.cx)]
             out.append(" ".join(words))
             if len(words) > 2:  # name + cost digit on the same row: drop the rightmost box
                 out.append(" ".join(words[:-1]))
@@ -300,13 +311,38 @@ def _is_meaningful(text: str) -> bool:
     return sum(1 for ch in t if ch.isalpha()) >= 2
 
 
+def _bottom_row(lines: list[OcrLine]) -> list[OcrLine]:
+    """Boxes on the lowest text row of a card, left to right."""
+    low = max(lines, key=lambda ln: ln.cy)
+    row = [ln for ln in lines if abs(ln.cy - low.cy) <= max(ln.height, low.height, 1.0) * 0.5]
+    return sorted(row, key=lambda ln: ln.cx)
+
+
+def _strip_wisp_label(text: str) -> str:
+    """'精灵 免费刷新' / 'Wisp: Grow Up' -> 'Grow Up' style Wisp name ('' when only the label was read).
+
+    The label is the shortest head ``is_wisp_name`` accepts, so the prefixes
+    live in one place; 'Wispy' keeps its letters.
+    """
+    t = text.strip()
+    if not is_wisp_name(t):
+        return t
+    for i in range(1, len(t) + 1):
+        if is_wisp_name(t[:i]):
+            if t[i:i + 1].isascii() and t[i:i + 1].isalpha():
+                return t
+            return t[i:].strip(" :：·・-_|")
+    return t
+
+
 # ---------------------------------------------------------------------------
 # perceiver
 # ---------------------------------------------------------------------------
 
 
 class OcrPerceiver:
-    """Fast partial reader: stage, gold, level (+XP) and shop champion names.
+    """Fast partial reader: stage, gold, level (+XP) and shop champion names
+    (a Set 18 Wisp on the rightmost card as ``"Wisp: <name>"``, price unknown).
 
     ``engine`` is injectable (any callable taking an RGB ``numpy`` array and
     returning RapidOCR-style output) so the pipeline is testable offline.
@@ -321,6 +357,7 @@ class OcrPerceiver:
         self._lock = threading.Lock()
         # Placement that worked last is tried first (the HUD does not move within a game).
         self._placements: list[str] = list(SHOP_CARD_STRIPS)
+        self._champion_keys: Optional[list[str]] = None  # normalized champion names (Wisp check)
 
     # ---- engine -------------------------------------------------------------
     def _get_engine(self) -> OcrEngine:
@@ -384,7 +421,7 @@ class OcrPerceiver:
     def _match_card(self, lines: list[OcrLine]) -> Optional["Champion"]:
         # The champion name is at the bottom of the card (trait names are above it): bottom lines
         # first, then boxes of one row joined together for multi-word names split by the detector.
-        candidates = [ln.text for ln in sorted(lines, key=lambda l: -l.cy)] + _row_joins(lines)
+        candidates = [ln.text for ln in sorted(lines, key=lambda b: -b.cy)] + _row_joins(lines)
         for text in candidates:
             champ = self.set_data.resolve_champion(text)
             if champ is not None:
@@ -397,16 +434,53 @@ class OcrPerceiver:
                     return champ
         return None
 
+    def _near_champion(self, key: str) -> bool:
+        """``key`` (normalized) is a fragment or a near miss of a champion name: a misread, not a Wisp."""
+        if self._champion_keys is None:
+            self._champion_keys = sorted({normalize_name(n) for n in self.set_data.champion_names()} - {""})
+        keys = self._champion_keys
+        cutoff = _CHAMPION_NEAR_MISS_CJK if any(_is_cjk(ch) for ch in key) else _CHAMPION_NEAR_MISS
+        return any(key in k for k in keys) or bool(difflib.get_close_matches(key, keys, n=1, cutoff=cutoff))
+
+    def _wisp_slot(self, lines: list[OcrLine]) -> Optional[ShopSlot]:
+        """The rightmost card read as a Set 18 Wisp, or ``None`` when it may be a misread champion.
+
+        In every other shop the rightmost card is a Wisp with its own name, which
+        never resolves to a champion. Unlabeled text is only taken for a Wisp
+        when it cannot be a champion card whose name was misread: no trait label
+        on the card, read clearly, and neither a fragment nor a near miss of a
+        champion name. Otherwise the shop stays untrusted (Claude fallback).
+        The price is left unknown: a lone digit may belong to the neighbour card.
+        """
+        if any(self.set_data.resolve_trait(ln.text) is not None for ln in lines):
+            return None  # trait labels: a champion card whose name was not read
+        row = _bottom_row(lines)
+        text = re.sub(r"[\s\d]+$", "", _nfkc(" ".join(ln.text.strip() for ln in row)))  # price digits
+        if not any(is_wisp_name(_nfkc(ln.text)) for ln in lines):  # not labeled as a Wisp
+            key = normalize_name(text)
+            if min(ln.score for ln in row) < WISP_MIN_CONFIDENCE:
+                return None
+            if len(key) < (2 if any(_is_cjk(ch) for ch in key) else 3) or self._near_champion(key):
+                return None
+        name = _strip_wisp_label(text) or text
+        return ShopSlot(name=f"Wisp: {name[:_WISP_NAME_MAX]}", cost=None) if name else None
+
     def _read_cards(self, frame: "Image.Image", placement: str) -> tuple[Optional[list[ShopSlot]], Optional[str]]:
         """Read 5 cards for one HUD placement: (slots or None, problem note or None)."""
         slots: list[ShopSlot] = []
         resolved = 0
-        for i, box in enumerate(shop_card_boxes(frame.size, placement)):
+        boxes = shop_card_boxes(frame.size, placement)
+        for i, box in enumerate(boxes):
             lines = [ln for ln in self.read_lines(frame.crop(box)) if _is_meaningful(ln.text)]
             if not lines:
                 slots.append(ShopSlot())  # nothing written on the card: bought / empty slot
                 continue
             champ = self._match_card(lines)
+            if champ is None and i == len(boxes) - 1:
+                wisp = self._wisp_slot(lines)  # Wisps only ever take the rightmost slot
+                if wisp is not None:
+                    slots.append(wisp)
+                    continue
             if champ is None:
                 # One unreadable card makes the whole shop untrustworthy (stop early, save time).
                 return None, f"商店第 {i + 1} 格无法识别 ({_nfkc(lines[-1].text)[:12]})"

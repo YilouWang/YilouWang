@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from tft_advisor.app import AdvisorApp, Job, JobSlot
-from tft_advisor.bus import EventBus
 from tft_advisor.config import Config
 from tft_advisor.data.setdata import SetData, bundled_sample
 from tft_advisor.models import ScreenObservation, ScreenType
@@ -82,10 +81,103 @@ def test_job_slot_priority():
     slot = JobSlot()
     assert slot.put(Job(1, "shop"))
     assert slot.put(Job(3, "auto"))  # replaces lower priority
-    assert not slot.put(Job(1, "shop"))  # does not replace a more important job
+    # Covered: the pending auto job grabs its frame when it runs, so it reads this shop too.
+    assert slot.put(Job(1, "shop"))
     job = slot.get(timeout=0.01)
     assert job is not None and job.purpose == "auto"
     assert slot.get(timeout=0.01) is None
+
+
+def _frame_job(priority, purpose, t):
+    return Job(priority, purpose, image=Image.new("RGB", (4, 4)), created_at=t)
+
+
+def test_job_slot_never_drops_scouts_and_keeps_later_shop_frames():
+    """Clicks while the worker is busy: 记录对手 then 读商店 then 分析 (finding: the
+    scout frame was replaced by the second 分析 and the shop read was dropped)."""
+    slot = JobSlot()
+    assert slot.put(_frame_job(4, "scout", 1.0))
+    assert slot.put(_frame_job(1, "shop", 2.0))
+    assert slot.put(_frame_job(4, "manual", 3.0))  # newer full frame: covers the shop read
+    got = [slot.get(timeout=0.01) for _ in range(3)]
+    assert [j.purpose if j else None for j in got] == ["scout", "manual", None]
+
+    # A shop read grabbed after the pending analysis' frame runs after it.
+    slot = JobSlot()
+    assert slot.put(_frame_job(4, "manual", 1.0))
+    assert slot.put(_frame_job(1, "shop", 2.0))
+    assert slot.put(_frame_job(1, "shop", 3.0))  # newest shop wins
+    got = [slot.get(timeout=0.01) for _ in range(3)]
+    assert [(j.purpose, j.created_at) if j else None for j in got] == [("manual", 1.0), ("shop", 3.0), None]
+
+    # A correction does not throw away a pending shop read.
+    slot = JobSlot()
+    assert slot.put(_frame_job(1, "shop", 1.0))
+    assert slot.put(Job(2, "reanalyze", created_at=2.0))
+    got = [slot.get(timeout=0.01) for _ in range(3)]
+    assert [j.purpose if j else None for j in got] == ["reanalyze", "shop", None]
+
+    # A round change seen after the F6 frame still gets its own analysis;
+    # one requested before the F6 press is covered by it.
+    slot = JobSlot()
+    assert slot.put(_frame_job(4, "manual", 1.0))
+    assert slot.put(Job(3, "auto", created_at=2.0, gated=True))
+    assert [slot.get(timeout=0.01).purpose, slot.get(timeout=0.01).purpose] == ["manual", "auto"]
+    slot = JobSlot()
+    assert slot.put(Job(3, "auto", created_at=1.0, gated=True))
+    assert slot.put(_frame_job(4, "manual", 2.0))
+    assert slot.get(timeout=0.01).purpose == "manual" and slot.get(timeout=0.01) is None
+
+    # Scouts queue in order; the strategy slot still keeps only the newest request.
+    slot = JobSlot()
+    for i in range(3):
+        assert slot.put(_frame_job(4, "scout", float(i)))
+    assert [slot.get(timeout=0.01).created_at for _ in range(3)] == [0.0, 1.0, 2.0]
+    strat = JobSlot()
+    assert strat.put(Job(0, "strategy", extra={"seq": 1}))
+    assert strat.put(Job(0, "strategy", extra={"seq": 2}))
+    assert strat.get(timeout=0.01).extra["seq"] == 2 and strat.get(timeout=0.01) is None
+    slot.put(_frame_job(4, "scout", 9.0))
+    slot.clear()
+    assert slot.pending() is None
+
+
+def test_full_scout_queue_is_reported_as_not_done(cfg, sample):
+    from tft_advisor.app import MAX_PENDING_SCOUTS
+    from tft_advisor.ui.server import DashboardServer
+
+    app = make_app(cfg, sample, [])
+    for _ in range(MAX_PENDING_SCOUTS):
+        assert app.request_analysis("scout")
+    assert not app.request_analysis("scout")
+    dash = DashboardServer(app.bus, cfg.ui, token_file=None)
+    error, _warnings = dash.run_command("scout", {})
+    assert error and "排队" in error and "失败" not in error
+    assert not any(ch in error for ch in EM_DASHES)
+
+
+def test_clicks_while_busy_keep_the_scout_frame(cfg, sample):
+    """Real worker thread: 分析, 记录对手, 读商店, 分析 while the first analysis runs."""
+    seen = []
+
+    class SlowPerceiver(RecordingPerceiver):
+        def perceive(self, image, purpose="auto", hint=None):
+            seen.append(purpose)
+            return super().perceive(image, purpose, hint)
+
+    perceiver = SlowPerceiver(delay=0.3)
+    app = app_with(cfg, sample, perceiver)
+    app.start(dashboard=False, hotkeys=False, voice=False, capture=False)
+    try:
+        assert app.request_analysis("manual", image=hud_frame())
+        assert wait_for(lambda: seen == ["manual"])
+        for purpose in ("scout", "shop", "manual"):
+            assert app.request_analysis(purpose, image=hud_frame())
+        assert wait_for(lambda: len(seen) >= 3 and not app.busy and app._slot.pending() is None, 5)
+        time.sleep(0.4)
+        assert seen == ["manual", "scout", "manual"], seen
+    finally:
+        app.stop()
 
 
 def test_full_game_replay_publishes_everything(cfg, sample):
@@ -403,7 +495,7 @@ def test_capture_loop_shop_change_queues_shop(cfg, sample, clock):
     assert job is not None and job.purpose == "shop"
 
 
-def test_capture_loop_shop_watch_off_and_combat_queue_nothing(cfg, sample, clock):
+def test_capture_loop_shop_watch_off_and_carousel_queue_nothing(cfg, sample, clock):
     frames = [hud_frame("3-5", 0)] * 3 + [hud_frame("3-5", 42)] * 4
     cfg.advisor.shop_watch = False
     app, _ = _loop_app(cfg, sample, clock, list(frames))
@@ -413,10 +505,24 @@ def test_capture_loop_shop_watch_off_and_combat_queue_nothing(cfg, sample, clock
 
     cfg.advisor.shop_watch = True
     app2, _ = _loop_app(cfg, sample, clock, list(frames))
-    app2.tracker.ingest(Observation(screen=ScreenObservation(screen_type=ScreenType.COMBAT, stage="3-5"), source="t"))
+    app2.tracker.ingest(Observation(screen=ScreenObservation(screen_type=ScreenType.CAROUSEL, stage="3-4"), source="t"))
     app2._stop = StepStop(12, clock)
     app2._capture_loop()
     assert app2._slot.get(timeout=0.01) is None
+
+
+@pytest.mark.parametrize("screen", [ScreenType.AUGMENT_SELECT, ScreenType.COMBAT])
+def test_capture_loop_reads_shop_after_augment_frame_and_in_combat(cfg, sample, clock, screen):
+    """The round's auto frame showed the augment cards: rerolls in that round
+    (the 4-2 rolldown) must still be read. Rolling during combat is real too."""
+    frames = [hud_frame("4-2", 0)] * 3 + [hud_frame("4-2", 42)] * 4
+    app, _ = _loop_app(cfg, sample, clock, frames)
+    app.tracker.ingest(Observation(screen=ScreenObservation(screen_type=screen, stage="4-2"), source="t"))
+    assert app.tracker.state.screen_type == screen
+    app._stop = StepStop(12, clock)
+    app._capture_loop()
+    job = app._slot.get(timeout=0.01)
+    assert job is not None and job.purpose == "shop"
 
 
 def test_capture_loop_auto_off_never_grabs(cfg, sample, clock):
@@ -796,7 +902,146 @@ def test_shop_job_prefers_ocr_and_falls_back_to_vision(cfg, sample):
     assert ocr.calls == ["shop"] and main.calls == []
     ocr.fail = True
     assert app.run_job(Job(1, "shop")) is not None
-    assert main.calls == ["shop"] and "ocr" in (app.last_error or "")
+    assert main.calls == ["shop"]
+    # The fallback read the shop: the OCR failure is logged, not a standing error.
+    assert any("ocr" in t for t in log_texts(app))
+    assert app.last_error is None and app.bus.latest("status")["last_error"] is None
+    main.fail = True
+    assert app.run_job(Job(1, "shop")) is None
+    assert "vision" in (app.last_error or "")
+
+
+def test_last_error_clears_after_the_next_success(cfg, sample, clock):
+    """One transient failure must not leave 最近错误 up for the rest of the session."""
+    perceiver = RecordingPerceiver(fail=True)
+    strat = StubStrategist()
+    app = app_with(cfg, sample, perceiver, strategist=strat, clock=clock)
+    assert app.run_job(Job(4, "manual")) is None
+    status = app.bus.latest("status")
+    assert "读不出来" in status["last_error"] and status["last_error_ts"] == clock()
+    perceiver.fail = False
+    assert app.run_job(Job(4, "manual")) is not None
+    assert app.last_error is None and app.bus.latest("status")["last_error"] is None
+
+    # Strategist: a 529 shows up, the next Claude answer clears it.
+    real_advise = strat.advise
+    strat.advise = lambda state, analysis, rules_advice, **kw: rules_advice
+    strat.last_error = "Claude API 错误 529"
+    clock.tick(1)
+    app.run_job(Job(4, "manual"))
+    assert app.bus.latest("status")["last_error"] == "Claude API 错误 529"
+    strat.advise, strat.last_error = real_advise, None
+    app.run_job(Job(4, "manual"))
+    assert app.bus.latest("advice")["source"] == "llm"
+    assert app.bus.latest("status")["last_error"] is None and app.bus.latest("status")["last_error_ts"] is None
+
+
+def _shop_screen(stage, shop):
+    return ScreenObservation(
+        screen_type=ScreenType.PLANNING,
+        stage=stage,
+        gold=31,
+        level=6,
+        hp=70,
+        board=[{"name": n, "star": 1} for n in ("Darius", "Darius", "Garen", "Garen")],
+        shop=[{"name": n, "cost": c} for n, c in shop],
+    )
+
+
+SHOP_A = [("Darius", 1), ("Ahri", 2), ("Braum", 2), ("Ashe", 3), ("Kayle", 5)]
+SHOP_B = [("Ahri", 2), ("Garen", 1), ("Braum", 2), ("Ashe", 3), ("Kayle", 5)]
+
+
+class SlotStrategist(StubStrategist):
+    """Claude double whose advice names a shop slot of the shop it was given."""
+
+    def advise(self, state, analysis, rules_advice, question=None, recent_history=None):
+        from tft_advisor.models import ActionType, Advice, AdviceAction
+
+        self.advise_calls += 1
+        if self.gate is not None:
+            self.gate.wait(5)
+        first = state.shop[0].name if state.shop else "?"
+        return Advice(
+            headline="Claude：升到7级",
+            actions=[
+                AdviceAction(type=ActionType.LEVEL, text="买经验升到 7 级", priority=1),
+                AdviceAction(type=ActionType.BUY, text=f"买 {first}（第1格）", priority=1),
+            ],
+            source="llm",
+            stage=str(state.stage),
+        )
+
+
+def _buy_texts(adv):
+    return [a["text"] for a in adv["actions"] if a["type"] == "buy"]
+
+
+def test_shop_read_and_scout_keep_claude_advice_for_the_round(cfg, sample):
+    obs = [_shop_screen("3-2", SHOP_A)] * 3 + [_shop_screen("3-2", SHOP_B)] + [_shop_screen("3-3", SHOP_B)]
+    app = make_app(cfg, sample, obs, strategist=SlotStrategist())
+    advices = []
+    app.bus.subscribe("advice", lambda _t, p: advices.append(p))
+    assert app.run_job(Job(4, "manual")).source == "llm"
+    claude = app.bus.latest("advice")
+    assert claude["headline"] == "Claude：升到7级" and _buy_texts(claude) == ["买 Darius（第1格）"]
+    n = len(advices)
+
+    # Same shop re-read, and a scout: Claude's advice stays and is not re-sent.
+    assert app.run_job(Job(1, "shop")).headline == "Claude：升到7级"
+    assert app.run_job(Job(4, "scout")).headline == "Claude：升到7级"
+    assert len(advices) == n and app.bus.latest("advice")["source"] == "llm"
+
+    # Rerolled: Claude's plan stays, its buy action follows the new shop.
+    adv = app.run_job(Job(1, "shop"))
+    shown = app.bus.latest("advice")
+    assert adv.headline == shown["headline"] == "Claude：升到7级" and shown["source"] == "rules+llm"
+    assert "买经验升到 7 级" in [a["text"] for a in shown["actions"]]
+    assert _buy_texts(shown) and all("Garen" in t for t in _buy_texts(shown)), shown["actions"]
+
+    # Next round: Claude's advice for 3-2 is stale, the rules advice replaces it.
+    assert app.run_job(Job(1, "shop")).source == "rules"
+    assert app.bus.latest("advice")["source"] == "rules"
+    log = next((cfg.cache_dir / "logs").glob("game-*.jsonl"))
+    recs = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines()]
+    assert [r["advice"]["source"] for r in recs] == ["llm", "llm", "llm", "rules+llm", "rules"]
+
+
+def test_late_claude_reply_uses_buys_for_the_current_shop(cfg, sample):
+    """分析 then 读商店 (reroll) while Claude thinks: the reply must not bring back
+    the old shop's slot numbers."""
+    gate = threading.Event()
+    strat = SlotStrategist(gate=gate)
+    obs = [_shop_screen("3-2", SHOP_A), _shop_screen("3-2", SHOP_B)]
+    app = make_app(cfg, sample, obs, strategist=strat)
+    app.start(dashboard=False, hotkeys=False, voice=False, capture=False)
+    try:
+        app.request_analysis("manual")
+        assert wait_for(lambda: strat.advise_calls == 1)
+        app.request_analysis("shop")
+        assert wait_for(lambda: any("Garen" in t for t in _buy_texts(app.bus.latest("advice") or {"actions": []})))
+        assert app.bus.latest("advice")["source"] == "rules"
+        gate.set()
+        assert wait_for(lambda: app.bus.latest("advice")["headline"] == "Claude：升到7级")
+        shown = app.bus.latest("advice")
+        assert shown["source"] == "rules+llm"
+        assert _buy_texts(shown) and not any("Darius" in t for t in _buy_texts(shown)), shown["actions"]
+        assert all("Garen" in t for t in _buy_texts(shown))
+    finally:
+        gate.set()
+        app.stop()
+
+
+def test_advice_log_is_chinese_and_headline_only(cfg, sample, capsys):
+    perceiver = ListPerceiver([_shop_screen("3-2", SHOP_A)])
+    app = AdvisorApp(cfg, set_data=sample, perceiver=perceiver, fast_perceiver=None, use_llm=False, console=True)
+    adv = app.run_job(Job(4, "manual"))
+    texts = log_texts(app)
+    assert f"规则建议：{adv.headline}" in texts
+    assert not any(t.startswith("[rules]") or t.startswith("[llm]") for t in texts)
+    out = capsys.readouterr().out
+    assert f"规则建议：{adv.headline}" in out and "[rules]" not in out
+    assert not any(ch in "".join(texts) for ch in EM_DASHES)
 
 
 def test_no_perceiver_sets_last_error_for_dashboard(cfg, sample):
@@ -1092,3 +1337,74 @@ def test_texts_point_to_dashboard_buttons_when_hotkeys_do_not_work(cfg, sample):
         assert "按 F6" not in text and "点看板「分析」" in text
     finally:
         app.stop()
+
+
+# ---------------------------------------------------------------------------
+# Status fields the dashboard relies on (final verification round)
+# ---------------------------------------------------------------------------
+def test_status_names_only_hotkeys_that_really_work(cfg, sample, hotkeys_stub):
+    cfg.hotkeys.shop = "F6"  # repeated: only its first use (analyze) is bound
+    hotkeys_stub.failed_keys = {"F7": "taken"}
+    app = make_app(cfg, sample, [])
+    assert app.bus.latest("status") is None or app.bus.latest("status").get("hotkeys_live") in ({}, None)
+    app.start(dashboard=False, hotkeys=True, voice=False, capture=False)
+    try:
+        live = app.bus.latest("status")["hotkeys_live"]
+        assert live == {"analyze": True, "scout": False, "toggle_auto": True, "shop": False}
+        # The scout key is dead: the "own board" report points to the dashboard button.
+        app._report_scout({}, app.tracker.state)
+        assert any("再点看板上的「记录对手」" in t for t in log_texts(app))
+        assert not any("再按 F7" in t for t in log_texts(app))
+    finally:
+        app.stop()
+
+
+def test_status_reports_pending_question_unmatched_hint_and_clears_answer_on_new_game(cfg, sample):
+    import threading as _th
+
+    app = make_app(cfg, sample, [])
+    gate = _th.Event()
+    seen: list = []
+
+    def slow_ask(q):
+        seen.append(app.bus.latest("status")["asking"])
+        gate.wait(5)
+        return "可以"
+
+    app.ask = slow_ask
+    app.ask_async("该不该转法师？")
+    for _ in range(200):
+        if seen:
+            break
+        time.sleep(0.01)
+    assert seen and seen[0]["question"] == "该不该转法师？"
+    gate.set()
+    for _ in range(200):
+        if app.bus.latest("answer"):
+            break
+        time.sleep(0.01)
+    time.sleep(0.05)
+    assert app.bus.latest("answer")["answer"] == "可以"
+    assert app.bus.latest("status")["asking"] is None
+
+    app.bus.command("set_comp", comp="asdfqwer")
+    assert app.bus.latest("status")["comp_hint_matched"] is False
+    assert any(e["level"] == "warn" and "没有阵容匹配「asdfqwer」" in e["text"] for e in app.bus.snapshot()["log"])
+
+    app.new_game()
+    assert app.bus.latest("answer") is None
+    assert app.bus.latest("status")["comp_hint_matched"] is True  # hint back to the configured default
+
+
+def test_shop_reads_keep_the_reserve_when_ocr_falls_back_to_claude(cfg, sample):
+    from tft_advisor.llm import LLM, RateLimiter
+
+    cfg.anthropic.max_calls_per_minute = 5
+    cfg.advisor.shop_reserve_calls = 3
+    app = make_app(cfg, sample, [], llm=LLM(cfg.anthropic, client=object(), limiter=RateLimiter(5, clock=lambda: 100.0)))
+    app.fast_perceiver = ListPerceiver([])  # OCR first, Claude vision when it fails
+    app.llm.limiter.try_acquire()
+    app.llm.limiter.try_acquire()
+    assert not app._shop_read_allowed()
+    app.perceiver = app.fast_perceiver  # OCR only: free
+    assert app._shop_read_allowed()

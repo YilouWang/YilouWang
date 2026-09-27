@@ -1362,3 +1362,95 @@ def test_wire_shop_prices_free_wisp_unknown_and_empty():
     # A champion reported at 0 gold is an unknown price, not a free unit.
     from tft_advisor.models import ShopSlotWire
     assert ShopSlotWire(name="Ahri", cost=0).to_obs().cost is None
+
+
+# ---------------------------------------------------------------------------
+# OCR: Set 18 Wisps on the rightmost shop card
+# ---------------------------------------------------------------------------
+
+_S18_ONES = ("阿卡丽", "卡蜜尔", "可酷伯", "蕾欧娜")  # 1-cost Set 18 champions (zh_cn)
+
+
+def _s18_shop_engine(fifth, others=None):
+    """Gold, level, then 5 cards (shop purpose): four S18 champions and ``fifth``."""
+    cards = [[(n, 0.9, 18, 60)] for n in _S18_ONES] if others is None else others
+    return FakeEngine([[("12", 0.9, 20, 0)], [("3级", 0.9, 20, 0)]] + cards + [fifth])
+
+
+@pytest.mark.parametrize(
+    "card,name",
+    [
+        ([("精灵 免费刷新", 0.9, 18, 60)], "Wisp: 免费刷新"),
+        ([("精灵", 0.9, 18, 60, 0), ("免费刷新", 0.9, 18, 60, 50)], "Wisp: 免费刷新"),  # label and name split
+        ([("Freeroller 3", 0.95, 18, 60)], "Wisp: Freeroller"),  # price digit dropped
+        ([("Beggar's Wisp", 0.9, 18, 60)], "Wisp: Beggar's Wisp"),
+        ([("Wisp", 0.9, 18, 60)], "Wisp: Wisp"),
+        ([("灵火", 0.9, 14, 0), ("Grow Up", 0.6, 18, 60)], "Wisp: Grow Up"),  # labeled: blurry name is fine
+    ],
+)
+def test_ocr_reads_a_wisp_on_the_rightmost_card(card, name):
+    """Every other S18 shop ends in a Wisp: it used to make the whole OCR shop
+    untrusted, so each such F9 read fell back to a Claude call."""
+    from tft_advisor.engine.tracker import is_wisp_name
+
+    from .conftest import s18_set_data
+
+    s = OcrPerceiver(s18_set_data(), engine=_s18_shop_engine(card)).perceive(frame(), purpose="shop").screen
+    assert [x.name for x in s.shop] == [*_S18_ONES, name]
+    assert s.shop[4].cost is None  # a lone digit may be the neighbour's cost
+    assert is_wisp_name(s.shop[4].name) and s.screen_type == ScreenType.PLANNING and s.notes == []
+
+
+def test_ocr_wisp_reaches_the_tracker_as_a_wisp(mech):
+    from tft_advisor.engine.tracker import GameTracker
+
+    from .conftest import s18_set_data
+
+    sd = s18_set_data()
+    obs = OcrPerceiver(sd, engine=_s18_shop_engine([("Freeroller", 0.9, 18, 60)])).perceive(frame(), purpose="shop")
+    st = GameTracker(sd, mech).ingest(obs)
+    assert st.shop[4].name == "Wisp: Freeroller" and st.shop_units[4] is None
+    assert [u.name for u in st.shop_units[:4]] == list(_S18_ONES)
+
+
+@pytest.mark.parametrize(
+    "card",
+    [
+        [("Freeroller", 0.6, 18, 60)],  # not read clearly
+        [("护卫", 0.9, 14, 0), ("Freeroller", 0.9, 18, 60)],  # trait label: a champion card, name unread
+        [("Lix", 0.95, 18, 60)],  # one letter off Lux
+        [("Cami", 0.95, 18, 60)],  # a fragment of Camille
+        [("凯男", 0.95, 18, 60)],  # one character off 凯南
+        [("镇", 0.95, 18, 60)],  # one character: 慎 / 霞 misread
+    ],
+)
+def test_ocr_does_not_take_a_misread_champion_for_a_wisp(card):
+    from .conftest import s18_set_data
+
+    with pytest.raises(PerceptionError, match="商店第 5 格"):
+        OcrPerceiver(s18_set_data(), engine=_s18_shop_engine(card)).perceive(frame(), purpose="shop")
+
+
+def test_ocr_wisp_only_on_the_rightmost_card_of_a_read_shop():
+    from .conftest import s18_set_data
+
+    sd = s18_set_data()
+    # A Wisp-like name in slot 2 (both HUD placements): Wisps never sit there, the shop is untrusted.
+    two = [[("阿卡丽", 0.9, 18, 60)], [("Freeroller", 0.9, 18, 60)]]
+    engine = FakeEngine([[("12", 0.9, 20, 0)], [("3级", 0.9, 20, 0)]] + two + two)
+    with pytest.raises(PerceptionError, match="商店第 2 格"):
+        OcrPerceiver(sd, engine=engine).perceive(frame(), purpose="shop")
+    # Only a Wisp and bought slots: no champion confirms the card strip is aligned.
+    with pytest.raises(PerceptionError, match="没有读到商店"):
+        OcrPerceiver(sd, engine=_s18_shop_engine([("Freeroller", 0.9, 18, 60)], [[]] * 4)).perceive(frame(), purpose="shop")
+
+
+def test_ocr_wisp_label_is_stripped_once():
+    from tft_advisor.vision.ocr import _strip_wisp_label
+
+    assert _strip_wisp_label("精灵 免费刷新") == "免费刷新"
+    assert _strip_wisp_label("Wisp: Grow Up") == "Grow Up"
+    assert _strip_wisp_label("灵火·金币") == "金币"
+    assert _strip_wisp_label("Wispy") == "Wispy"  # not the label followed by a name
+    assert _strip_wisp_label("Beggar's Wisp") == "Beggar's Wisp"
+    assert _strip_wisp_label("精灵") == ""

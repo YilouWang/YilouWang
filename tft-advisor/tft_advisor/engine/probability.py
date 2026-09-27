@@ -23,7 +23,6 @@ depletion is ignored (tiny effect).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
 from math import comb
 from typing import Iterable, Optional
 
@@ -157,6 +156,81 @@ def _binom_pmf(n: int, k: int, p: float) -> float:
     return comb(n, k) * (p**k) * ((1.0 - p) ** (n - k))
 
 
+def rolldown_curve(
+    mech: Mechanics,
+    level: int,
+    cost: int,
+    need: int,
+    remaining_unit: int,
+    remaining_cost_total: int,
+    budgets: Iterable[int],
+    unit_price: Optional[int] = None,
+    shop: Optional[ShopModel] = None,
+) -> dict[int, float]:
+    """``rolldown_probability`` for several gold budgets from one table.
+
+    The chain is solved bottom-up over gold (every roll strictly lowers the
+    gold, so a state only depends on smaller gold states): one pass up to the
+    largest budget answers every smaller budget, and there is no recursion
+    depth limit for large budgets.
+    """
+    wanted = sorted({max(0, int(g)) for g in budgets})
+    if not wanted:
+        return {}
+    if need <= 0:
+        return {g: 1.0 for g in wanted}
+    price = unit_price if unit_price is not None else cost
+    if remaining_unit < need:
+        return {g: 0.0 for g in wanted}
+    shop = shop or default_shop(mech)
+    schedule = tuple(max(1, int(n)) for n in shop.schedule) or (max(1, mech.shop_slots),)
+    phases = len(schedule)
+    roll = max(1, mech.roll_cost)  # a 0-cost override would never terminate
+    top = wanted[-1]
+
+    # Hit distribution per (copies bought, shop phase): it depends on the
+    # pool left and the shop size only, not on the gold.
+    dists: list[list[Optional[list[float]]]] = []
+    for bought in range(need):
+        p, p_up = _slot_probs(mech, level, cost, remaining_unit - bought, remaining_cost_total - bought)
+        dead = p <= 0.0 and (p_up <= 0.0 or shop.upgraded <= 0)
+        dists.append([None if dead else _hits_dist(schedule[ph], shop.upgraded, p, p_up) for ph in range(phases)])
+
+    # table[bought][phase][g] = P(goal | bought so far, gold g, next shop phase)
+    table = [[[0.0] * (top + 1) for _ in range(phases)] for _ in range(need + 1)]
+    for ph in range(phases):
+        table[need][ph] = [1.0] * (top + 1)
+    for g in range(roll + price, top + 1):
+        g_after_roll = g - roll
+        for bought in range(need):
+            for ph in range(phases):
+                dist = dists[bought][ph]
+                if dist is None:
+                    continue
+                nph = (ph + 1) % phases
+                total = 0.0
+                # Hits h >= 1: buy up to what's needed and affordable.
+                for h in range(1, len(dist)):
+                    ph_h = dist[h]
+                    if ph_h < 1e-12:
+                        continue
+                    can_buy = min(h, need - bought, g_after_roll // price)
+                    total += ph_h * table[bought + can_buy][nph][g_after_roll - can_buy * price]
+                # No hit: keep rolling (a strictly smaller gold state).
+                total += dist[0] * table[bought][nph][g_after_roll]
+                table[bought][ph][g] = total
+
+    out: dict[int, float] = {}
+    for g in wanted:
+        if g < mech.roll_cost + price:
+            out[g] = 0.0
+            continue
+        # The phase of the first roll is unknown: average over it.
+        p_goal = sum(table[0][ph][g] for ph in range(phases)) / phases
+        out[g] = min(1.0, max(0.0, p_goal))
+    return out
+
+
 def rolldown_probability(
     mech: Mechanics,
     level: int,
@@ -177,41 +251,10 @@ def rolldown_probability(
     """
     if need <= 0:
         return 1.0
-    price = unit_price if unit_price is not None else cost
-    if remaining_unit < need or gold < mech.roll_cost + price:
-        return 0.0
-    shop = shop or default_shop(mech)
-    schedule = tuple(max(1, int(n)) for n in shop.schedule) or (max(1, mech.shop_slots),)
-    phases = len(schedule)
-    roll = max(1, mech.roll_cost)  # a 0-cost override would never terminate
-
-    @lru_cache(maxsize=None)
-    def solve(bought: int, g: int, phase: int) -> float:
-        if bought >= need:
-            return 1.0
-        if g < roll + price:
-            return 0.0
-        p, p_up = _slot_probs(mech, level, cost, remaining_unit - bought, remaining_cost_total - bought)
-        if p <= 0.0 and (p_up <= 0.0 or shop.upgraded <= 0):
-            return 0.0
-        dist = _hits_dist(schedule[phase], shop.upgraded, p, p_up)
-        nxt = (phase + 1) % phases
-        g_after_roll = g - roll
-        total = 0.0
-        # Hits h >= 1: buy up to what's needed and affordable.
-        for h in range(1, len(dist)):
-            ph = dist[h]
-            if ph < 1e-12:
-                continue
-            can_buy = min(h, need - bought, g_after_roll // price)
-            total += ph * solve(bought + can_buy, g_after_roll - can_buy * price, nxt)
-        # No hit: keep rolling (a strictly smaller gold state).
-        total += dist[0] * solve(bought, g_after_roll, nxt)
-        return total
-
-    # The phase of the first roll is unknown: average over it.
-    p_goal = sum(solve(0, int(gold), ph) for ph in range(phases)) / phases
-    return min(1.0, max(0.0, p_goal))
+    g = max(0, int(gold))
+    return rolldown_curve(
+        mech, level, cost, need, remaining_unit, remaining_cost_total, (g,), unit_price=unit_price, shop=shop
+    )[g]
 
 
 def expected_gold_to_goal(
@@ -323,10 +366,8 @@ def compute_hit_odds(
         rem = per_unit.get(api, 0)
         rem_cost = per_cost.get(champ.cost, 0)
         p_slot = p_unit_per_slot(mech, lvl, champ.cost, rem, rem_cost)
-        by_gold = {
-            g: round(rolldown_probability(mech, lvl, champ.cost, need, rem, rem_cost, g, shop=shop), 4)
-            for g in budgets
-        }
+        curve = rolldown_curve(mech, lvl, champ.cost, need, rem, rem_cost, budgets, shop=shop)
+        by_gold = {int(g): round(curve[max(0, int(g))], 4) for g in budgets}
         result.append(
             HitOdds(
                 unit=champ.name,

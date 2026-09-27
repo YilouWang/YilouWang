@@ -2,7 +2,9 @@
 
 Threads:
   * capture thread  grabs frames, detects round / shop changes (auto mode)
-  * worker thread   runs one perception job at a time (latest job wins)
+  * worker thread   runs one perception job at a time (JobSlot: scout frames
+                    queue and are never dropped, otherwise the latest /
+                    most important job wins)
   * strategy thread runs the Claude strategist after a job (latest wins), so a
                     slow strategy call never delays the next perception job
   * ask thread      answers free-form questions (one at a time)
@@ -15,6 +17,9 @@ grabbed when the key is pressed, not when the worker gets to the job: the
 player may already have switched the camera back. Automatic jobs (round or
 shop change) only use frames of the game window while it is in the
 foreground, so the desktop or another app is never sent to Claude.
+
+Shop reads and scouts do not ask Claude: Claude's advice for the same game
+and round stays on screen, with its buy actions redone for the new shop.
 """
 
 from __future__ import annotations
@@ -37,6 +42,8 @@ from .models import Advice, Analysis, GameState, Observation, ScreenObservation,
 PRIORITY = {"scout": 4, "manual": 4, "auto": 3, "reanalyze": 2, "shop": 1}
 #: Jobs whose frame is grabbed at trigger time (the player is looking at it now).
 TRIGGER_GRAB = ("manual", "scout", "shop")
+#: Player-facing names of the player-triggered jobs (dashboard buttons).
+JOB_LABEL = {"manual": "分析", "scout": "记录对手", "shop": "读商店"}
 
 NO_PERCEIVER_MSG = (
     "没有可用的识别方式：请设置 ANTHROPIC_API_KEY，或在 tft-advisor 目录运行 "
@@ -47,6 +54,8 @@ NO_PERCEIVER_MSG = (
 #: available (Claude vision, local OCR). ``None`` means "none", not "detect".
 AUTO: Any = type("_Auto", (), {"__repr__": lambda self: "AUTO"})()
 AUTO_PAUSED_MSG = "没找到游戏窗口或游戏不在前台，自动分析暂停"
+#: Screens without the local player's shop: a shop change there is not a reroll.
+NO_SHOP_SCREENS = (ScreenType.CAROUSEL, ScreenType.LOADING, ScreenType.POST_GAME)
 
 
 def _console_safe(text: str) -> str:
@@ -71,36 +80,113 @@ class Job:
     gated: bool = field(default=False, compare=False)
 
 
+#: Pending scout jobs kept at most (one per opponent).
+MAX_PENDING_SCOUTS = 7
+# What each purpose's run also delivers: a full analysis reads the shop too,
+# and every screen-reading job re-runs the analysis a correction asks for.
+_COVERS = {
+    "manual": frozenset({"manual", "auto", "shop", "reanalyze"}),
+    "auto": frozenset({"auto", "shop", "reanalyze"}),
+    "shop": frozenset({"shop"}),
+    "reanalyze": frozenset({"reanalyze"}),
+    "strategy": frozenset({"strategy"}),  # strategy slot: the newest request wins
+}
+#: Jobs that read the screen but do not ask Claude: Claude's advice for the
+#: same round stays up (its buy actions follow the new shop).
+KEEP_LLM_ADVICE = ("shop", "scout")
+
+
+def _covers(a: Job, b: Job) -> bool:
+    """True when running ``a`` makes ``b`` pointless: ``a`` does ``b``'s work on a
+    frame taken no earlier than ``b`` was requested. A job without a frame
+    grabs one when it runs, so it sees everything requested before it."""
+    if b.purpose not in _COVERS.get(a.purpose, ()):
+        return False
+    if b.purpose == "reanalyze":
+        return True
+    frame_at = a.created_at if a.image is not None else float("inf")
+    return frame_at >= b.created_at
+
+
 class JobSlot:
-    """Holds at most one pending job; a new job replaces it unless the pending
-    one is more important (a full analysis is never dropped for a shop read)."""
+    """Pending analysis jobs, run one at a time.
+
+    * Scout jobs (an opponent's board, grabbed when the key was pressed) are
+      never replaced: they wait in their own small FIFO and run first.
+    * One main job: a new job replaces it unless the pending one is more
+      important (a full analysis is never dropped for a shop read).
+    * One follow-up: a job that lost on priority but would see something the
+      main job does not (a shop read grabbed after the pending analysis' frame,
+      a shop read displaced by a manual correction). Runs after the main job.
+    ``put`` returns False only when the job was dropped without being covered.
+    """
 
     def __init__(self) -> None:
         self._cond = threading.Condition()
         self._job: Optional[Job] = None
+        self._follow: Optional[Job] = None
+        self._scouts: list[Job] = []
 
     def put(self, job: Job) -> bool:
         with self._cond:
-            if self._job is not None and self._job.priority > job.priority:
+            ok = self._put(job)
+            if ok:
+                self._cond.notify()
+            return ok
+
+    def _put(self, job: Job) -> bool:
+        if job.purpose == "scout":
+            if len(self._scouts) >= MAX_PENDING_SCOUTS:
                 return False
-            self._job = job
-            self._cond.notify()
+            self._scouts.append(job)
             return True
+        cur = self._job
+        if cur is None or job.priority >= cur.priority:
+            self._job = job
+            if cur is not None and not _covers(job, cur):
+                self._place_follow(cur)
+        elif _covers(cur, job):
+            return True  # the pending job reads a frame at least as new and does more
+        elif not self._place_follow(job):
+            return False
+        if self._follow is not None and self._job is not None and _covers(self._job, self._follow):
+            self._follow = None
+        return True
+
+    def _place_follow(self, job: Job) -> bool:
+        cur = self._follow
+        if cur is None or _covers(job, cur):
+            self._follow = job
+            return True
+        return _covers(cur, job)  # False: both matter but only one fits (never seen in practice)
 
     def get(self, timeout: float = 0.5) -> Optional[Job]:
         with self._cond:
-            if self._job is None:
+            if not self._has_pending():
                 self._cond.wait(timeout)
-            job, self._job = self._job, None
+            if self._scouts:
+                return self._scouts.pop(0)
+            if self._job is not None:
+                job, self._job = self._job, None
+                return job
+            job, self._follow = self._follow, None
             return job
 
+    def _has_pending(self) -> bool:
+        return bool(self._scouts) or self._job is not None or self._follow is not None
+
     def pending(self) -> Optional[Job]:
+        """The job ``get`` would return next (None when nothing is queued)."""
         with self._cond:
-            return self._job
+            if self._scouts:
+                return self._scouts[0]
+            return self._job if self._job is not None else self._follow
 
     def clear(self) -> None:
         with self._cond:
             self._job = None
+            self._follow = None
+            self._scouts.clear()
 
 
 class GameLogger:
@@ -166,6 +252,45 @@ class GameLogger:
 
 def _dump(model: Any) -> Any:
     return model.model_dump(mode="json") if hasattr(model, "model_dump") else model
+
+
+#: How the dashboard log names an advice by its source.
+ADVICE_LOG_LABEL = {"rules": "规则建议", "llm": "Claude 建议", "rules+llm": "Claude 建议（买牌按新商店）"}
+
+
+def _stage_key(state: GameState) -> Optional[str]:
+    return str(state.stage) if state.stage else None
+
+
+def _shop_key(state: GameState) -> tuple[str, ...]:
+    """The shop an advice was made for (slot names in order)."""
+    return tuple(str(s.name or "") for s in state.shop)
+
+
+def _same_advice(a: Advice, b: Advice) -> bool:
+    return a.model_dump(exclude={"created_at"}) == b.model_dump(exclude={"created_at"})
+
+
+def _merge_buy_actions(llm: Advice, rules: Optional[Advice]) -> Advice:
+    """Claude's advice with its buy actions (made for an older shop, they may
+    name its slots) replaced by the rules' buy actions for the current shop."""
+    from .models import ActionType
+
+    fresh = [a for a in (rules.actions if rules is not None else []) if a.type == ActionType.BUY]
+    actions: list[Any] = []
+    placed = False
+    for a in llm.actions:
+        if a.type == ActionType.BUY:
+            if not placed:
+                actions.extend(fresh)
+                placed = True
+            continue
+        actions.append(a)
+    if not placed:
+        actions.extend(fresh)
+    if [a.model_dump() for a in actions] == [a.model_dump() for a in llm.actions]:
+        return llm
+    return llm.model_copy(update={"actions": actions, "source": "rules+llm"})
 
 
 class AdvisorApp:
@@ -252,7 +377,9 @@ class AdvisorApp:
         self.live = live_client
         self.auto = cfg.advisor.auto
         self.busy = False
-        self.last_error: Optional[str] = None
+        # Latest error per source ("perception", "strategy", "job", ...): (text, ts).
+        # A success of the same source clears it, so 最近错误 does not stick.
+        self._errors: dict[str, tuple[str, float]] = {}
         self._slot = JobSlot()
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -263,6 +390,10 @@ class AdvisorApp:
         self._pending_shop_at: Optional[float] = None
         self._last_shop_request = float("-inf")
         self._hotkeys: Any = None
+        # action -> the global hotkey really works (registered and bound to it); set by start().
+        self._hotkeys_live: dict[str, bool] = {}
+        # The question Claude is answering ({"question", "ts"}) for every open dashboard.
+        self._asking: Optional[dict[str, Any]] = None
         self._server: Any = None
         # cli `run --new-token`: rotate the saved LAN dashboard token.
         self.new_dashboard_token = False
@@ -277,6 +408,12 @@ class AdvisorApp:
         self._strategy_async = False
         self._strategy_busy = False
         self._strategy_seq = 0
+        # Claude advice on screen: {"key": (generation, game_id, stage), "advice",
+        # "shop": shop the advice was made for}. None while rules advice is shown.
+        self._llm_shown: Optional[dict[str, Any]] = None
+        # Latest rules advice and the shop it was made for (buy actions for merges).
+        self._last_rules: Optional[tuple[tuple[str, ...], Advice]] = None
+        self._advice_lock = threading.RLock()
         self._unsubscribe = self.bus.subscribe("command", self._on_command)
 
     # ------------------------------------------------------------------ logging
@@ -287,9 +424,36 @@ class AdvisorApp:
         self._log(text, "warn")
 
     def _log(self, text: str, level: str) -> None:
+        self._print(text)
+        self.bus.log(text, level)
+
+    def _print(self, text: str) -> None:
         if self.console:
             print(f"[{time.strftime('%H:%M:%S')}] {_console_safe(text)}", flush=True)
-        self.bus.log(text, level)
+
+    # ------------------------------------------------------------------ errors
+    @property
+    def last_error(self) -> Optional[str]:
+        """Most recent error that no later success of its source cleared."""
+        latest = self._latest_error()
+        return latest[0] if latest else None
+
+    @last_error.setter
+    def last_error(self, text: Optional[str]) -> None:
+        self._set_error("other", text)
+
+    def _latest_error(self) -> Optional[tuple[str, float]]:
+        errors = list(self._errors.values())
+        return max(errors, key=lambda e: e[1]) if errors else None
+
+    def _set_error(self, source: str, text: Optional[str]) -> None:
+        if text:
+            self._errors[source] = (str(text), self.clock())
+        else:
+            self._errors.pop(source, None)
+
+    def _clear_error(self, source: str) -> None:
+        self._errors.pop(source, None)
 
     # ------------------------------------------------------------ construction
     def _default_perceiver(self) -> Any:
@@ -316,6 +480,7 @@ class AdvisorApp:
     # ------------------------------------------------------------------ status
     def publish_status(self) -> None:
         stats = self.llm.stats.as_dict() if self.llm is not None else {}
+        error = self._latest_error()
         self.bus.publish(
             "status",
             {
@@ -325,11 +490,14 @@ class AdvisorApp:
                 "auto_paused": self._auto_paused,
                 "capture_error": getattr(self.capturer, "last_error", None) if self.capturer is not None else None,
                 "comp_hint": self.analyzer.comp_hint,
+                "comp_hint_matched": (not self.analyzer.comp_hint) or self.analyzer._hint_matches_any(),
+                "asking": self._asking,
                 "comp_names": [c.name for c in self.comps][:80],
                 "llm": self.llm is not None,
                 "strategist": self.strategist is not None,
                 "perceiver": self.perception_mode(),
-                "last_error": self.last_error,
+                "last_error": error[0] if error else None,
+                "last_error_ts": error[1] if error else None,
                 "llm_stats": stats,
                 "calls": stats.get("calls", 0),
                 "set": f"S{self.set_data.set_number} {self.set_data.set_name}",
@@ -340,6 +508,7 @@ class AdvisorApp:
                     "toggle_auto": self.cfg.hotkeys.toggle_auto,
                     "shop": self.cfg.hotkeys.shop,
                 },
+                "hotkeys_live": dict(self._hotkeys_live),
                 "ts": self.clock(),
             },
         )
@@ -375,7 +544,11 @@ class AdvisorApp:
                 self._slot.put(Job(PRIORITY["reanalyze"], "reanalyze"))
             elif cmd == "set_comp":
                 self.analyzer.comp_hint = _strip_controls(str(payload.get("comp") or "")).strip()[:200]
-                self.info(f"目标阵容设为: {self.analyzer.comp_hint or '自动'}")
+                hint = self.analyzer.comp_hint
+                if hint and not self.analyzer._hint_matches_any():
+                    self.warn(f"没有阵容匹配「{hint}」，按自动推荐")
+                else:
+                    self.info(f"目标阵容设为: {hint or '自动'}")
                 self.publish_status()
                 self._slot.put(Job(PRIORITY["reanalyze"], "reanalyze"))
             elif cmd == "new_game":
@@ -399,6 +572,8 @@ class AdvisorApp:
             self._logged_game_id = state.game_id
             self.game_log.new_game()
             self._last_advice = None
+            self._llm_shown = None
+            self._last_rules = None
             self._last_llm_ts = 0.0
             self.scout_planner.reset()
             self.analyzer.comp_hint = self.cfg.advisor.comp_hint
@@ -412,6 +587,7 @@ class AdvisorApp:
         advice = _dump(Advice(headline="新对局，等待第一次分析", source="rules"))
         advice["confidence"] = None
         self.bus.publish("advice", advice)
+        self.bus.publish("answer", None)  # a reload must not show the last game's answer
         self._publish_requests()
         self.publish_status()
 
@@ -424,7 +600,10 @@ class AdvisorApp:
         self.scout_planner.reset()
         self._last_llm_ts = 0.0
         self._last_advice = None
+        self._llm_shown = None
+        self._last_rules = None
         self._strategy_slot.clear()
+        self.bus.publish("answer", None)
         self.info("检测到新对局，开始新的对局日志")
         if self.analyzer.comp_hint:
             self.info(f"目标阵容仍是 {self.analyzer.comp_hint}（可以在看板上清空）")
@@ -439,7 +618,16 @@ class AdvisorApp:
         fails the worker tries again (and explains why it failed)."""
         if image is None and purpose in TRIGGER_GRAB and self.capturer is not None:
             image = self._grab()
-        return self._slot.put(Job(PRIORITY.get(purpose, 2), purpose, image, extra, generation=self._generation))
+        if self._slot.put(Job(PRIORITY.get(purpose, 2), purpose, image, extra, generation=self._generation)):
+            return True
+        # Worded as a failed command so the dashboard toast says 未执行 instead of 已发送.
+        label = JOB_LABEL.get(purpose, purpose)
+        if purpose == "scout":
+            reason = f"已有 {MAX_PENDING_SCOUTS} 个对手棋盘在排队识别，这次没有记录，稍后再试"
+        else:
+            reason = f"上一次分析还没完成，这次{label}已跳过，稍后再试"
+        self.warn(f"命令 {label} 失败：{reason}")
+        return False
 
     def _request_auto(self, purpose: str) -> bool:
         """Queue an automatic job (capture loop); its frame is grabbed and
@@ -498,11 +686,12 @@ class AdvisorApp:
             champion_names=[u.name for u in (*last.board, *last.bench)] + [u.name for u in last.shop_units if u],
             item_names=list(last.item_bench) + [i for u in last.board for i in u.items],
             trait_names=[t.name for t in last.traits],
-            self_name=last.self_name,
+            self_name=last.self_name if self.tracker.self_name_confirmed else None,
             scouting_player=player,
         )
         order = [self.fast_perceiver, self.perceiver] if purpose == "shop" else [self.perceiver]
         obs: Optional[Observation] = None
+        failure: Optional[str] = None
         for perceiver in order:
             if perceiver is None:
                 continue
@@ -510,10 +699,14 @@ class AdvisorApp:
                 obs = perceiver.perceive(image, purpose=purpose, hint=hint)
                 break
             except PerceptionError as exc:
-                self.last_error = str(exc)
+                failure = str(exc)
                 self.warn(f"识别失败 ({getattr(perceiver, 'name', '?')}): {exc}")
         if obs is None:
+            if failure:
+                self._set_error("perception", failure)
             return None
+        # Read fine (possibly by the fallback): an earlier failure is no longer current.
+        self._clear_error("perception")
         # Optional OCR cross-check of the numbers read by the model (costs a
         # second pass over the frame, so it is off unless configured).
         if (
@@ -586,7 +779,7 @@ class AdvisorApp:
                     self._set_auto_paused(True)
                     return None
                 if self.perceiver is None and self.fast_perceiver is None:
-                    self.last_error = NO_PERCEIVER_MSG
+                    self._set_error("perception", NO_PERCEIVER_MSG)
                     self.warn(NO_PERCEIVER_MSG)
                     return None
                 if self.cfg.capture.save_screenshots and job.purpose != "shop":
@@ -607,10 +800,13 @@ class AdvisorApp:
                     self._report_scout(before, state)
             else:
                 state = self.tracker.state
-            return self._advise(state, job, generation)
+            advice = self._advise(state, job, generation)
+            self._clear_error("job")
+            return advice
         except Exception as exc:
-            self.last_error = f"{type(exc).__name__}: {exc}"
-            self.warn(f"分析出错: {self.last_error}")
+            error = f"{type(exc).__name__}: {exc}"
+            self._set_error("job", error)
+            self.warn(f"分析出错: {error}")
             if self.console:
                 traceback.print_exc()
             return None
@@ -624,7 +820,8 @@ class AdvisorApp:
 
         stored = [k for k, v in state.opponents.items() if before.get(k) != _dump(v)]
         if not stored:
-            self.warn(f"没有记录到对手：截到的像是你自己的棋盘（先切到对手的棋盘，再按 {self.cfg.hotkeys.scout}）")
+            again = f"再按 {self.cfg.hotkeys.scout}" if self.scout_planner.hotkey_available else "再点看板上的「记录对手」"
+            self.warn(f"没有记录到对手：截到的像是你自己的棋盘（先切到对手的棋盘，{again}）")
             return
         who = "对手（没读到名字）" if stored[0] == UNKNOWN_PLAYER else stored[0]
         self.info(f"已记录 {who} 的棋盘")
@@ -634,10 +831,22 @@ class AdvisorApp:
         if self.cfg.advisor.scout_prompts:
             analysis.scout_requests = self.scout_planner.plan(state, analysis)
         advice = self.rules.advise(state, analysis)
+        gen = self._generation if generation is None else generation
+        key = (gen, state.game_id, _stage_key(state))
+        shop = _shop_key(state)
         self._publish_state(state)
         self.bus.publish("analysis", _dump(analysis))
         self._publish_requests()
-        self._publish_advice(advice)
+        with self._advice_lock:
+            self._last_rules = (shop, advice)
+            # A shop read / scout does not ask Claude: keep Claude's advice for
+            # this round on screen instead of replacing it with the rules advice.
+            shown = self._kept_llm_advice(key, shop, advice) if job.purpose in KEEP_LLM_ADVICE else None
+            if shown is None:
+                self._llm_shown = None
+                shown = advice
+            if shown is advice or self._last_advice is None or not _same_advice(shown, self._last_advice):
+                self._publish_advice(shown)
 
         use_llm = (
             self.strategist is not None
@@ -651,7 +860,7 @@ class AdvisorApp:
             "purpose": job.purpose,
             "state": _dump(state),
             "analysis": _dump(analysis),
-            "advice": _dump(advice),
+            "advice": _dump(shown),
         }
         if use_llm:
             self._last_llm_ts = self.clock()
@@ -662,30 +871,44 @@ class AdvisorApp:
                 self._strategy_seq += 1
                 task = {
                     "seq": self._strategy_seq,
-                    "generation": self._generation if generation is None else generation,
+                    "generation": gen,
                     "game_id": state.game_id,
-                    "stage": str(state.stage) if state.stage else None,
+                    "stage": key[2],
+                    "shop": shop,
                     "state": state,
                     "analysis": analysis,
                     "advice": advice,
                 }
                 self._strategy_slot.put(Job(0, "strategy", extra=task))
-                return advice
+                return shown
             llm_advice = self._call_strategist(state, analysis, advice)
             if llm_advice is not None:
-                advice = llm_advice
-                self._publish_advice(advice)
-                record["advice"] = _dump(advice)
+                with self._advice_lock:
+                    self._llm_shown = {"key": key, "advice": llm_advice, "shop": shop}
+                    self._publish_advice(llm_advice)
+                shown = llm_advice
+                record["advice"] = _dump(shown)
         self.game_log.write(record)
-        return advice
+        return shown
+
+    def _kept_llm_advice(self, key: tuple[Any, ...], shop: tuple[str, ...], rules_advice: Advice) -> Optional[Advice]:
+        """Claude's advice on screen when it is for this game and round, with its
+        buy actions redone for the current shop when the shop changed; else None."""
+        cur = self._llm_shown
+        if cur is None or cur["key"] != key:
+            return None
+        if shop == cur["shop"]:
+            return cur["advice"]
+        return _merge_buy_actions(cur["advice"], rules_advice)
 
     def _call_strategist(self, state: GameState, analysis: Analysis, advice: Advice) -> Optional[Advice]:
         """Claude's advice, or None (the rules advice stays; the reason goes to last_error)."""
         llm_advice = self.strategist.advise(state, analysis, advice)
         if llm_advice is not advice and getattr(llm_advice, "source", "") == "llm":
+            self._clear_error("strategy")
             return llm_advice
         if getattr(self.strategist, "last_error", None):
-            self.last_error = str(self.strategist.last_error)
+            self._set_error("strategy", str(self.strategist.last_error))
         return None
 
     def _strategy_current(self, task: dict[str, Any]) -> bool:
@@ -693,7 +916,7 @@ class AdvisorApp:
         if task["seq"] != self._strategy_seq or task["generation"] != self._generation:
             return False
         now = self.tracker.state
-        return now.game_id == task["game_id"] and (str(now.stage) if now.stage else None) == task["stage"]
+        return now.game_id == task["game_id"] and _stage_key(now) == task["stage"]
 
     def _run_strategy(self, task: dict[str, Any]) -> None:
         self._strategy_busy = True
@@ -702,21 +925,35 @@ class AdvisorApp:
             llm_advice = self._call_strategist(task["state"], task["analysis"], task["advice"])
             if llm_advice is None:
                 return
-            if not self._strategy_current(task):
-                return  # the round moved on (or a newer request is queued): stale advice
-            self._publish_advice(llm_advice)
+            with self._advice_lock:
+                if not self._strategy_current(task):
+                    return  # the round moved on (or a newer request is queued): stale advice
+                shown = llm_advice
+                shop_now = _shop_key(self.tracker.state)
+                if shop_now != task.get("shop", shop_now):
+                    # The shop changed (reroll, shop read) while Claude was thinking:
+                    # its buy actions name the old shop, use the rules' for the new one.
+                    rules = self._last_rules[1] if self._last_rules and self._last_rules[0] == shop_now else None
+                    shown = _merge_buy_actions(llm_advice, rules)
+                self._llm_shown = {
+                    "key": (task["generation"], task["game_id"], task["stage"]),
+                    "advice": llm_advice,
+                    "shop": task.get("shop", shop_now),
+                }
+                self._publish_advice(shown)
             self.game_log.write(
                 {
                     "ts": self.clock(),
                     "game_id": task["game_id"],
                     "purpose": "strategy",
                     "stage": task["stage"],
-                    "advice": _dump(llm_advice),
+                    "advice": _dump(shown),
                 }
             )
         except Exception as exc:  # the strategy thread must survive anything
-            self.last_error = f"{type(exc).__name__}: {exc}"
-            self.warn(f"Claude 策略出错: {self.last_error}")
+            error = f"{type(exc).__name__}: {exc}"
+            self._set_error("strategy", error)
+            self.warn(f"Claude 策略出错: {error}")
         finally:
             self._strategy_busy = False
             self.publish_status()
@@ -730,9 +967,11 @@ class AdvisorApp:
     def _publish_advice(self, advice: Advice) -> None:
         self._last_advice = advice
         self.bus.publish("advice", _dump(advice))
-        if self.console:
-            acts = " | ".join(a.text for a in advice.actions[:3])
-            self.info(f"[{advice.source}] {advice.headline}  {acts}")
+        label = ADVICE_LOG_LABEL.get(advice.source, "建议")
+        # The dashboard log gets the headline; the console also the first actions.
+        acts = [a.text for a in advice.actions[:3] if a.text != advice.headline]
+        self._print(f"{label}：{advice.headline}" + (f"  {' | '.join(acts)}" if acts else ""))
+        self.bus.log(f"{label}：{advice.headline}", "info")
 
     def _save_frame(self, image: Image.Image, tag: str) -> None:
         try:
@@ -749,6 +988,8 @@ class AdvisorApp:
                 self.bus.publish("answer", {"question": question, "answer": "上一个问题还在处理中，请稍等", "ts": self.clock()})
                 return
             try:
+                self._asking = {"question": question, "ts": self.clock()}
+                self.publish_status()
                 try:
                     answer = self.ask(question)
                 except Exception as exc:  # the page waits for an answer: always send one
@@ -756,7 +997,9 @@ class AdvisorApp:
                     answer = f"出错了，没能回答（{type(exc).__name__}）"
                 self.bus.publish("answer", {"question": question, "answer": answer, "ts": self.clock()})
             finally:
+                self._asking = None
                 self._ask_lock.release()
+                self.publish_status()
 
         threading.Thread(target=run, name="ask", daemon=True).start()
 
@@ -783,8 +1026,8 @@ class AdvisorApp:
 
     def _shop_read_allowed(self) -> bool:
         """Automatic shop reads through Claude must not starve the round analysis."""
-        if self.fast_perceiver is not None or self.llm is None:
-            return True  # local OCR is free
+        if self.llm is None or self.perceiver is None or self.perceiver is self.fast_perceiver:
+            return True  # no Claude fallback: local OCR is free
         limiter = getattr(self.llm, "limiter", None)
         remaining = getattr(limiter, "remaining", None)
         if not callable(remaining):
@@ -828,7 +1071,10 @@ class AdvisorApp:
                 self._pending_auto_at = now + self.cfg.capture.settle_delay_s
                 self._pending_shop_at = None
             elif "shop_changed" in events and self.cfg.advisor.shop_watch and self._pending_auto_at is None:
-                if self.tracker.state.screen_type in (ScreenType.PLANNING, ScreenType.OTHER) and self._shop_read_allowed():
+                # Not only PLANNING: after an auto frame of the augment cards the
+                # tracker says AUGMENT_SELECT until a shop read shows the HUD
+                # again, and players also roll during combat.
+                if self.tracker.state.screen_type not in NO_SHOP_SCREENS and self._shop_read_allowed():
                     # Coalesce rapid rerolls: one read at most every shop_min_interval_s.
                     earliest = self._last_shop_request + max(0.0, self.cfg.advisor.shop_min_interval_s)
                     self._pending_shop_at = max(now + 0.4, earliest)
@@ -876,7 +1122,7 @@ class AdvisorApp:
             t.start()
             self._threads.append(t)
         if self.perception_mode() == "manual":
-            self.last_error = NO_PERCEIVER_MSG
+            self._set_error("perception", NO_PERCEIVER_MSG)
             self.warn(NO_PERCEIVER_MSG)
         if hotkeys and self.cfg.hotkeys.enabled:
             from .capture.hotkeys import HotkeyManager
@@ -908,6 +1154,14 @@ class AdvisorApp:
         keys = [self.cfg.hotkeys.analyze, self.cfg.hotkeys.scout, self.cfg.hotkeys.toggle_auto, self.cfg.hotkeys.shop]
         self.rules.unavailable_keys = {k for k in keys if k.strip().lower() not in registered}
         self.scout_planner.hotkey_available = self.cfg.hotkeys.scout.strip().lower() in registered
+        # Per action for the dashboard: a key repeated in the config only works for its first use.
+        seen: set[str] = set()
+        live_keys: dict[str, bool] = {}
+        for action in ("analyze", "scout", "toggle_auto", "shop"):
+            norm = str(getattr(self.cfg.hotkeys, action)).strip().lower()
+            live_keys[action] = norm in registered and norm not in seen
+            seen.add(norm)
+        self._hotkeys_live = live_keys
         # Claude must not name keys that do nothing: without any registered
         # hotkey it points the player to the dashboard buttons instead.
         if self.strategist is not None and hasattr(self.strategist, "hotkeys"):

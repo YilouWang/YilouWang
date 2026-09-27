@@ -62,6 +62,9 @@ class Mechanics:
     def is_pve(self, stage: StageRound) -> bool
     def is_carousel(self, stage: StageRound) -> bool
     def is_augment(self, stage: StageRound) -> bool
+    def max_round_damage(self, stage: int | None) -> int   # stage damage + units, caps HP drops (misread check)
+    def standard_level_at(self, sr: StageRound | None) -> int | None
+    patch: str                           # e.g. "18.3b", printed by `doctor` / `data show`
 def load_mechanics(override_path: str | None = None) -> Mechanics
 ```
 Defaults live in `data/bundled/mechanics.toml`; a user TOML overrides any key.
@@ -115,12 +118,25 @@ def load_comps(path: str | None, set_data: SetData, log=None) -> list[CompDef]
 A missing, broken or empty custom comps file falls back to the bundled
 library (with a warning); unresolved API ids get readable names.
 
+### `tft_advisor/data/augments.py`
+`AugmentData.load(set_number)` (bundled `augments_set18.json`), `.lookup(name)`
+(zh / en, fuzzy), `effect_kinds(augment) -> list[str]` (经济 / 装备 / 搜牌 / 战力 ...,
+from the category or the effect text), and
+`pick_augment(choices, data, stage, hp, comp_traits, level=None, round_no=None, augment_rounds=None)
+-> (choice, reason) | None`. The rules pass the state's level and round and
+`Mechanics.augment_rounds`, so effects whose trigger already passed (a level
+reached, the last augment round) or pay out too late at low HP score lower.
+
 ### `tft_advisor/engine/`
 * `probability.py`: pool model + rolldown Markov chain.
   `compute_hit_odds(state, set_data, mech, taken: dict[str,int], targets=None, budgets=..., level=None, shop=None) -> list[HitOdds]`
   (`level`: odds at the level after a planned level up; `shop`: `ShopModel` with the Wisp / Inferno
   shop shape, default from `shop_model(state, set_data, mech)`),
-  `rolldown_probability(..., shop=None)`, `p_shop_shows(...)`, `p_unit_per_slot(...)`.
+  `rolldown_probability(..., shop=None)`, `rolldown_curve(mech, level, cost, need, remaining_unit,
+  remaining_cost_total, budgets, unit_price=None, shop=None) -> {budget: p}` (one iterative table for
+  every budget, no recursion limit), `p_shop_shows(...)`, `p_unit_per_slot(...)`.
+  `HitOdds.p_at(budget)` reads the exact budget when computed (the analyzer adds the plan's roll
+  budget), otherwise the largest computed budget below it.
 * `economy.py`: `plan_economy(state, mech, style="standard", key_star=None, carry_cost=None) -> EconPlan`
   (`key_star`: star level of the reroll target / carry; a reroll line levels normally once it is 3-star;
   `carry_cost`: cost of the line's carry, a 5-cost carry turns a fast 8 into a fast 9).
@@ -129,8 +145,14 @@ library (with a warning); unresolved API ids get readable names.
 * `comps_engine.py`: `suggest_comps(state, set_data, comps, taken_by_player, top_n=3, hint="") -> list[CompSuggestion]`
   (`hint` matches comp names in both languages, traits and champion names).
 * `tracker.py`: `GameTracker(set_data, mech).ingest(obs) -> GameState`, `.state`,
-  `.taken_copies()`, `.taken_by_player()`, `.set_field(name, value)`, `.reset()`.
-* `analyzer.py`: `Analyzer(set_data, mech, comps).analyze(state, taken) -> Analysis`.
+  `.taken_copies()`, `.taken_by_player()`, `.set_field(name, value)`, `.reset()`,
+  `.self_name_confirmed` (the local name was flagged on 2+ frames: only then is it
+  sent to vision as a hint). `field_age["round"]` is when the current round started.
+  Suspicious readings (a lower stage, a gold jump, a lower level, an HP drop larger
+  than the fights since can deal) need a second consistent reading.
+* `analyzer.py`: `Analyzer(set_data, mech, comps).analyze(state, taken) -> Analysis`;
+  `Analyzer.shop_is_stale(state)` (carousel frame, or a shop read before the round
+  started: no shop picks; the dashboard labels it 上回合的商店).
   Shop picks are paid from the roll budget (`Analysis.shop_picks_cost`), and the
   odds count the copies they buy. `CompSuggestion` carries the library's `style`,
   `tier`, `positions` (unit -> [row, col]) and `item_holders`.
@@ -174,7 +196,7 @@ records requests and returns scripted replies, so the real SDK path runs offline
 
 ### `tft_advisor/advisor/`
 * `rules.py`: `RulesAdvisor().advise(state, analysis) -> Advice` (Chinese, offline).
-* `strategist.py`: `ClaudeStrategist(client, cfg, set_data, extra_reference="", hotkeys=None, scout_enabled=True)`
+* `strategist.py`: `ClaudeStrategist(llm, cfg, set_data, *, clock=time.time, extra_reference="", hotkeys=None, scout_enabled=True, augments=None)`
   `.advise(state, analysis, rules_advice, question=None) -> Advice` and `.ask(question, state, analysis) -> str`.
   `AdvisorApp` passes `[hotkeys]` (reported as "off" when no global hotkey could be
   registered) and `[advisor] scout_prompts` (False: scout requests are dropped).
@@ -237,15 +259,39 @@ every field and asks to skip categories without data; em dashes removed).
   `capturer.game_foreground()` is False) are skipped and pause auto mode, so
   the desktop or another app is never sent to Claude. Auto jobs are "gated":
   the worker grabs their frame and checks it again.
-* worker thread: single-slot job queue (latest job wins) runs
+* worker thread: `JobSlot` queue runs
   perceive → ingest → analyze → rules → publish. Player-triggered jobs
   (manual / scout / shop, hotkeys and dashboard buttons) carry the frame
-  grabbed at trigger time. Each job remembers the 新对局 generation it was
-  created in; a result from before a reset is dropped.
+  grabbed at trigger time. Scout jobs wait in their own FIFO (up to 7, run
+  first) and are never replaced. Otherwise one main job: a new job replaces
+  it unless the pending one is more important; a job that loses but would see
+  something newer (a shop read grabbed after the pending analysis' frame, a
+  round change after an F6 frame, a shop read displaced by a correction) is
+  kept as one follow-up. A job that must be dropped is reported as
+  `命令 <按钮> 失败：...`, so the dashboard toast says 未执行. Each job
+  remembers the 新对局 generation it was created in; a result from before a
+  reset is dropped.
 * strategy thread (when a strategist exists and `start()` ran): single slot,
   runs the Claude strategist after auto / manual / reanalyze jobs and
   publishes its advice only if the game, round and request are still current.
+  If the shop changed while Claude was thinking, its buy actions are replaced
+  by the rules' buy actions for the current shop (`source="rules+llm"`).
   Without `start()` (replay, tests) the strategist runs inline in `run_job`.
+* Shop reads and scouts never ask Claude, and they do not replace Claude's
+  advice for the same game and round: it stays up (buy actions redone for a
+  changed shop); the shop card and odds update from the new analysis.
+* Automatic shop reads run on every screen except carousel / loading /
+  post-game (an augment-screen auto frame must not block the round's rerolls).
+* `status.last_error` / `last_error_ts`: the latest error per source
+  (perception, strategy, job); a later success of that source clears it
+  (the dashboard shows its age).
+* `status.hotkeys_live`: action -> the global hotkey really works (registered and
+  bound to that action); the dashboard names only those keys.
+  `status.asking` = `{question, ts}` while Claude answers a question (every open
+  page shows 思考中), `status.comp_hint_matched` is False when the target comp
+  matches nothing. 新对局 and a detected new game publish `answer = None`.
+* Advice goes to the dashboard log as 「规则建议：…」 / 「Claude 建议：…」
+  (headline only); the console line also lists the first actions.
 * dashboard: `ThreadingHTTPServer` in a daemon thread.
 * hotkeys: Win32 message loop thread.
 * main thread: tkinter overlay mainloop when enabled, otherwise waits on a stop event.

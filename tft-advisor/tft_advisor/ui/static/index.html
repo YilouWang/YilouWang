@@ -91,6 +91,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .btn:hover { border-color: var(--accent); }
 .btn:active { transform: scale(0.98); background: #232a35; }
 .btn .hk { font-size: 12px; font-weight: 500; color: var(--dim); margin-left: 4px; }
+.btn .hk:empty { display: none; }
 .btn.primary { background: #1f3b5c; border-color: #2f6fb0; }
 .btn.danger { color: #ffb4ae; }
 .btn.small { min-height: 40px; padding: 6px 12px; font-size: 14px; }
@@ -187,6 +188,16 @@ main.grid {
 .slot.pick { background: #12301c; border-color: var(--good); box-shadow: 0 0 0 1px var(--good) inset; }
 .slot.pick .n { color: #c6f6d0; }
 .slot.none { opacity: 0.4; }
+/* Set 18 Wisp: its name may wrap (two lines) instead of being cut */
+.slot.wisp { border-style: dashed; }
+.slot.wisp .n {
+  white-space: normal; overflow-wrap: anywhere; font-size: 13px; line-height: 1.2;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.wtag { font-size: 11px; border: 1px solid var(--line); border-radius: 5px; padding: 0 4px; color: #d2a8ff; }
+.wispline { font-size: 14px; margin-top: 6px; word-break: break-word; }
+.shop.old { opacity: .5; }
+.shopnote { font-size: 13px; color: var(--warn); margin-bottom: 6px; }
 
 /* ---------- tables ---------- */
 .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -4px; }
@@ -198,6 +209,7 @@ td.unit { font-weight: 700; }
 .pct-hi { color: var(--good); font-weight: 700; }
 .pct-mid { color: var(--warn); font-weight: 700; }
 .pct-lo { color: var(--bad); }
+.ph { display: none; } /* phone only: the target stars next to the name */
 
 /* ---------- comps ---------- */
 .comp { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; background: var(--card2); }
@@ -269,8 +281,11 @@ textarea:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   padding: 8px 16px; font-size: 14px;
 }
 #banner.show { display: block; }
-/* connection lost: the data below is old, make that obvious at a glance */
-main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3s; }
+/* connection lost or token refused: the data is old, make that obvious at a glance
+   (the pinned stats and pills too, except the connection state itself) */
+main.grid.stale, .topwrap.stale .stat:not(.conn), .topwrap.stale .pills {
+  opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3s;
+}
 
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
@@ -301,6 +316,12 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
   #toast { bottom: calc(86px + env(safe-area-inset-bottom)); }
   .shop { gap: 4px; }
   .slot .n { font-size: 13px; }
+  .slot.wisp .n { font-size: 12px; }
+  /* the gold columns are what the odds card is for: drop the rest on a phone */
+  #odds .opt { display: none; }
+  #odds .ph { display: inline; font-size: 11px; }
+  #odds th, #odds td { padding: 6px 4px; }
+  #odds td.unit, #odds th:first-child { position: sticky; left: 0; background: var(--card); z-index: 1; }
   .pl { min-height: 44px; padding: 6px 10px; }
 }
 </style>
@@ -318,24 +339,24 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
     <div class="stat"><span class="k">连胜/连败</span><span class="v" id="s-streak">-</span></div>
     <div class="stat"><span class="k">自动分析</span><span class="v" id="s-auto">-</span></div>
     <div class="stat"><span class="k">API 调用</span><span class="v" id="s-calls">0</span></div>
-    <div class="stat"><span class="k">连接</span><span class="v" id="s-conn">...</span></div>
+    <div class="stat conn"><span class="k">连接</span><span class="v" id="s-conn">...</span></div>
   </div>
   <div class="pills" id="pills"></div>
 </header>
 </div>
 
 <nav class="controls" id="controls">
-  <button class="btn primary" data-cmd="analyze" data-label="分析">分析<span class="hk" id="hk-analyze">F6</span></button>
-  <button class="btn" data-cmd="scout" data-label="记录对手">记录对手<span class="hk" id="hk-scout">F7</span></button>
-  <button class="btn" data-cmd="shop" data-label="读商店">读商店<span class="hk" id="hk-shop">F9</span></button>
-  <button class="btn" data-cmd="toggle_auto" data-label="自动开关" id="btn-auto">自动开关<span class="hk" id="hk-toggle_auto">F8</span></button>
+  <button class="btn primary" data-cmd="analyze" data-label="分析">分析<span class="hk" id="hk-analyze"></span></button>
+  <button class="btn" data-cmd="scout" data-label="记录对手">记录对手<span class="hk" id="hk-scout"></span></button>
+  <button class="btn" data-cmd="shop" data-label="读商店">读商店<span class="hk" id="hk-shop"></span></button>
+  <button class="btn" data-cmd="toggle_auto" data-label="自动开关" id="btn-auto">自动开关<span class="hk" id="hk-toggle_auto"></span></button>
   <button class="btn danger" data-cmd="new_game" data-label="新对局">新对局</button>
 </nav>
 
 <main class="grid">
   <section class="card headline w8" id="card-headline">
     <h2>当前建议 <span class="sub" id="hl-age"></span></h2>
-    <div id="headline"><div class="hl-text">等待第一次分析</div><div class="dim">进入对局后会自动分析，也可以按 F6 或点「分析」。</div></div>
+    <div id="headline"><div class="hl-text">等待第一次分析</div><div class="dim">进入对局后会自动分析，也可以点「分析」。</div></div>
   </section>
 
   <section class="card w4" id="card-requests">
@@ -428,8 +449,13 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
   var TOPICS = ["snapshot", "state", "analysis", "advice", "requests", "status", "log", "answer", "command"];
   var S = {};
   var skew = 0; // server time minus local time, seconds
-  var lastAskTs = 0;
+  var lastAskTs = 0; // server time of this tab's pending question (0 = none)
+  var lastAskQ = "";
   var ASK_TIMEOUT_S = 120;
+  var ASK_KEY = "tftAdvisorAsk"; // sessionStorage: a reload keeps showing the pending question
+  var answerCut = 0; // answers up to this server ts belong to an earlier game
+  var appliedHint = null; // last comp hint copied into the input
+  var hintCheck = null; // {hint, until}: tell the player when a hint just set matches nothing
   var STALE_STREAM_MS = 45000; // server pings every 15 s; 3 missed pings = dead stream
   var lastMsgAt = 0;
   var lastDataAt = 0; // last time the server answered with data (stream event or poll)
@@ -545,10 +571,40 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
     if (src.indexOf("cdragon") >= 0) return "CommunityDragon";
     return src;
   }
-  function shopName(name) {
-    // Set 18 Wisps are reported as "Wisp: <name>".
-    return String(name).replace(/^\s*wisp\s*[:：]\s*/i, "精灵：");
+  // Set 18 Wisps are reported as "Wisp: <name>" (prefixes as engine/tracker.py WISP_PREFIXES).
+  var WISP_RE = /^\s*(wisp|精灵|灵火)\s*[:：]?\s*/i;
+  function wispName(name) { return String(name).replace(WISP_RE, ""); }
+  // A hotkey is named on the page only when the app says it really works
+  // (registered on Windows): status.hotkeys_live = {analyze: true, ...}.
+  function liveKey(k) {
+    var live = g(S, "status.hotkeys_live", null);
+    if (!live || typeof live !== "object" || live[k] !== true) return "";
+    var name = g(S, "status.hotkeys." + k, "");
+    return typeof name === "string" ? name : "";
   }
+  // Same text as engine/analyzer.py when the target comp matches no comp, trait or champion.
+  function noMatchText(h) { return "没有阵容匹配「" + h + "」"; }
+  function hintUnmatched(h) {
+    if (!h) return false;
+    if (g(S, "status.comp_hint_matched", null) === false) return true;
+    var want = noMatchText(h);
+    return arr(g(S, "analysis.warnings", [])).some(function (w) { return typeof w === "string" && w.indexOf(want) === 0; });
+  }
+  function saveAsk() {
+    try {
+      if (lastAskTs) sessionStorage.setItem(ASK_KEY, JSON.stringify({ ts: lastAskTs, q: lastAskQ, at: Date.now() }));
+      else sessionStorage.removeItem(ASK_KEY);
+    } catch (e) { /* storage may be blocked */ }
+  }
+  (function restoreAsk() {
+    try {
+      var j = JSON.parse(sessionStorage.getItem(ASK_KEY) || "null");
+      if (j && num(j.ts) && num(j.at) && Date.now() - j.at < ASK_TIMEOUT_S * 1000) {
+        lastAskTs = j.ts;
+        lastAskQ = typeof j.q === "string" ? j.q : "";
+      }
+    } catch (e) { /* storage may be blocked */ }
+  })();
   var FIELD_LABEL = { gold: "金币", level: "等级", hp: "血量", stage: "阶段", xp_current: "当前经验", streak: "连胜/连败" };
   // Same bounds as engine/tracker.py (GOLD_RANGE, HP_RANGE, XP_MAX, STREAK_RANGE); the app has the final say.
   var FIELD_RANGE = { gold: [0, 300], level: [1, 10], hp: [0, 200], xp_current: [0, 200], streak: [-20, 20] };
@@ -597,8 +653,11 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
   // One place decides the banner and the "old data" look of the page.
   function refreshBanner() {
     var down = connMode === "down";
+    // Disconnected or refused (token changed): nothing on the page is being refreshed.
+    var stale = (down || authBad) && lastDataAt > 0;
     var grid = document.querySelector("main.grid");
-    if (grid) grid.classList.toggle("stale", down && lastDataAt > 0);
+    if (grid) grid.classList.toggle("stale", stale);
+    $("topwrap").classList.toggle("stale", stale);
     if (authBad) {
       banner("访问被拒绝：需要令牌。请用助手启动时打印的完整链接（带 ?token=）打开本页。");
     } else if (down) {
@@ -628,7 +687,7 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
           var warns = arr(j.warnings);
           if (warns.length) toast("已发送：" + label + "。注意：" + warns[0], "warn", 6000);
           else toast("已发送：" + label, "ok");
-          return true;
+          return warns.length ? { warnings: warns } : true;
         });
       })
       .catch(function (e) {
@@ -655,7 +714,9 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
     el.textContent = m[0];
     el.className = "v " + m[1];
     refreshBanner();
+    scheduleRender(); // the "分析中" pill only shows while data is flowing
   }
+  function connLive() { return !authBad && (connMode === "live" || connMode === "poll"); }
   function authFailed() {
     authBad = true;
     setConn("auth");
@@ -669,11 +730,19 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
       .catch(function () { /* ignore */ });
   }
 
+  // A new game (新对局 or detected by the tracker): the last game's answer goes away.
+  function noteGame(state) {
+    var oldGid = g(S, "state.game_id", "");
+    var newGid = state && typeof state === "object" ? state.game_id || "" : "";
+    if (oldGid && newGid && oldGid !== newGid) answerCut = Math.max(answerCut, num(g(S, "answer.ts", null)) || 0);
+  }
+
   function handle(topic, raw) {
     var data;
     try { data = JSON.parse(raw); } catch (e) { return; }
     lastDataAt = Date.now();
     if (topic === "snapshot") {
+      if (data && typeof data === "object") noteGame(data.state);
       S = data && typeof data === "object" ? data : {};
     } else if (topic === "log") {
       var lg = arr(S.log).slice(-199);
@@ -685,6 +754,9 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
       S.log = lg;
     } else if (topic === "command") {
       return;
+    } else if (topic === "state") {
+      noteGame(data);
+      S.state = data;
     } else {
       S[topic] = data;
     }
@@ -703,6 +775,7 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
       .then(function (j) {
         if (!j) return;
         if (es && es.readyState === 1 && connMode === "live") return; // the stream is fresher
+        if (j && typeof j === "object") noteGame(j.state);
         S = j;
         lastDataAt = Date.now();
         if (authBad) authBad = false;
@@ -848,7 +921,9 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
     var sk = num(st.streak);
     setText("s-streak", sk === null || sk === 0 ? "-" : sk > 0 ? "胜 " + sk : "败 " + (-sk), sk > 0 ? "good" : sk < 0 ? "bad" : "");
     if (status.auto === true || status.auto === false) {
-      setText("s-auto", status.auto ? "开" : "关", status.auto ? "good" : "dim");
+      // On but paused (game window not found / not in front): nothing is being analysed.
+      var paused = status.auto && status.auto_paused === true;
+      setText("s-auto", !status.auto ? "关" : paused ? "暂停" : "开", !status.auto ? "dim" : paused ? "warn" : "good");
       $("btn-auto").className = "btn" + (status.auto ? " auto-on" : "");
     }
     var calls = num(status.calls);
@@ -857,27 +932,38 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
     setText("s-calls", (calls === null ? "0" : String(calls)) + (cost !== null && cost > 0 ? " <small>约 $" + cost.toFixed(2) + "</small>" : ""));
     var hint = typeof status.comp_hint === "string" ? status.comp_hint : null;
     if (hint !== null) {
-      $("comp-cur").textContent = hint ? "：当前 " + hint : "：当前 自动";
+      var unmatched = hintUnmatched(hint);
+      $("comp-cur").textContent = !hint ? "：当前 自动" : unmatched ? "：当前 自动（没有匹配 " + hint + "）" : "：当前 " + hint;
+      // Follow the app's hint when it changes (新对局 resets it), never while the player types.
       var inp = $("comp-value");
-      if (inp && document.activeElement !== inp && !inp.value && hint) inp.value = hint;
+      if (inp && hint !== appliedHint) {
+        if (document.activeElement !== inp) inp.value = hint;
+        appliedHint = hint;
+      }
+      if (hintCheck && Date.now() > hintCheck.until) hintCheck = null;
+      if (hintCheck && hintCheck.hint === hint && unmatched) {
+        toast(noMatchText(hint) + "，按自动推荐", "warn", 6000);
+        hintCheck = null;
+      }
     }
 
     var pills = [];
-    if (status.busy) pills.push('<span class="pill busy">分析中...</span>');
+    if (status.busy && connLive()) pills.push('<span class="pill busy">分析中...</span>');
     if (status.perceiver) pills.push('<span class="pill off info">识别: ' + esc(perceiverLabel(status.perceiver)) + "</span>");
     if (status.set) pills.push('<span class="pill off info">' + esc(status.set) + "</span>");
     if (status.llm === false) pills.push('<span class="pill off">未启用 Claude</span>');
     setHTML("pills", pills.join(""));
 
-    var hk = status.hotkeys || {};
     ["analyze", "scout", "shop", "toggle_auto"].forEach(function (k) {
-      if (hk[k] && $("hk-" + k)) $("hk-" + k).textContent = hk[k];
+      var el = $("hk-" + k), key = liveKey(k);
+      if (el && el.textContent !== key) el.textContent = key;
     });
   }
 
   function waitingHTML() {
-    var key = g(S, "status.hotkeys.analyze", "F6");
-    return '<div class="hl-text">等待第一次分析</div><div class="dim">进入对局后会自动分析，也可以按 ' + esc(key) + " 或点「分析」。</div>";
+    var key = liveKey("analyze");
+    return '<div class="hl-text">等待第一次分析</div><div class="dim">进入对局后会自动分析，也可以' +
+      (key ? "按 " + esc(key) + " 或" : "") + "点「分析」。</div>";
   }
 
   function renderHeadline() {
@@ -971,6 +1057,7 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
     var slots = arr(st.shop);
     var n = Math.max(units.length, slots.length);
     var html = "";
+    var wisps = [];
     if (n) {
       var cells = [];
       for (var i = 0; i < Math.min(n, 6); i++) {
@@ -979,11 +1066,25 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
         var name = (u && (u.name || u.api_name)) || (s && s.name) || "";
         var cost = (u && num(u.cost)) || (s && num(s.cost)) || null;
         if (!name) { cells.push('<div class="slot none"><div class="n">空</div></div>'); continue; }
+        if (!u && WISP_RE.test(name)) {
+          // Wisp (not a champion): its own name, a 精灵 tag and its price in gold.
+          var wn = wispName(name) || "精灵";
+          var price = s ? num(s.cost) : null;
+          wisps.push(wn + (price !== null ? "（" + price + " 金）" : ""));
+          cells.push('<div class="slot wisp" title="' + esc("精灵：" + wn) + '"><div class="n">' + esc(wn) +
+            '</div><div class="c"><span class="wtag">精灵</span>' + (price !== null ? " " + price + " 金" : "") + "</div></div>");
+          continue;
+        }
         var isPick = picks.indexOf(norm(name)) >= 0 || (u && picks.indexOf(norm(u.api_name)) >= 0);
-        cells.push('<div class="slot' + (isPick ? " pick" : "") + costCls(cost) + '"><div class="n">' + esc(shopName(name)) +
+        cells.push('<div class="slot' + (isPick ? " pick" : "") + costCls(cost) + '" title="' + esc(name) + '"><div class="n">' + esc(name) +
           '</div><div class="c">' + (cost ? cost + " 费" : "") + "</div></div>");
       }
-      html += '<div class="shop">' + cells.join("") + "</div>";
+      // Same test as engine/analyzer.py shop_is_stale: carousel, or a shop read before this round began.
+      var shopT = num(g(st, "field_age.shop", null)), roundT = num(g(st, "field_age.round", null));
+      var oldShop = st.screen_type === "carousel" || (shopT !== null && roundT !== null && shopT < roundT);
+      if (oldShop) html += '<div class="shopnote">上回合的商店（刷新商店或点「读商店」后更新）</div>';
+      html += '<div class="shop' + (oldShop ? " old" : "") + '">' + cells.join("") + "</div>";
+      if (wisps.length) html += '<div class="wispline"><span class="wtag">精灵</span> ' + esc(wisps.join("、")) + "</div>";
     }
     var buy = arr(an.shop_picks), sell = arr(an.sell_candidates);
     html += '<div class="lbl">建议购买</div>' + (buy.length ? '<div class="chips">' + buy.map(function (x) { return '<span class="chip pick">' + esc(unitName(x)) + "</span>"; }).join("") + "</div>" : empty("无"));
@@ -1008,8 +1109,9 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
     var keys = goldKeys(odds);
     var lvl = num(odds[0].level);
     $("odds-sub").textContent = lvl ? "按 " + lvl + " 级商店概率" : "";
-    var head = "<tr><th>英雄</th><th>费</th><th>已有/需要</th><th>目标</th><th>单次商店</th>" +
-      keys.map(function (k) { return "<th>" + k + " 金</th>"; }).join("") + "<th>期望花费</th><th>池中剩余</th></tr>";
+    // .opt columns are hidden on a phone, so the gold columns fit without scrolling.
+    var head = '<tr><th>英雄</th><th class="opt">费</th><th class="opt">已有/需要</th><th class="opt">目标</th><th>单次商店</th>' +
+      keys.map(function (k) { return "<th>" + k + " 金</th>"; }).join("") + '<th>期望花费</th><th class="opt">池中剩余</th></tr>';
     var body = odds.slice(0, 12).map(function (o) {
       var pg = o.p_goal_by_gold || {};
       var cells = keys.map(function (k) {
@@ -1018,13 +1120,14 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
       }).join("");
       var eg = num(o.expected_gold_to_goal);
       var seenEl = num(o.seen_elsewhere);
-      return '<tr><td class="unit' + costCls(o.cost) + '">' + esc(o.unit || o.api_name) + "</td>" +
-        "<td>" + (num(o.cost) || "-") + "</td>" +
-        "<td>" + (num(o.owned_copies) !== null ? o.owned_copies : "-") + "/" + (num(o.goal_copies) !== null ? o.goal_copies : "-") + "</td>" +
-        '<td style="color:var(--c5)">' + stars(o.goal_star) + "</td>" +
+      return '<tr><td class="unit' + costCls(o.cost) + '">' + esc(o.unit || o.api_name) +
+        '<span class="ph" style="color:var(--c5)"> ' + stars(o.goal_star) + "</span></td>" +
+        '<td class="opt">' + (num(o.cost) || "-") + "</td>" +
+        '<td class="opt">' + (num(o.owned_copies) !== null ? o.owned_copies : "-") + "/" + (num(o.goal_copies) !== null ? o.goal_copies : "-") + "</td>" +
+        '<td class="opt" style="color:var(--c5)">' + stars(o.goal_star) + "</td>" +
         "<td>" + pct(o.p_in_shop) + "</td>" + cells +
         "<td>" + (eg === null ? "-" : "约 " + Math.round(eg) + " 金") + "</td>" +
-        "<td>" + (num(o.remaining_in_pool) !== null ? o.remaining_in_pool : "-") +
+        '<td class="opt">' + (num(o.remaining_in_pool) !== null ? o.remaining_in_pool : "-") +
         (seenEl ? ' <span class="faint">(别人 ' + seenEl + ")</span>" : "") + "</td></tr>";
     }).join("");
     setHTML("odds", '<div class="tablewrap"><table><thead>' + head + "</thead><tbody>" + body + "</tbody></table></div>");
@@ -1085,7 +1188,8 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
       }).join("") + "</div>";
     }
     if (!list.length) {
-      html += empty("还没有记录对手。在游戏里点开对手的棋盘，再按 F7 或点上面的玩家名。");
+      var sk = liveKey("scout");
+      html += empty("还没有记录对手。在游戏里点开对手的棋盘，再" + (sk ? "按 " + sk + " 或" : "") + "点上面的玩家名或「记录对手」。");
     } else {
       html += list.slice(0, 8).map(function (o) {
         var board = arr(o.board);
@@ -1133,25 +1237,52 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
     var status = S.status || {};
     var items = w.map(function (x) { return "<li>" + esc(x) + "</li>"; });
     if (status.perceiver === "manual") items.push('<li class="bad">没有 Claude API Key 也没有 OCR，助手看不到游戏画面：「分析」「读商店」「记录对手」不会读到新数据。请设置 ANTHROPIC_API_KEY 后重启，或在「手动修正」里输入金币、等级、血量。</li>');
-    if (has(status.last_error)) items.push('<li class="bad">最近错误：' + esc(status.last_error) + "</li>");
+    if (has(status.last_error)) {
+      // Age from status.last_error_ts (server clock): an old error reads as history, not as live.
+      var errTs = num(status.last_error_ts);
+      var errAge = errTs ? Math.floor((nowS() - errTs) / 60) : 0;
+      items.push('<li class="bad">最近错误' + (errAge >= 1 ? "（" + errAge + " 分钟前）" : "") + "：" + esc(status.last_error) + "</li>");
+    }
+    var capErr = has(status.capture_error) ? String(status.capture_error) : "";
+    var paused = status.auto === true && status.auto_paused === true;
+    if (paused) {
+      items.unshift("<li>自动分析已暂停：没找到游戏窗口或游戏不在前台" + (capErr ? "（" + esc(capErr) + "）" : "") + "</li>");
+    } else if (capErr) {
+      items.push("<li>" + esc(capErr) + "</li>");
+    }
     var lu = num(g(S, "state.last_update", null));
-    if (lu && nowS() - lu > 300 && status.auto) items.push("<li>已经超过 5 分钟没有读到新画面，检查游戏窗口是否在前台</li>");
+    if (lu && nowS() - lu > 300 && status.auto && !paused) items.push("<li>已经超过 5 分钟没有读到新画面，检查游戏窗口是否在前台</li>");
     setHTML("warnings", items.length ? '<ul class="warnlist">' + items.join("") + "</ul>" : empty("暂无提醒"));
+  }
+
+  // The question being answered: this tab's (kept over a reload) or, when the
+  // app reports one (status.asking = {question, ts}), any device's.
+  // slack: this tab's time is an estimate of the server clock, the app's is exact.
+  function pendingAsk() {
+    var p = lastAskTs ? { ts: lastAskTs, q: lastAskQ, slack: 2 } : null;
+    var st = g(S, "status.asking", null);
+    if (st && typeof st === "object" && num(st.ts) && (!p || st.ts > p.ts)) {
+      p = { ts: st.ts, q: has(st.question) ? String(st.question) : "", slack: 0 };
+    }
+    return p;
   }
 
   function renderAnswer() {
     var a = S.answer;
+    if (a && typeof a === "object" && num(a.ts) !== null && a.ts <= answerCut) a = null; // an earlier game's answer
     var el = $("answer");
-    if (lastAskTs && (!a || !num(a.ts) || a.ts < lastAskTs - 2)) {
-      if (nowS() - lastAskTs > ASK_TIMEOUT_S) {
-        setHTML(el, '<div class="answer warn">等了 2 分钟还没有回答，可以再问一次，或看看下面的日志</div>');
+    var p = pendingAsk();
+    if (p && (!a || !num(a.ts) || a.ts < p.ts - p.slack)) {
+      var qh = p.q ? '<div class="q">问：' + esc(p.q) + "</div>" : "";
+      if (nowS() - p.ts > ASK_TIMEOUT_S) {
+        setHTML(el, '<div class="answer warn">' + qh + "等了 2 分钟还没有回答，可以再问一次，或看看下面的日志</div>");
       } else {
-        setHTML(el, '<div class="answer dim">Claude 思考中...</div>');
+        setHTML(el, '<div class="answer dim">' + qh + "Claude 思考中...</div>");
       }
       return;
     }
+    if (lastAskTs) { lastAskTs = 0; lastAskQ = ""; saveAsk(); }
     if (!a || typeof a !== "object" || !has(a.answer)) { setHTML(el, ""); return; }
-    lastAskTs = 0;
     setHTML(el, '<div class="answer">' + (has(a.question) ? '<div class="q">问：' + esc(a.question) + "</div>" : "") + esc(a.answer) + "</div>");
   }
 
@@ -1208,7 +1339,7 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
     var q = $("ask-q").value.replace(/^\s+|\s+$/g, "");
     if (!q) { toast("先写下你的问题", "bad"); return; }
     send({ cmd: "ask", question: q.slice(0, 500) }, "提问").then(function (ok) {
-      if (ok) { lastAskTs = nowS(); renderAnswer(); }
+      if (ok) { lastAskTs = nowS(); lastAskQ = q.slice(0, 500); saveAsk(); renderAnswer(); }
     });
   }
   $("ask-btn").addEventListener("click", ask);
@@ -1249,7 +1380,11 @@ main.grid.stale { opacity: 0.55; filter: grayscale(0.5); transition: opacity 0.3
 
   function setComp() {
     var v = $("comp-value").value.replace(/^\s+|\s+$/g, "").slice(0, 200);
-    send({ cmd: "set_comp", comp: v }, v ? "目标阵容 " + v : "目标阵容 自动", "设定失败");
+    send({ cmd: "set_comp", comp: v }, v ? "目标阵容 " + v : "目标阵容 自动", "设定失败").then(function (ok) {
+      // The reanalysis says whether the hint matches anything: warn when it does not
+      // (unless the app already said so in the reply).
+      if (ok === true && v) { hintCheck = { hint: v, until: Date.now() + 20000 }; scheduleRender(); }
+    });
   }
   $("comp-btn").addEventListener("click", setComp);
   $("comp-value").addEventListener("keydown", function (ev) { if (ev.key === "Enter") { ev.preventDefault(); setComp(); } });
