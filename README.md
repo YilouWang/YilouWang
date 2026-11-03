@@ -2,16 +2,20 @@
   <img src="./header.svg" width="100%" alt="Yilou's Silicon Timeline" />
 </div>
 
+<div align="center">
+
 # 王译楼 · Yilou Wang 👋
 
-> **Digital IP Verification Engineer @ NXP Munich · previously PlanV · TUM M.Sc.**
-> Verilator org member · 160+ merged PRs in Verilator · UVM on open-source simulators · AI for verification
+**Digital IP Verification Engineer @ NXP Munich · previously PlanV · TUM M.Sc.**<br/>
+<sub>Verilator org member · 160+ merged PRs in Verilator · UVM on open-source simulators · AI for verification</sub>
 
 <p>
   <img src="https://img.shields.io/badge/Now-Digital%20IP%20Verification%20%40%20NXP-0969da?style=flat-square" alt="now" />
   <a href="https://github.com/verilator/verilator/pulls?q=is%3Apr+is%3Amerged+author%3AYilouWang"><img src="https://img.shields.io/badge/Verilator-160%2B%20merged%20PRs-2da44e?style=flat-square" alt="verilator prs" /></a>
   <img src="https://img.shields.io/badge/Focus-UVM%20%7C%20SVA%20%7C%20Constrained%20Random%20%7C%20AI-8250df?style=flat-square" alt="focus" />
 </p>
+
+</div>
 
 ```systemverilog
 module Yilou_Wang_Career (
@@ -47,7 +51,11 @@ endmodule
 
 ---
 
-## Highlights
+## ✨ Highlights
+
+<div align="center">
+  <img src="./sim_log.svg" width="100%" alt="Highlights as a UVM sim log" />
+</div>
 
 - 🚀 **[160+ merged pull requests in Verilator](https://github.com/verilator/verilator/pulls?q=is%3Apr+is%3Amerged+author%3AYilouWang)**: constrained randomization, SVA and UVM-related features. Member of the Verilator GitHub organization.
 - 🧪 **Industrial UVM on an open-source simulator**: OpenHW's cv32e40p UVM testbench (core-v-verif) running natively on Verilator, 0 UVM_FATAL / 0 UVM_ERROR.
@@ -55,7 +63,7 @@ endmodule
 
 ---
 
-## Journey
+## 🧭 Journey
 
 - 🎓 2017–2021: 🇨🇳 B.Eng. EE @ HIT (Fuxin 🚄 Harbin)
 - 🎓 2021–2024: 🇩🇪 M.Sc. EE @ TUM (China ✈️ Munich)
@@ -65,7 +73,7 @@ endmodule
 
 ---
 
-## Publications & Talks
+## 📚 Publications & Talks
 
 - 🎤 **AI on Open-Source EDA: Closing the UVM-on-Verilator Gap with an Agentic Development Loop**, DVCon Europe 2026 · Munich, Nov 17–18, 2026
 - 📄 **Enabling Industrial-Grade RISC-V UVM Verification on an Open-Source Simulator**, Euromicro DSD 2026 (MATTERV) · Kraków, Sep 2026
@@ -90,7 +98,7 @@ endmodule
 
 ---
 
-## Projects
+## 🛠️ Projects
 
 - 🧰 [Toy4Joy_DV](https://github.com/YilouWang/Toy4Joy_DV): DV playground for SV / UVM / Verilator / cocotb, with practical examples for onboarding and quick experiments.
 - 📘 [cocotb-BSHL](https://github.com/Infineon/cocotb-BSHL): my master thesis work at Infineon, giving cocotb/pyuvm access to SystemVerilog verification IP.
@@ -99,7 +107,7 @@ endmodule
 
 ---
 
-## Contact
+## 📫 Contact
 
 <p>
   <a href="https://www.linkedin.com/in/yilou-wang-a0569b215/">
