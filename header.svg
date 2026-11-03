@@ -95,7 +95,7 @@
     <text x="12" y="22" class="mono label c-if">IF: FETCH</text>
     <text x="12" y="46" class="mono title">HIT 🇨🇳</text>
     <text x="12" y="66" class="mono sub">Fuxin / Harbin</text>
-    <text x="12" y="90" class="mono tech c-if">B.Sc. EE</text>
+    <text x="12" y="90" class="mono tech c-if">B.Eng. EE</text>
     <text x="12" y="105" class="mono tech c-if">Comm. Eng.</text>
   </g>
 
