@@ -93,7 +93,7 @@
     <rect width="145" height="120" rx="6" class="stage"/>
     <rect x="1" y="1" width="143" height="3" rx="1.5" class="c-if"/>
     <text x="12" y="22" class="mono label c-if">IF: FETCH</text>
-    <text x="12" y="46" class="mono title">HIT 🇨🇳</text>
+    <text x="12" y="46" class="mono title">HIT</text>
     <text x="12" y="66" class="mono sub">Fuxin / Harbin</text>
     <text x="12" y="90" class="mono tech c-if">B.Eng. EE</text>
     <text x="12" y="105" class="mono tech c-if">Comm. Eng.</text>
@@ -104,7 +104,7 @@
     <rect width="145" height="120" rx="6" class="stage"/>
     <rect x="1" y="1" width="143" height="3" rx="1.5" class="c-id"/>
     <text x="12" y="22" class="mono label c-id">ID: DECODE</text>
-    <text x="12" y="46" class="mono title">TUM 🇩🇪</text>
+    <text x="12" y="46" class="mono title">TUM</text>
     <text x="12" y="66" class="mono sub">Munich</text>
     <text x="12" y="90" class="mono tech c-id">M.Sc. EE</text>
     <text x="12" y="105" class="mono tech c-id">Comm. Eng.</text>

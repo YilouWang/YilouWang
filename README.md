@@ -27,7 +27,7 @@
 
 - 🚀 **[160+ merged pull requests in Verilator](https://github.com/verilator/verilator/pulls?q=is%3Apr+is%3Amerged+author%3AYilouWang)**: constrained randomization, SVA and UVM-related features. Member of the Verilator GitHub organization.
 - 🧪 **Industrial UVM on an open-source simulator**: OpenHW's cv32e40p UVM testbench (core-v-verif) running natively on Verilator, 0 UVM_FATAL / 0 UVM_ERROR.
-- 🤖 **[Agentic AI development loop](https://planv.tech/2026/06/01/verilator-developer-an-ai-native-pipeline-for-verilator-contributions/)**: 82 merged PRs in three months, human review on every patch.
+- 🤖 **Agentic AI development loop**: 82 merged PRs in three months, human review on every patch.
 
 ---
 
@@ -77,7 +77,7 @@
 ## 📫 Contact
 
 <p>
-  <a href="https://www.linkedin.com/in/yilou-wang-a0569b215/">
+  <a href="https://www.linkedin.com/in/yilouwang/">
     <img src="https://img.shields.io/badge/LinkedIn-Yilou%20Wang-0a66c2?style=flat-square&logo=linkedin&logoColor=white" alt="linkedin" />
   </a>
 </p>

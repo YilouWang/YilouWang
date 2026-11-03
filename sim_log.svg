@@ -53,7 +53,7 @@
 
     <text x="20" y="62" class="mono"><tspan class="prompt">$</tspan><tspan class="cmd"> make sim </tspan><tspan class="arg">TEST=yilou_career_test SIM=verilator</tspan></text>
 
-    <text x="20" y="88" class="mono"><tspan class="info">UVM_INFO</tspan><tspan class="meta"> @ 2024: uvm_test_top </tspan><tspan class="id">[VERILATOR]</tspan><tspan class="msg">  </tspan><tspan class="num">160+</tspan><tspan class="msg"> merged PRs · Verilator org member</tspan></text>
+    <text x="20" y="88" class="mono"><tspan class="info">UVM_INFO</tspan><tspan class="meta"> @ 2026: uvm_test_top </tspan><tspan class="id">[VERILATOR]</tspan><tspan class="msg">  </tspan><tspan class="num">160+</tspan><tspan class="msg"> merged PRs · Verilator org member</tspan></text>
     <text x="20" y="108" class="mono"><tspan class="info">UVM_INFO</tspan><tspan class="meta"> @ 2026: uvm_test_top </tspan><tspan class="id-ai">[AGENTIC]</tspan><tspan class="msg">    </tspan><tspan class="num">82</tspan><tspan class="msg"> merged PRs in 3 months · human review on every patch</tspan></text>
     <text x="20" y="128" class="mono"><tspan class="info">UVM_INFO</tspan><tspan class="meta"> @ 2026: uvm_test_top </tspan><tspan class="id">[CORE-V]</tspan><tspan class="msg">     cv32e40p UVM testbench running natively on Verilator</tspan></text>
     <text x="20" y="148" class="mono"><tspan class="info">UVM_INFO</tspan><tspan class="meta"> @ 2026: uvm_test_top </tspan><tspan class="id">[WRITING]</tspan><tspan class="msg">    </tspan><tspan class="num">7</tspan><tspan class="msg"> blog posts · </tspan><tspan class="num">4</tspan><tspan class="msg"> papers &amp; talks</tspan></text>
