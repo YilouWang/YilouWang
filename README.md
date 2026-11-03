@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./header.svg" width="100%" alt="Yilou's Silicon Timeline" />
+  <img src="./career_pipeline.svg" width="100%" alt="Yilou's Silicon Timeline" />
 </div>
 
 <div align="center">
