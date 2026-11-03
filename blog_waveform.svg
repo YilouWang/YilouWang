@@ -1,66 +1,124 @@
-<svg width="840" height="300" viewBox="0 0 840 300" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="840" height="330" viewBox="0 0 840 330" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="840" y2="330" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#020617"/>
+      <stop offset="1" stop-color="#0b1120"/>
+    </linearGradient>
+    <linearGradient id="border" x1="0" y1="0" x2="840" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.5" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#10b981"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-50%" width="140%" height="200%">
+      <feGaussianBlur stdDeviation="2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="frame"><rect x="0.5" y="0.5" width="839" height="329" rx="12"/></clipPath>
+  </defs>
+
   <style>
     @keyframes sweep { 0% { transform: translateX(0); } 100% { transform: translateX(680px); } }
-    @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
-    .label { font-family: 'Fira Code', 'Courier New', monospace; fill: #64748b; font-size: 11px; }
+    @keyframes pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+    .mono { font-family: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace; }
+    .label { fill: #64748b; font-size: 11px; }
     .grid { stroke: #1e293b; stroke-width: 0.5; }
     .sig-uvm { stroke: #10b981; stroke-width: 2; fill: none; }
     .sig-ai { stroke: #a78bfa; stroke-width: 2; fill: none; }
-    .sig-vld { stroke: #38bdf8; stroke-width: 1.5; fill: none; }
-    .phase-line { stroke: #f59e0b; stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.6; }
-    .phase-tag { font-family: 'Fira Code', monospace; fill: #f59e0b; font-size: 9px; opacity: 0.8; }
-    .tag { font-family: 'Fira Code', monospace; font-size: 10px; fill: #94a3b8; text-anchor: middle; }
-    .tag-ai { font-family: 'Fira Code', monospace; font-size: 10px; fill: #a78bfa; text-anchor: middle; }
-    .bg { fill: #020617; }
+    .sig-vld { stroke: #38bdf8; stroke-width: 1.6; fill: none; }
+    .phase-line { stroke: #f59e0b; stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.7; }
+    .phase-tag { fill: #f59e0b; font-size: 9px; opacity: 0.9; }
+    .bus { fill: #10b981; fill-opacity: 0.08; stroke: #10b981; stroke-width: 1; stroke-opacity: 0.7; }
+    .bus-ai { fill: #a78bfa; fill-opacity: 0.12; stroke: #a78bfa; stroke-width: 1; stroke-opacity: 0.8; }
+    .tag { font-size: 9px; fill: #cbd5e1; text-anchor: middle; }
+    .tag-ai { font-size: 9px; fill: #c4b5fd; text-anchor: middle; font-weight: bold; }
+    .date { font-size: 8.5px; fill: #64748b; text-anchor: middle; }
+    .tick { stroke: #475569; stroke-width: 1; }
+    .year { font-size: 9px; font-weight: bold; text-anchor: middle; }
     .cursor-g { animation: sweep 10s infinite linear; }
-    .status { font-family: 'Fira Code', monospace; font-size: 10px; fill: #64748b; animation: pulse 2s infinite; }
+    .status { fill: #64748b; font-size: 10px; animation: pulse 2s infinite; }
+    .win-title { fill: #94a3b8; font-size: 11px; text-anchor: middle; }
   </style>
 
-  <rect width="840" height="300" rx="8" class="bg"/>
+  <g clip-path="url(#frame)">
+  <rect width="840" height="330" fill="url(#bg)"/>
+
+  <!-- 窗口标题栏 -->
+  <rect width="840" height="34" fill="#0f172a"/>
+  <line x1="0" y1="34" x2="840" y2="34" stroke="#1e293b"/>
+  <circle cx="20" cy="17" r="5" fill="#f43f5e"/>
+  <circle cx="38" cy="17" r="5" fill="#f59e0b"/>
+  <circle cx="56" cy="17" r="5" fill="#10b981"/>
+  <text x="420" y="21" class="mono win-title">tech_writing.vcd · 7 posts</text>
 
   <!-- 左侧信号名栏 -->
-  <rect width="150" height="300" fill="#0f172a" opacity="0.8"/>
-  <text x="12" y="40" class="label" font-weight="bold">TIME [2024-2026]</text>
-  <text x="12" y="105" class="label" fill="#10b981">uvm_core_eng</text>
-  <text x="12" y="155" class="label" fill="#a78bfa">ai_gap_checker</text>
-  <text x="12" y="205" class="label" fill="#38bdf8">blog_publish_vld</text>
-  <text x="12" y="260" class="label">topic[127:0]</text>
+  <rect y="34" width="150" height="276" fill="#0f172a" opacity="0.8"/>
+  <line x1="150" y1="34" x2="150" y2="310" stroke="#1e293b"/>
+  <text x="14" y="66" class="mono label" font-weight="bold">TIME [2024-2026]</text>
+  <text x="14" y="116" class="mono label" style="fill:#10b981">uvm_core_eng</text>
+  <text x="14" y="164" class="mono label" style="fill:#a78bfa">ai_gap_checker</text>
+  <text x="14" y="213" class="mono label" style="fill:#38bdf8">blog_publish_vld</text>
+  <text x="14" y="266" class="mono label">topic[127:0]</text>
 
   <!-- 波形区域 -->
   <g transform="translate(150, 0)">
-    <path class="grid" d="M100 0 V300 M200 0 V300 M300 0 V300 M400 0 V300 M500 0 V300 M600 0 V300" />
+    <!-- 年份分区 -->
+    <rect x="0" y="40" width="258.5" height="12" fill="#38bdf8" fill-opacity="0.06"/>
+    <rect x="258.5" y="40" width="205" height="12" fill="#10b981" fill-opacity="0.06"/>
+    <rect x="463.5" y="40" width="216.5" height="12" fill="#a78bfa" fill-opacity="0.08"/>
+    <text x="129" y="49" class="mono year" style="fill:#38bdf8">2024</text>
+    <text x="361" y="49" class="mono year" style="fill:#34d399">2025</text>
+    <text x="572" y="49" class="mono year" style="fill:#a78bfa">2026</text>
+    <line x1="0" y1="78" x2="680" y2="78" class="tick"/>
+      <line x1="36" y1="72" x2="36" y2="78" class="tick"/><text x="36" y="69" class="mono date">24.08</text>
+      <line x1="119" y1="72" x2="119" y2="78" class="tick"/><text x="119" y="69" class="mono date">24.10</text>
+      <line x1="208" y1="72" x2="208" y2="78" class="tick"/><text x="208" y="69" class="mono date">24.11</text>
+      <line x1="309" y1="72" x2="309" y2="78" class="tick"/><text x="309" y="69" class="mono date">25.02</text>
+      <line x1="416" y1="72" x2="416" y2="78" class="tick"/><text x="416" y="69" class="mono date">25.07</text>
+      <line x1="511" y1="72" x2="511" y2="78" class="tick"/><text x="511" y="69" class="mono date">26.02</text>
+      <line x1="606" y1="72" x2="606" y2="78" class="tick"/><text x="606" y="69" class="mono date">26.06</text>
 
-    <!-- uvm_core_eng: high during 2024.08 - 2025.07, drops at phase shift -->
-    <path class="sig-uvm" d="M0 130 V95 H540 V130 H680" />
+    <path class="grid" d="M100 80 V310 M200 80 V310 M300 80 V310 M400 80 V310 M500 80 V310 M600 80 V310" />
+
+    <!-- uvm_core_eng: high through the UVM series, drops at phase shift -->
+    <path class="sig-uvm" d="M0 126 V100 H462 V126 H680" filter="url(#soft)"/>
 
     <!-- ai_gap_checker: low until 2026.02, then rises high -->
-    <path class="sig-ai" d="M0 170 H570 V135 H680" />
+    <path class="sig-ai" d="M0 174 H478 V148 H680" filter="url(#soft)"/>
 
-    <!-- blog_publish_vld: 6 pulses centered at label x positions (50, 150, 220, 350, 475, 595) -->
-    <path class="sig-vld" d="M0 220 H40 V195 H60 V220 H140 V195 H160 V220 H210 V195 H230 V220 H340 V195 H360 V220 H465 V195 H485 V220 H585 V195 H605 V220 H680" />
+    <!-- blog_publish_vld: 7 pulses centered at 36, 119, 208, 309, 416, 511, 606 -->
+    <path class="sig-vld" d="M0 222 H26 V196 H46 V222 H109 V196 H129 V222 H198 V196 H218 V222 H299 V196 H319 V222 H406 V196 H426 V222 H501 V196 H521 V222 H596 V196 H616 V222 H680" filter="url(#soft)"/>
 
-    <!-- Phase shift marker at 2025.07 -> 2026.02 -->
-    <line x1="555" y1="60" x2="555" y2="280" class="phase-line"/>
-    <text x="560" y="72" class="phase-tag">// phase shift: UVM -&gt; AI</text>
+    <!-- topic bus -->
+      <polygon points="0,262 4,250 73.5,250 77.5,262 73.5,274 4,274" class="bus"/>
+      <polygon points="77.5,262 81.5,250 159.5,250 163.5,262 159.5,274 81.5,274" class="bus"/>
+      <polygon points="163.5,262 167.5,250 254.5,250 258.5,262 254.5,274 167.5,274" class="bus"/>
+      <polygon points="258.5,262 262.5,250 358.5,250 362.5,262 358.5,274 262.5,274" class="bus"/>
+      <polygon points="362.5,262 366.5,250 459.5,250 463.5,262 459.5,274 366.5,274" class="bus"/>
+      <polygon points="463.5,262 467.5,250 554.5,250 558.5,262 554.5,274 467.5,274" class="bus-ai"/>
+      <polygon points="558.5,262 562.5,250 676,250 680,262 676,274 562.5,274" class="bus-ai"/>
+      <text x="36" y="265.5" class="mono tag">#1 Cstr_If</text>
+      <text x="119" y="265.5" class="mono tag">#2 CI_Sys</text>
+      <text x="208" y="265.5" class="mono tag">#3 Aggr_Rand</text>
+      <text x="309" y="265.5" class="mono tag">#4 Array_Rand</text>
+      <text x="416" y="265.5" class="mono tag">#5 Struct_Rand</text>
+      <text x="511" y="265.5" class="mono tag-ai">#6 AI_Gap</text>
+      <text x="606" y="265.5" class="mono tag-ai">#7 AI_Pipeline</text>
 
-    <!-- 文章标签（居中对齐脉冲） -->
-    <g>
-      <text x="50"  y="255" class="tag">#1 Cstr_If</text>
-      <text x="150" y="255" class="tag">#2 CI_Sys</text>
-      <text x="220" y="255" class="tag">#3 Aggr_Rand</text>
-      <text x="350" y="255" class="tag">#4 Array_Rand</text>
-      <text x="475" y="255" class="tag">#5 Struct_Rand</text>
-      <text x="595" y="255" class="tag-ai">#6 AI_Gap</text>
-    </g>
+    <!-- Phase shift marker -->
+    <line x1="470" y1="84" x2="470" y2="306" class="phase-line"/>
+    <text x="475" y="94" class="mono phase-tag">// phase shift: UVM -&gt; AI</text>
 
-    <!-- 扫描线（line + marker 一起动） -->
+    <!-- 扫描线 -->
     <g class="cursor-g">
-      <line x1="0" y1="0" x2="0" y2="280" stroke="#f43f5e" stroke-width="1" stroke-dasharray="2 2"/>
-      <polygon points="-5,0 5,0 0,8" fill="#f43f5e"/>
+      <line x1="0" y1="36" x2="0" y2="306" stroke="#f43f5e" stroke-width="1" stroke-dasharray="2 2"/>
+      <polygon points="-5,36 5,36 0,44" fill="#f43f5e"/>
     </g>
   </g>
 
   <!-- 底部状态条 -->
-  <rect x="0" y="280" width="840" height="20" fill="#1e293b" opacity="0.5"/>
-  <text x="15" y="294" class="status">STATUS: DUMPING_CAREER_LOG_TO_VCD...</text>
+  <rect x="0" y="310" width="840" height="20" fill="#1e293b" opacity="0.6"/>
+  <text x="15" y="324" class="mono status">STATUS: DUMPING_CAREER_LOG_TO_VCD...</text>
+  <text x="825" y="324" class="mono status" text-anchor="end" style="animation-delay:1s">$finish</text>
+  </g>
+  <rect x="0.5" y="0.5" width="839" height="329" rx="12" stroke="url(#border)" stroke-width="1" stroke-opacity="0.7"/>
 </svg>

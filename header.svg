@@ -1,85 +1,171 @@
-<svg width="840" height="260" viewBox="0 0 840 260" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="840" height="320" viewBox="0 0 840 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="840" y2="320" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#020617"/>
+      <stop offset="1" stop-color="#0b1120"/>
+    </linearGradient>
+    <linearGradient id="border" x1="0" y1="0" x2="840" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.5" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#10b981"/>
+    </linearGradient>
+    <linearGradient id="active" x1="0" y1="0" x2="0" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#065f46"/>
+      <stop offset="1" stop-color="#022c22"/>
+    </linearGradient>
+    <pattern id="dots" width="16" height="16" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="0.8" fill="#1e293b"/>
+    </pattern>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="soft" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#a78bfa"/>
+    </marker>
+    <clipPath id="clkclip"><rect x="560" y="44" width="260" height="22"/></clipPath>
+  </defs>
+
   <style>
-    @keyframes flow { from { stroke-dashoffset: 20; } to { stroke-dashoffset: 0; } }
-    @keyframes clk { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-    .stage { fill: #0f172a; stroke: #334155; stroke-width: 1.5; }
-    .stage-active { fill: #064e3b; stroke: #10b981; stroke-width: 2; }
-    .label { font-family: 'Fira Code', 'Courier New', monospace; fill: #64748b; font-size: 10px; font-weight: bold; }
-    .title { font-family: 'Fira Code', monospace; fill: #f8fafc; font-size: 12px; font-weight: bold; }
-    .tech { font-family: 'Fira Code', monospace; fill: #38bdf8; font-size: 9px; }
-    .tech-alt { font-family: 'Fira Code', monospace; fill: #94a3b8; font-size: 9px; }
-    .connector { stroke: #334155; stroke-dasharray: 4 2; animation: flow 1s infinite linear; }
-    .clk { font-family: monospace; fill: #38bdf8; font-size: 9px; animation: clk 1s infinite; }
+    @keyframes flow { from { stroke-dashoffset: 12; } to { stroke-dashoffset: 0; } }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    @keyframes breathe { 0%, 100% { stroke-opacity: 1; } 50% { stroke-opacity: 0.35; } }
+    .mono { font-family: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace; }
+    .stage { fill: #0f172a; stroke: #334155; stroke-width: 1.2; }
+    .stage-active { fill: url(#active); stroke: #10b981; stroke-width: 2; animation: breathe 2.4s infinite ease-in-out; }
+    .label { font-size: 10px; font-weight: bold; letter-spacing: 0.5px; }
+    .title { fill: #f8fafc; font-size: 13px; font-weight: bold; }
+    .sub { fill: #94a3b8; font-size: 9px; }
+    .sub-hi { fill: #e2e8f0; font-size: 9px; }
+    .tech { font-size: 9px; }
+    .c-if { fill: #38bdf8; } .c-id { fill: #22d3ee; } .c-ex { fill: #f59e0b; } .c-mem { fill: #34d399; } .c-wb { fill: #10b981; }
+    .connector { stroke: #475569; stroke-width: 1.2; stroke-dasharray: 4 2; animation: flow 1s infinite linear; }
+    .fwd { stroke: #a78bfa; stroke-width: 1.4; stroke-dasharray: 5 3; animation: flow 0.8s infinite linear; }
+    .fwd-tag { fill: #a78bfa; font-size: 9px; }
+    .status { fill: #38bdf8; font-size: 9px; animation: blink 1.6s infinite; }
+    .chip { fill: #0f172a; stroke: #334155; stroke-width: 1; }
+    .chip-active { fill: #064e3b; stroke: #10b981; stroke-width: 1; }
+    .chip-txt { fill: #94a3b8; font-size: 9px; text-anchor: middle; }
+    .chip-txt-active { fill: #6ee7b7; font-size: 9px; text-anchor: middle; font-weight: bold; }
+    .foot { fill: #64748b; font-size: 9px; }
+    .foot-dim { fill: #475569; font-size: 9px; }
+    .win-title { fill: #94a3b8; font-size: 11px; text-anchor: middle; }
+    .rec { fill: #f43f5e; font-size: 9px; font-weight: bold; animation: blink 1.2s infinite; }
   </style>
 
-  <rect width="840" height="260" rx="8" fill="#020617"/>
+  <!-- 背景 + 点阵 + 渐变描边 -->
+  <rect x="0.5" y="0.5" width="839" height="319" rx="12" fill="url(#bg)"/>
+  <rect x="0.5" y="0.5" width="839" height="319" rx="12" fill="url(#dots)"/>
+
+  <!-- 窗口标题栏 -->
+  <path d="M12.5 0.5 H827.5 A12 12 0 0 1 839.5 12.5 V34 H0.5 V12.5 A12 12 0 0 1 12.5 0.5 Z" fill="#0f172a"/>
+  <line x1="0.5" y1="34" x2="839.5" y2="34" stroke="#1e293b"/>
+  <circle cx="20" cy="17" r="5" fill="#f43f5e"/>
+  <circle cx="38" cy="17" r="5" fill="#f59e0b"/>
+  <circle cx="56" cy="17" r="5" fill="#10b981"/>
+  <text x="420" y="21" class="mono win-title">王译楼 · Yilou Wang · career_pipeline.sv</text>
+  <text x="820" y="21" class="mono rec" text-anchor="end">● SIM</text>
+  <rect x="0.5" y="0.5" width="839" height="319" rx="12" stroke="url(#border)" stroke-width="1" stroke-opacity="0.7"/>
 
   <!-- 仿真状态栏 -->
-  <text x="20" y="30" class="clk"># SIM_CLOCK: 0x4A2B</text>
-  <text x="160" y="30" class="clk" style="animation-delay:0.5s"># PIPELINE: STABLE</text>
-  <text x="290" y="30" class="clk" style="animation-delay:1s"># STAGE: MEM (PlanV)</text>
+  <text x="20" y="60" class="mono status"># SIM_CLOCK: 0x4A2B</text>
+  <text x="160" y="60" class="mono status" style="animation-delay:0.4s"># PIPELINE: STABLE</text>
+  <text x="290" y="60" class="mono status" style="animation-delay:0.8s; fill:#34d399"># STAGE: WB (NXP)</text>
+
+  <!-- 时钟波形 -->
+  <text x="530" y="60" class="mono foot">clk</text>
+  <g clip-path="url(#clkclip)">
+    <path d="M560 62 H570 V48 H580 V62 H590 V48 H600 V62 H610 V48 H620 V62 H630 V48 H640 V62 H650 V48 H660 V62 H670 V48 H680 V62 H690 V48 H700 V62 H710 V48 H720 V62 H730 V48 H740 V62 H750 V48 H760 V62 H770 V48 H780 V62 H790 V48 H800 V62 H810 V48 H820 V62 H830 V48 H840" stroke="#38bdf8" stroke-width="1.4" filter="url(#soft)">
+      <animateTransform attributeName="transform" type="translate" from="0 0" to="-20 0" dur="0.6s" repeatCount="indefinite"/>
+    </path>
+  </g>
+
+  <!-- forwarding path: WB -> EX -->
+  <path d="M740 118 C740 76, 412 76, 412 116" class="fwd" marker-end="url(#arrow)"/>
+  <text x="576" y="78" class="mono fwd-tag" text-anchor="middle">forwarding path · AI for Verification · Open Source EDA</text>
 
   <!-- Stage 1: HIT -->
-  <g transform="translate(20, 65)">
-    <rect width="145" height="120" rx="4" class="stage"/>
-    <text x="10" y="20" class="label">IF: FETCH</text>
-    <text x="10" y="45" class="title">HIT 🇨🇳</text>
-    <text x="10" y="65" class="tech-alt">Fuxin / Harbin</text>
-    <text x="10" y="90" class="tech">B.Sc. EE</text>
-    <text x="10" y="105" class="tech">Comm. Eng.</text>
+  <g transform="translate(20, 120)">
+    <rect width="145" height="120" rx="6" class="stage"/>
+    <rect x="1" y="1" width="143" height="3" rx="1.5" class="c-if"/>
+    <text x="12" y="22" class="mono label c-if">IF: FETCH</text>
+    <text x="12" y="46" class="mono title">HIT 🇨🇳</text>
+    <text x="12" y="66" class="mono sub">Fuxin / Harbin</text>
+    <text x="12" y="90" class="mono tech c-if">B.Sc. EE</text>
+    <text x="12" y="105" class="mono tech c-if">Comm. Eng.</text>
   </g>
 
   <!-- Stage 2: TUM -->
-  <g transform="translate(185, 65)">
-    <rect width="145" height="120" rx="4" class="stage"/>
-    <text x="10" y="20" class="label">ID: DECODE</text>
-    <text x="10" y="45" class="title">TUM 🇩🇪</text>
-    <text x="10" y="65" class="tech-alt">Munich</text>
-    <text x="10" y="90" class="tech">M.Sc. EE</text>
-    <text x="10" y="105" class="tech">Comm. Eng.</text>
+  <g transform="translate(180, 120)">
+    <rect width="145" height="120" rx="6" class="stage"/>
+    <rect x="1" y="1" width="143" height="3" rx="1.5" class="c-id"/>
+    <text x="12" y="22" class="mono label c-id">ID: DECODE</text>
+    <text x="12" y="46" class="mono title">TUM 🇩🇪</text>
+    <text x="12" y="66" class="mono sub">Munich</text>
+    <text x="12" y="90" class="mono tech c-id">M.Sc. EE</text>
+    <text x="12" y="105" class="mono tech c-id">Comm. Eng.</text>
   </g>
 
   <!-- Stage 3: Infineon -->
-  <g transform="translate(350, 65)">
-    <rect width="145" height="120" rx="4" class="stage"/>
-    <text x="10" y="20" class="label">EX: EXECUTE</text>
-    <text x="10" y="45" class="title">Infineon</text>
-    <text x="10" y="65" class="tech-alt">Internship</text>
-    <text x="10" y="85" class="tech" fill="#f59e0b">SV / UVM</text>
-    <text x="10" y="100" class="tech" fill="#f59e0b">cocotb / pyuvm</text>
+  <g transform="translate(340, 120)">
+    <rect width="145" height="120" rx="6" class="stage"/>
+    <rect x="1" y="1" width="143" height="3" rx="1.5" class="c-ex"/>
+    <text x="12" y="22" class="mono label c-ex">EX: EXECUTE</text>
+    <text x="12" y="46" class="mono title">Infineon</text>
+    <text x="12" y="66" class="mono sub">Internship</text>
+    <text x="12" y="90" class="mono tech c-ex">SV / UVM</text>
+    <text x="12" y="105" class="mono tech c-ex">cocotb / pyuvm</text>
   </g>
 
-  <!-- Stage 4: PlanV (active) -->
-  <g transform="translate(515, 65)">
-    <rect width="145" height="120" rx="4" class="stage-active"/>
-    <text x="10" y="20" class="label" fill="#10b981">MEM: ACCESS &lt;-- HERE</text>
-    <text x="10" y="45" class="title">PlanV</text>
-    <text x="10" y="65" class="tech-alt" fill="#f8fafc">Verification Engineer</text>
-    <text x="10" y="85" class="tech" fill="#34d399">Verilator / RISC-V</text>
-    <text x="10" y="100" class="tech" fill="#34d399">Open-Source Verification</text>
+  <!-- Stage 4: PlanV -->
+  <g transform="translate(500, 120)">
+    <rect width="145" height="120" rx="6" class="stage"/>
+    <rect x="1" y="1" width="143" height="3" rx="1.5" class="c-mem"/>
+    <text x="12" y="22" class="mono label c-mem">MEM: ACCESS</text>
+    <text x="12" y="46" class="mono title">PlanV</text>
+    <text x="12" y="66" class="mono sub">Verification Engineer</text>
+    <text x="12" y="90" class="mono tech c-mem">Verilator / RISC-V</text>
+    <text x="12" y="105" class="mono tech c-mem">Open-Source Verification</text>
   </g>
 
-  <!-- Stage 5: Life -->
-  <g transform="translate(680, 65)">
-    <rect width="140" height="120" rx="4" class="stage" stroke="#8b5cf6"/>
-    <text x="10" y="20" class="label" fill="#a78bfa">WB: WRITEBACK</text>
-    <text x="10" y="45" class="title">Life</text>
-    <text x="10" y="65" class="tech-alt">AI &amp; OSS Enthusiast</text>
-    <text x="10" y="90" class="tech" fill="#a78bfa">AI for Verification</text>
-    <text x="10" y="105" class="tech" fill="#a78bfa">Open Source EDA</text>
+  <!-- Stage 5: NXP (active) -->
+  <g transform="translate(660, 120)">
+    <rect width="160" height="120" rx="6" fill="#10b981" opacity="0.12" filter="url(#glow)"/>
+    <rect width="160" height="120" rx="6" class="stage-active"/>
+    <text x="12" y="22" class="mono label c-wb">WB: WRITEBACK &lt;-- HERE</text>
+    <text x="12" y="46" class="mono title">NXP</text>
+    <text x="12" y="66" class="mono sub-hi">Digital IP Verification</text>
+    <text x="12" y="90" class="mono tech" style="fill:#6ee7b7">Munich</text>
+    <text x="12" y="105" class="mono tech" style="fill:#6ee7b7">since 2026</text>
   </g>
 
   <!-- 连接器 & 数据流 -->
-  <path d="M165 125 H185" class="connector"/>
-  <circle r="3" fill="#10b981"><animateMotion path="M165 125 H185" dur="3s" repeatCount="indefinite" begin="0s"/></circle>
-  <path d="M330 125 H350" class="connector"/>
-  <circle r="3" fill="#10b981"><animateMotion path="M330 125 H350" dur="3s" repeatCount="indefinite" begin="0.6s"/></circle>
-  <path d="M495 125 H515" class="connector"/>
-  <circle r="3" fill="#10b981"><animateMotion path="M495 125 H515" dur="3s" repeatCount="indefinite" begin="1.2s"/></circle>
-  <path d="M660 125 H680" class="connector"/>
-  <circle r="3" fill="#10b981"><animateMotion path="M660 125 H680" dur="3s" repeatCount="indefinite" begin="1.8s"/></circle>
+  <path d="M165 180 H180" class="connector"/>
+  <circle r="3" fill="#38bdf8" filter="url(#soft)"><animateMotion path="M165 180 H180" dur="2.4s" repeatCount="indefinite" begin="0s"/></circle>
+  <path d="M325 180 H340" class="connector"/>
+  <circle r="3" fill="#22d3ee" filter="url(#soft)"><animateMotion path="M325 180 H340" dur="2.4s" repeatCount="indefinite" begin="0.6s"/></circle>
+  <path d="M485 180 H500" class="connector"/>
+  <circle r="3" fill="#f59e0b" filter="url(#soft)"><animateMotion path="M485 180 H500" dur="2.4s" repeatCount="indefinite" begin="1.2s"/></circle>
+  <path d="M645 180 H660" class="connector"/>
+  <circle r="3" fill="#10b981" filter="url(#soft)"><animateMotion path="M645 180 H660" dur="2.4s" repeatCount="indefinite" begin="1.8s"/></circle>
+
+  <!-- 年份标签 -->
+  <rect x="50" y="250" width="85" height="18" rx="9" class="chip"/>
+  <text x="92.5" y="262" class="mono chip-txt">2017–2021</text>
+  <rect x="210" y="250" width="85" height="18" rx="9" class="chip"/>
+  <text x="252.5" y="262" class="mono chip-txt">2021–2024</text>
+  <rect x="357" y="250" width="111" height="18" rx="9" class="chip"/>
+  <text x="412.5" y="262" class="mono chip-txt">intern · thesis</text>
+  <rect x="530" y="250" width="85" height="18" rx="9" class="chip"/>
+  <text x="572.5" y="262" class="mono chip-txt">2024–2026</text>
+  <rect x="690" y="250" width="100" height="18" rx="9" class="chip-active"/>
+  <text x="740" y="262" class="mono chip-txt-active">2026 → now</text>
 
   <!-- 底部 tagline -->
-  <text x="20" y="225" class="tech-alt">// career_pipeline.sv · 5-stage, forwarding enabled, hazard-free</text>
-  <text x="20" y="243" class="tech-alt" fill="#475569">// wangyilou123@gmail.com · Munich · 2026</text>
+  <text x="20" y="292" class="mono foot">// career_pipeline.sv · 5-stage, forwarding enabled, hazard-free</text>
+  <text x="20" y="308" class="mono foot-dim">// wangyilou123@gmail.com · Munich · 2026</text>
 </svg>
