@@ -17,38 +17,6 @@
 
 </div>
 
-```systemverilog
-module Yilou_Wang_Career (
-  input  logic        clk,
-  input  logic        rst_n,
-  output logic [31:0] career_impact
-);
-
-  // IF: Harbin Institute of Technology
-  localparam string IF_STAGE  = "HIT · B.Sc. EE / Comm. Eng.";
-
-  // ID: Technical University of Munich
-  localparam string ID_STAGE  = "TUM · M.Sc. EE / Comm. Eng.";
-
-  // EX: Infineon Technologies (internship + master thesis)
-  localparam string EX_STAGE  = "Infineon · SV / UVM / cocotb / pyuvm";
-
-  // MEM: PlanV (2024-2026)
-  localparam string MEM_STAGE = "PlanV · UVM on Verilator · 160+ merged PRs · agentic dev loop";
-
-  // WB: NXP Semiconductors (current stage)
-  localparam string WB_STAGE  = "NXP · Digital IP Verification";
-
-  // forwarding path: AI for Verification · Open-Source EDA
-
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) career_impact <= 32'h0;
-    else        career_impact <= career_impact + 32'd1;  // keep shipping
-  end
-
-endmodule
-```
-
 ---
 
 ## ✨ Highlights
@@ -65,8 +33,8 @@ endmodule
 
 ## 🧭 Journey
 
-- 🎓 2017–2021: 🇨🇳 B.Eng. EE @ HIT (Fuxin 🚄 Harbin)
-- 🎓 2021–2024: 🇩🇪 M.Sc. EE @ TUM (China ✈️ Munich)
+- 🎓 2017–2021: B.Eng. EE @ HIT (Fuxin 🚄 Harbin)
+- 🎓 2021–2024: M.Sc. EE @ TUM (China ✈️ Munich)
 - 🧪 Internships: Neusoft & Infineon (master thesis at Infineon)
 - 💼 2024–2026: Verification Engineer @ PlanV
 - 💼 2026–now: Digital IP Verification Engineer @ NXP
@@ -103,7 +71,6 @@ endmodule
 - 🧰 [Toy4Joy_DV](https://github.com/YilouWang/Toy4Joy_DV): DV playground for SV / UVM / Verilator / cocotb, with practical examples for onboarding and quick experiments.
 - 📘 [cocotb-BSHL](https://github.com/Infineon/cocotb-BSHL): my master thesis work at Infineon, giving cocotb/pyuvm access to SystemVerilog verification IP.
 - 🧪 [PlanV_Verilator_Feature_Tests](https://github.com/planvtech/PlanV_Verilator_Feature_Tests): the CI flow we used at PlanV to validate Verilator features.
-- 🎠 [badai_cardsmith-oss](https://github.com/YilouWang/badai_cardsmith-oss): side project, a carousel-card generator for Chinese content creators with a quality-scoring loop.
 
 ---
 
