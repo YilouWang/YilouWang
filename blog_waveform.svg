@@ -31,26 +31,27 @@
     <path class="grid" d="M100 0 V300 M200 0 V300 M300 0 V300 M400 0 V300 M500 0 V300 M600 0 V300" />
 
     <!-- uvm_core_eng: high during 2024.08 - 2025.07, drops at phase shift -->
-    <path class="sig-uvm" d="M0 130 V95 H540 V130 H680" />
+    <path class="sig-uvm" d="M0 130 V95 H462 V130 H680" />
 
     <!-- ai_gap_checker: low until 2026.02, then rises high -->
-    <path class="sig-ai" d="M0 170 H570 V135 H680" />
+    <path class="sig-ai" d="M0 170 H478 V135 H680" />
 
-    <!-- blog_publish_vld: 6 pulses centered at label x positions (50, 150, 220, 350, 475, 595) -->
-    <path class="sig-vld" d="M0 220 H40 V195 H60 V220 H140 V195 H160 V220 H210 V195 H230 V220 H340 V195 H360 V220 H465 V195 H485 V220 H585 V195 H605 V220 H680" />
+    <!-- blog_publish_vld: 7 pulses centered at label x positions (36, 119, 208, 309, 416, 511, 606) -->
+    <path class="sig-vld" d="M0 220 H26 V195 H46 V220 H109 V195 H129 V220 H198 V195 H218 V220 H299 V195 H319 V220 H406 V195 H426 V220 H501 V195 H521 V220 H596 V195 H616 V220 H680" />
 
     <!-- Phase shift marker at 2025.07 -> 2026.02 -->
-    <line x1="555" y1="60" x2="555" y2="280" class="phase-line"/>
-    <text x="560" y="72" class="phase-tag">// phase shift: UVM -&gt; AI</text>
+    <line x1="470" y1="60" x2="470" y2="280" class="phase-line"/>
+    <text x="475" y="72" class="phase-tag">// phase shift: UVM -&gt; AI</text>
 
     <!-- 文章标签（居中对齐脉冲） -->
     <g>
-      <text x="50"  y="255" class="tag">#1 Cstr_If</text>
-      <text x="150" y="255" class="tag">#2 CI_Sys</text>
-      <text x="220" y="255" class="tag">#3 Aggr_Rand</text>
-      <text x="350" y="255" class="tag">#4 Array_Rand</text>
-      <text x="475" y="255" class="tag">#5 Struct_Rand</text>
-      <text x="595" y="255" class="tag-ai">#6 AI_Gap</text>
+      <text x="36"  y="255" class="tag">#1 Cstr_If</text>
+      <text x="119" y="255" class="tag">#2 CI_Sys</text>
+      <text x="208" y="255" class="tag">#3 Aggr_Rand</text>
+      <text x="309" y="255" class="tag">#4 Array_Rand</text>
+      <text x="416" y="255" class="tag">#5 Struct_Rand</text>
+      <text x="511" y="255" class="tag-ai">#6 AI_Gap</text>
+      <text x="606" y="255" class="tag-ai">#7 AI_Pipeline</text>
     </g>
 
     <!-- 扫描线（line + marker 一起动） -->

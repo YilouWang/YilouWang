@@ -4,12 +4,13 @@
 
 # 王译楼 · Yilou Wang 👋
 
-> **DV Eng. @ PlanV · TUM M.Sc. · AI & Open-Source Verification Enthusiast**
+> **Digital IP Verification Engineer @ NXP Munich · previously PlanV · TUM M.Sc.**
+> Verilator org member · 160+ merged PRs in Verilator · UVM on open-source simulators · AI for verification
 
 <p>
-  <img src="https://img.shields.io/badge/Now-DV%20Engineer%20%40%20PlanV-0969da?style=flat-square" alt="planv" />
-  <img src="https://img.shields.io/badge/Focus-Verilator%20%7C%20UVM%20%7C%20AI-2da44e?style=flat-square" alt="focus" />
-  <img src="https://img.shields.io/badge/Languages-中文%20%2F%20English-6f42c1?style=flat-square" alt="lang" />
+  <img src="https://img.shields.io/badge/Now-Digital%20IP%20Verification%20%40%20NXP-0969da?style=flat-square" alt="now" />
+  <a href="https://github.com/verilator/verilator/pulls?q=is%3Apr+is%3Amerged+author%3AYilouWang"><img src="https://img.shields.io/badge/Verilator-160%2B%20merged%20PRs-2da44e?style=flat-square" alt="verilator prs" /></a>
+  <img src="https://img.shields.io/badge/Focus-UVM%20%7C%20SVA%20%7C%20Constrained%20Random%20%7C%20AI-8250df?style=flat-square" alt="focus" />
 </p>
 
 ```systemverilog
@@ -20,19 +21,21 @@ module Yilou_Wang_Career (
 );
 
   // IF: Harbin Institute of Technology
-  localparam string IF_STAGE = "HIT · B.Sc. EE / Comm. Eng.";
+  localparam string IF_STAGE  = "HIT · B.Sc. EE / Comm. Eng.";
 
   // ID: Technical University of Munich
-  localparam string ID_STAGE = "TUM · M.Sc. EE / Comm. Eng.";
+  localparam string ID_STAGE  = "TUM · M.Sc. EE / Comm. Eng.";
 
-  // EX: Infineon Technologies — Internship
-  localparam string EX_STAGE = "Infineon · SV / UVM / cocotb / pyuvm";
+  // EX: Infineon Technologies (internship + master thesis)
+  localparam string EX_STAGE  = "Infineon · SV / UVM / cocotb / pyuvm";
 
-  // MEM: PlanV — current role (active stage)
-  localparam string MEM_STAGE = "PlanV · Verification Engineer · Verilator / RISC-V / Open-Source Verification";
+  // MEM: PlanV (2024-2026)
+  localparam string MEM_STAGE = "PlanV · UVM on Verilator · 160+ merged PRs · agentic dev loop";
 
-  // WB: Life — AI & OSS enthusiast
-  localparam string WB_STAGE = "AI for Verification · Open Source EDA";
+  // WB: NXP Semiconductors (current stage)
+  localparam string WB_STAGE  = "NXP · Digital IP Verification";
+
+  // forwarding path: AI for Verification · Open-Source EDA
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) career_impact <= 32'h0;
@@ -44,37 +47,30 @@ endmodule
 
 ---
 
+## Highlights
+
+- 🚀 **[160+ merged pull requests in Verilator](https://github.com/verilator/verilator/pulls?q=is%3Apr+is%3Amerged+author%3AYilouWang)**: constrained randomization, SVA and UVM-related features. Member of the Verilator GitHub organization.
+- 🧪 **Industrial UVM on an open-source simulator**: OpenHW's cv32e40p UVM testbench (core-v-verif) running natively on Verilator, 0 UVM_FATAL / 0 UVM_ERROR.
+- 🤖 **[Agentic AI development loop](https://planv.tech/2026/06/01/verilator-developer-an-ai-native-pipeline-for-verilator-contributions/)**: 82 merged PRs in three months, human review on every patch.
+
+---
+
 ## Journey
 
-- 🎓 2017–2021: 🇨🇳 B.Eng. EE (Fuxin 🚄 Harbin)
+- 🎓 2017–2021: 🇨🇳 B.Eng. EE @ HIT (Fuxin 🚄 Harbin)
 - 🎓 2021–2024: 🇩🇪 M.Sc. EE @ TUM (China ✈️ Munich)
-- 🧪 Internship: NeuSoft & Infineon
-- 💼 2024–now: DV Engineer @ PlanV
+- 🧪 Internships: Neusoft & Infineon (master thesis at Infineon)
+- 💼 2024–2026: Verification Engineer @ PlanV
+- 💼 2026–now: Digital IP Verification Engineer @ NXP
 
 ---
 
-## Original Projects
+## Publications & Talks
 
-### 🎠 [badai_cardsmith-oss](https://github.com/YilouWang/badai_cardsmith-oss)
-中文创作者轮播图引擎。把选题文案变成可渲染配置，并跑质量评分闭环。
-
-### 🧰 [Toy4Joy_DV](https://github.com/YilouWang/Toy4Joy_DV)
-DV playground for SV / UVM / Verilator / cocotb. Practical examples for onboarding and quick experiments.
-
----
-
-## Contributions & Forks
-
-- 🚀 [verilator](https://github.com/YilouWang/verilator) — contribution-aligned work fork.
-- 🧪 [PlanV_Verilator_Feature_Tests](https://github.com/YilouWang/PlanV_Verilator_Feature_Tests) — feature validation flow at work.
-- 📘 [MS_Thesis_cocotb-BSHL](https://github.com/YilouWang/MS_Thesis_cocotb-BSHL) — thesis implementation repo.
-
----
-
-## Publications
-
-- 📄 **Advancing Open-Source Verification: Enabling Full Randomization in Verilator** — DVcon Europe 2025 · Oct 15, 2025
-- 📄 **Enable Reuse of SystemVerilog Verification IPs in cocotb/pyuvm** — DVcon Europe 2024 · Oct 16, 2024
+- 🎤 **AI on Open-Source EDA: Closing the UVM-on-Verilator Gap with an Agentic Development Loop**, DVCon Europe 2026 · Munich, Nov 17–18, 2026
+- 📄 **Enabling Industrial-Grade RISC-V UVM Verification on an Open-Source Simulator**, Euromicro DSD 2026 (MATTERV) · Kraków, Sep 2026
+- 📄 **Advancing Open-Source Verification: Enabling Full Randomization in Verilator**, DVCon Europe 2025
+- 📄 **Enable Reuse of SystemVerilog Verification IPs in cocotb/pyuvm**, DVCon Europe 2024 (with Thorsten Dworzak and Johannes Grinschgl)
 
 ---
 
@@ -90,6 +86,16 @@ DV playground for SV / UVM / Verilator / cocotb. Practical examples for onboardi
 - **#4** · 2025.02 · [UVM in Verilator: Array constrained randomization](https://planv.tech/2025/02/07/enabling-uvm-support-in-verilator-series-constrained-randomization-support-for-all-types-of-arrays/)
 - **#5** · 2025.07 · [UVM in Verilator: Struct constrained randomization](https://planv.tech/2025/07/04/enabling-uvm-support-in-verilator-series-constrained-randomization-support-for-structs/)
 - **#6** · 2026.02 · 🤖 [Verilator Gap Checker with AI](https://planv.tech/2026/02/24/verilator-gap-checker-automatically-detecting-feature-gaps-in-verilator-with-ai/)
+- **#7** · 2026.06 · 🤖 [Verilator Developer: an AI-native pipeline for Verilator contributions](https://planv.tech/2026/06/01/verilator-developer-an-ai-native-pipeline-for-verilator-contributions/)
+
+---
+
+## Projects
+
+- 🧰 [Toy4Joy_DV](https://github.com/YilouWang/Toy4Joy_DV): DV playground for SV / UVM / Verilator / cocotb, with practical examples for onboarding and quick experiments.
+- 📘 [cocotb-BSHL](https://github.com/Infineon/cocotb-BSHL): my master thesis work at Infineon, giving cocotb/pyuvm access to SystemVerilog verification IP.
+- 🧪 [PlanV_Verilator_Feature_Tests](https://github.com/planvtech/PlanV_Verilator_Feature_Tests): the CI flow we used at PlanV to validate Verilator features.
+- 🎠 [badai_cardsmith-oss](https://github.com/YilouWang/badai_cardsmith-oss): side project, a carousel-card generator for Chinese content creators with a quality-scoring loop.
 
 ---
 
@@ -102,3 +108,6 @@ DV playground for SV / UVM / Verilator / cocotb. Practical examples for onboardi
 </p>
 
 - Email: [wangyilou123@gmail.com](mailto:wangyilou123@gmail.com)
+
+<sub>Open-source work shown here was done during my time at PlanV and before. Views are my own.</sub>
+
