@@ -43,7 +43,7 @@
 
 ## 📚 Publications & Talks
 
-- 🎤 **AI on Open-Source EDA: Closing the UVM-on-Verilator Gap with an Agentic Development Loop**, DVCon Europe 2026 · Munich, Nov 17–18, 2026
+- 📄 **AI on Open-Source EDA: Closing the UVM-on-Verilator Gap with an Agentic Development Loop**, DVCon Europe 2026 · Munich, Nov 2026
 - 📄 **Enabling Industrial-Grade RISC-V UVM Verification on an Open-Source Simulator**, Euromicro DSD 2026 (MATTERV) · Kraków, Sep 2026
 - 📄 **Advancing Open-Source Verification: Enabling Full Randomization in Verilator**, DVCon Europe 2025
 - 📄 **Enable Reuse of SystemVerilog Verification IPs in cocotb/pyuvm**, DVCon Europe 2024 (with Thorsten Dworzak and Johannes Grinschgl)
